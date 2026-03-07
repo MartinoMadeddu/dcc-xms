@@ -1,3 +1,4 @@
+mod core;
 mod types;
 mod node_graph;
 mod scene_graph;

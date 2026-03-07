@@ -101,6 +101,8 @@ pub enum SubnetNodeType {
     ConstVec3  { value: Vec3 },
     ConstFloat { value: f32  },
     ConstInt   { value: i32  },
+
+    ScatterPoints { count: u32, seed: u32 },
 }
 
 pub fn subnet_node_icon(t: &SubnetNodeType) -> &'static str {
@@ -117,6 +119,7 @@ pub fn subnet_node_icon(t: &SubnetNodeType) -> &'static str {
         SubnetNodeType::ConstVec3 { .. }    => "→v",
         SubnetNodeType::ConstFloat { .. }   => "→f",
         SubnetNodeType::ConstInt { .. }     => "→i",
+        SubnetNodeType::ScatterPoints { .. } => "⁙",
     }
 }
 
@@ -269,7 +272,39 @@ pub enum PrimInspectorTab {
 #[derive(Resource, Default)]
 pub struct PrimInspectorState {
     pub active_tab:   PrimInspectorTab,
-    pub row_offset:   usize,   // virtual scroll: first visible row
+    pub row_offset:   usize,
+    
+    // ✅ NEW - Caching system
+    cached_mesh: Option<MeshData>,
+    cached_node_id: Option<NodeId>,
+    graph_version: u64,  // Increments when graph changes
+}
+
+impl PrimInspectorState {
+    /// Check if cache is valid for this node
+    pub fn is_cache_valid(&self, node_id: Option<NodeId>, graph_version: u64) -> bool {
+        self.cached_node_id == node_id && self.graph_version == graph_version
+    }
+
+    /// Update cache
+    pub fn update_cache(&mut self, node_id: Option<NodeId>, mesh: MeshData, graph_version: u64) {
+        self.cached_mesh = Some(mesh);
+        self.cached_node_id = node_id;
+        self.graph_version = graph_version;
+    }
+
+    /// Get cached mesh if valid
+    pub fn get_cached_mesh(&self) -> Option<&MeshData> {
+        self.cached_mesh.as_ref()
+    }
+
+    /// Clear cache when tab changes
+    pub fn set_active_tab(&mut self, tab: PrimInspectorTab) {
+        if self.active_tab != tab {
+            self.active_tab = tab;
+            self.row_offset = 0;
+        }
+    }
 }
 
 // ============================================================================

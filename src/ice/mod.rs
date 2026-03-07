@@ -1,14 +1,19 @@
-pub mod nodes;
-pub mod ui;
+pub mod ui;     // Keep as-is
+
+// NEW - Array-based execution system
+pub mod ops;
+pub mod ice_nodes;
 
 use std::collections::HashMap;
 use bevy::prelude::*;
 use bevy_egui::egui;
 use crate::types::{
     ConnectionId, MeshData, NodeId, SubnetId,
-    SubnetNodeType, SubnetValue,
+    SubnetNodeType,
 };
-use nodes::evaluate_subnet_node;
+use crate::core::{Attribute, Geometry};
+use ops::{ExecutionContext, IceNode};  // ✅ Added IceNode trait import!
+use ice_nodes::*;
 
 #[derive(Resource, Default)]
 pub struct GraphNavigation {
@@ -16,7 +21,7 @@ pub struct GraphNavigation {
 }
 
 // ============================================================================
-// SUBNET GRAPH STRUCTURES
+// SUBNET GRAPH STRUCTURES (unchanged)
 // ============================================================================
 
 #[derive(Clone)]
@@ -120,6 +125,9 @@ impl SubnetGraph {
             SubnetNodeType::ConstVec3  { .. } => (vec![], vec![o("Value", "Vec3")]),
             SubnetNodeType::ConstFloat { .. } => (vec![], vec![o("Value", "Float")]),
             SubnetNodeType::ConstInt   { .. } => (vec![], vec![o("Value", "Int")]),
+            // ✅ NEW - ScatterPoints
+            SubnetNodeType::ScatterPoints { .. } =>
+                (vec![i("Geometry", "Mesh")], vec![o("Points", "Points")]),
         }
     }
 
@@ -149,95 +157,238 @@ impl SubnetGraph {
         self.connections.retain(|c| c.id != cid);
     }
 
+    // ============================================================================
+    // ✅ NEW EVALUATION - Array-based, graph traversed once
+    // ============================================================================
+
     pub fn evaluate(&self, input_mesh: &MeshData) -> MeshData {
-        let mut cache: HashMap<NodeId, Vec<SubnetValue>> = HashMap::new();
-
-        if let Some(sub_in) = self.nodes.iter().find(|n|
-            matches!(n.node_type, SubnetNodeType::SubInput))
-        {
-            let points: Vec<SubnetValue> = input_mesh.vertices.iter()
-                .map(|v| SubnetValue::Vec3(Vec3::from_array(*v)))
-                .collect();
-            cache.insert(sub_in.id, vec![
-                SubnetValue::Mesh(input_mesh.clone()),
-                if points.is_empty() { SubnetValue::Vec3(Vec3::ZERO) } else { points[0].clone() },
-            ]);
-        }
-
-        let sub_out = match self.nodes.iter().find(|n|
-            matches!(n.node_type, SubnetNodeType::SubOutput))
-        {
+        // Find SubInput and SubOutput nodes
+        let _sub_in = match self.nodes.iter().find(|n| matches!(n.node_type, SubnetNodeType::SubInput)) {
             Some(n) => n,
-            None    => return input_mesh.clone(),
+            None => return input_mesh.clone(),
+        };
+        
+        let sub_out = match self.nodes.iter().find(|n| matches!(n.node_type, SubnetNodeType::SubOutput)) {
+            Some(n) => n,
+            None => return input_mesh.clone(),
         };
 
-        if let Some(inp) = sub_out.inputs.first() {
-            if let Some((src_id, src_out)) = inp.connected_output {
-                let out_verts: Vec<[f32; 3]> = input_mesh.vertices.iter()
-                    .map(|v| {
-                        let point_val = SubnetValue::Vec3(Vec3::from_array(*v));
-                        let result = self.eval_node_for_point(src_id, src_out, &point_val, input_mesh);
-                        match result {
-                            SubnetValue::Vec3(v3) => v3.to_array(),
-                            _ => *v,
-                        }
-                    })
-                    .collect();
-                return MeshData {
-                    vertices: out_verts,
-                    indices:  input_mesh.indices.clone(),
-                    points:   input_mesh.points.clone(),
-                        ..Default::default()
-                };
+        // Check if anything is connected to SubOutput
+        let (src_id, _src_out) = match sub_out.inputs.first().and_then(|i| i.connected_output) {
+            Some(conn) => conn,
+            None => return input_mesh.clone(),
+        };
+
+        // ✅ Create execution context with full geometry
+        let positions: Vec<Vec3> = input_mesh.vertices.iter()
+            .map(|v| Vec3::from_array(*v))
+            .collect();
+        
+        let indices: Vec<usize> = input_mesh.indices.iter()
+            .map(|&i| i as usize)
+            .collect();
+        
+        let geometry = Geometry::from_triangles(positions, indices);
+        let mut ctx = ExecutionContext::from_geometry(geometry);
+
+        // Get the execution order (topological sort from SubOutput backwards)
+        let exec_order = self.get_execution_order(src_id);
+
+        // Execute each node in order
+        for node_id in exec_order {
+            if let Err(e) = self.execute_node(node_id, &mut ctx) {
+                eprintln!("ICE execution error at node {:?}: {}", node_id, e);
+                return input_mesh.clone();
             }
         }
 
-        input_mesh.clone()
-    }
-
-    fn eval_node_for_point(
-        &self,
-        node_id: NodeId,
-        out_idx: usize,
-        point:   &SubnetValue,
-        mesh:    &MeshData,
-    ) -> SubnetValue {
-        let node = match self.nodes.iter().find(|n| n.id == node_id) {
-            Some(n) => n,
-            None    => return point.clone(),
+        // Extract result from context
+        let result_positions: Vec<[f32; 3]> = ctx.geometry.points.iter()
+            .map(|v| v.to_array())
+            .collect();
+        
+        // Get topology back out
+        let result_indices: Vec<u32> = match &ctx.geometry.topology {
+            crate::core::Topology::PolyMesh { face_indices, .. } => {
+                face_indices.iter().map(|&i| i as u32).collect()
+            }
+            crate::core::Topology::Points => vec![],
+            _ => input_mesh.indices.clone(),
         };
 
-        match &node.node_type {
-            SubnetNodeType::ConstVec3  { value } => return SubnetValue::Vec3(*value),
-            SubnetNodeType::ConstFloat { value } => return SubnetValue::Float(*value),
-            SubnetNodeType::ConstInt   { value } => return SubnetValue::Int(*value),
-            _ => {}
+        MeshData {
+            vertices: result_positions.clone(),
+            indices: result_indices,
+            points: if matches!(ctx.geometry.topology, crate::core::Topology::Points) {
+                result_positions
+            } else {
+                vec![]
+            },
+            ..Default::default()
         }
+    }
 
-        let inputs: Vec<SubnetValue> = node.inputs.iter().map(|sock| {
-            match sock.connected_output {
-                Some((src_id, src_out)) => {
-                    if self.nodes.iter().find(|n| n.id == src_id)
+    /// Get execution order via topological sort (from target backwards)
+    fn get_execution_order(&self, target_node: NodeId) -> Vec<NodeId> {
+        let mut order = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        self.visit_node(target_node, &mut visited, &mut order);
+        order.reverse(); // We built it backwards, reverse for execution order
+        order
+    }
+
+    fn visit_node(
+        &self,
+        node_id: NodeId,
+        visited: &mut std::collections::HashSet<NodeId>,
+        order: &mut Vec<NodeId>,
+    ) {
+        if visited.contains(&node_id) {
+            return;
+        }
+        visited.insert(node_id);
+
+        // Visit all upstream nodes first
+        if let Some(node) = self.nodes.iter().find(|n| n.id == node_id) {
+            for input in &node.inputs {
+                if let Some((src_id, _)) = input.connected_output {
+                    // Don't recurse into SubInput
+                    if !self.nodes.iter()
+                        .find(|n| n.id == src_id)
                         .map(|n| matches!(n.node_type, SubnetNodeType::SubInput))
                         .unwrap_or(false)
                     {
-                        if src_out == 0 { SubnetValue::Mesh(mesh.clone()) }
-                        else            { point.clone() }
-                    } else {
-                        self.eval_node_for_point(src_id, src_out, point, mesh)
+                        self.visit_node(src_id, visited, order);
                     }
                 }
-                None => point.clone(),
             }
-        }).collect();
+        }
 
-        let results = evaluate_subnet_node(&node.node_type, &inputs);
-        results.into_iter().nth(out_idx).unwrap_or_else(|| point.clone())
+        order.push(node_id);
+    }
+
+    /// Execute a single node using the new array-based system
+    fn execute_node(&self, node_id: NodeId, ctx: &mut ExecutionContext) -> Result<(), String> {
+        let node = self.nodes.iter()
+            .find(|n| n.id == node_id)
+            .ok_or_else(|| format!("Node {:?} not found", node_id))?;
+
+        match &node.node_type {
+            SubnetNodeType::SubInput => {
+                // P is already in context, nothing to do
+                Ok(())
+            }
+
+            SubnetNodeType::SubOutput => {
+                // Just pass through - result is already in P
+                Ok(())
+            }
+
+            SubnetNodeType::AddVec3 => {
+                let (a_name, b_name) = self.get_input_attribute_names(node, 0, 1)?;
+                let add = AddVec3::new(a_name, b_name, "P"); // Write to P
+                add.execute(ctx)
+            }
+
+            SubnetNodeType::SubtractVec3 => {
+                let (a_name, b_name) = self.get_input_attribute_names(node, 0, 1)?;
+                let sub = SubtractVec3::new(a_name, b_name, "P");
+                sub.execute(ctx)
+            }
+
+            SubnetNodeType::MultiplyVec3 { scalar } => {
+                let input_name = self.get_input_attribute_name(node, 0)?;
+                let mul = MultiplyVec3::new(input_name, *scalar, "P");
+                mul.execute(ctx)
+            }
+
+            SubnetNodeType::Normalize => {
+                let input_name = self.get_input_attribute_name(node, 0)?;
+                let norm = NormalizeVec3::new(input_name, "P");
+                norm.execute(ctx)
+            }
+
+            SubnetNodeType::CrossProduct => {
+                let (a_name, b_name) = self.get_input_attribute_names(node, 0, 1)?;
+                let cross = CrossProduct::new(a_name, b_name, "P");
+                cross.execute(ctx)
+            }
+
+            SubnetNodeType::DotProduct => {
+                // TODO: Implement when we have float attributes working
+                Err("DotProduct not yet implemented in new system".into())
+            }
+
+            SubnetNodeType::LerpVec3 { t } => {
+                let (a_name, b_name) = self.get_input_attribute_names(node, 0, 1)?;
+                let lerp = LerpVec3::new(a_name, b_name, *t, "P");
+                lerp.execute(ctx)
+            }
+
+            SubnetNodeType::ConstVec3 { value } => {
+                // Create an attribute filled with this constant value
+                let point_count = ctx.get_vec3("P")?.len();
+                let const_data = vec![*value; point_count];
+                ctx.set_vec3(Attribute::new("const_vec3", const_data));
+                Ok(())
+            }
+
+            SubnetNodeType::ConstFloat { value } => {
+                let point_count = ctx.get_vec3("P")?.len();
+                let const_data = vec![*value; point_count];
+                ctx.set_float(Attribute::new("const_float", const_data));
+                Ok(())
+            }
+
+            SubnetNodeType::ConstInt { value } => {
+                let point_count = ctx.get_vec3("P")?.len();
+                let const_data = vec![*value; point_count];
+                ctx.set_int(Attribute::new("const_int", const_data));
+                Ok(())
+            }
+
+            SubnetNodeType::ScatterPoints { count, seed } => {
+                let scatter = ice_nodes::ScatterPoints::new(*count, *seed);
+                scatter.execute(ctx)
+            }
+        }
+    }
+
+    /// Helper: Get attribute name from node's input connection
+    fn get_input_attribute_name(&self, node: &SubnetNode, input_idx: usize) -> Result<String, String> {
+        let input = node.inputs.get(input_idx)
+            .ok_or_else(|| format!("Input {} not found", input_idx))?;
+        
+        match input.connected_output {
+            Some((src_id, _)) => {
+                // Check if it's SubInput
+                if self.nodes.iter()
+                    .find(|n| n.id == src_id)
+                    .map(|n| matches!(n.node_type, SubnetNodeType::SubInput))
+                    .unwrap_or(false)
+                {
+                    Ok("P".to_string()) // SubInput provides P
+                } else {
+                    Ok("P".to_string()) // For now, everything reads/writes P
+                }
+            }
+            None => Ok("P".to_string()), // Default to P if not connected
+        }
+    }
+
+    /// Helper: Get two input attribute names
+    fn get_input_attribute_names(&self, node: &SubnetNode, idx_a: usize, idx_b: usize) 
+        -> Result<(String, String), String> 
+    {
+        Ok((
+            self.get_input_attribute_name(node, idx_a)?,
+            self.get_input_attribute_name(node, idx_b)?,
+        ))
     }
 }
 
 // ============================================================================
-// SUBNET STORE  (Bevy Resource)
+// SUBNET STORE  (unchanged)
 // ============================================================================
 
 #[derive(Resource, Default)]

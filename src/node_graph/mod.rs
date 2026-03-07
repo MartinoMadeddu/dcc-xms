@@ -61,9 +61,11 @@ pub struct NodeGraphState {
     pub tab_menu_screen_pos: Option<egui::Pos2>,
     pub tab_menu_canvas_pos: Option<egui::Pos2>,
     pub zoom:                f32,
-    pub selected_nodes:     Vec<NodeId>,
-    pub marquee_start:      Option<egui::Pos2>,
+    pub selected_nodes:      Vec<NodeId>,
+    pub marquee_start:       Option<egui::Pos2>,
     pub selected_connection: Option<ConnectionId>,
+    pub graph_version:       u64,
+    pub view_flag:           Option<NodeId>,  // Which node viewport displays
 }
 
 impl Default for NodeGraphState {
@@ -80,6 +82,8 @@ impl Default for NodeGraphState {
             selected_nodes: vec![],
             marquee_start:  None,
             selected_connection: None,
+            graph_version: 0,
+            view_flag: None,
         };
         s.add_node("Output".into(), NodeType::Output, egui::pos2(200.0, 400.0));
         s
@@ -87,11 +91,17 @@ impl Default for NodeGraphState {
 }
 
 impl NodeGraphState {
+    // ✅ Increment version whenever graph changes
+    fn mark_dirty(&mut self) {
+        self.graph_version = self.graph_version.wrapping_add(1);
+    }
+
     pub fn add_node(&mut self, name: String, node_type: NodeType, pos: egui::Pos2) -> NodeId {
         let id = NodeId(self.next_node_id);
         self.next_node_id += 1;
         let (inputs, outputs) = Self::create_sockets(&node_type);
         self.nodes.push(GraphNode { id, name, node_type, position: pos, inputs, outputs });
+        self.mark_dirty();
         id
     }
 
@@ -126,6 +136,7 @@ impl NodeGraphState {
             from_node: from, from_output: from_out,
             to_node: to,     to_input: to_in,
         });
+        self.mark_dirty();
     }
 
     pub fn remove_connection(&mut self, cid: ConnectionId) {
@@ -136,7 +147,9 @@ impl NodeGraphState {
             }
         }
         self.connections.retain(|c| c.id != cid);
+        self.mark_dirty();
     }
+    
     pub fn delete_selected(&mut self) {
         // Delete selected connection first (if any), nodes take priority if both set
         if !self.selected_nodes.is_empty() {
@@ -145,6 +158,10 @@ impl NodeGraphState {
                 // Skip the Output node — it can't be deleted
                 if let Some(n) = self.nodes.iter().find(|n| n.id == *nid) {
                     if matches!(n.node_type, NodeType::Output) { continue; }
+                }
+                // 👁️ NEW - Clear view flag if deleting the viewed node
+                if self.view_flag == Some(*nid) {
+                    self.view_flag = None;
                 }
                 // Remove all connections involving this node
                 let conns_to_remove: Vec<ConnectionId> = self.connections.iter()
@@ -161,21 +178,79 @@ impl NodeGraphState {
         } else if let Some(cid) = self.selected_connection.take() {
             self.remove_connection(cid);
         }
+        self.mark_dirty();
     }
 
+    // ============================================================================
+    // 👁️ NEW - VIEW FLAG SYSTEM
+    // ============================================================================
+
+    /// Toggle the view flag on a node
+    /// If the node already has the view flag, remove it (revert to Output)
+    /// Otherwise, set the view flag to this node
+    pub fn toggle_view_flag(&mut self, node_id: NodeId) {
+        if self.view_flag == Some(node_id) {
+            // Remove view flag (will show Output)
+            self.view_flag = None;
+        } else {
+            // Set view flag to this node
+            self.view_flag = Some(node_id);
+        }
+    }
+
+    /// Check if a specific node has the view flag
+    pub fn has_view_flag(&self, node_id: NodeId) -> bool {
+        self.view_flag == Some(node_id)
+    }
+
+    /// Get the node ID that should be displayed in the viewport
+    /// Returns the view flag node if set, otherwise returns Output node
+    pub fn get_viewport_node(&self) -> Option<NodeId> {
+        if let Some(flagged_node) = self.view_flag {
+            // View flag is set, use that node
+            return Some(flagged_node);
+        }
+        
+        // No view flag, fallback to Output node
+        self.nodes.iter()
+            .find(|n| matches!(n.node_type, NodeType::Output))
+            .map(|n| n.id)
+    }
+
+    /// Clear the view flag (revert to showing Output)
+    pub fn clear_view_flag(&mut self) {
+        self.view_flag = None;
+    }
+
+    // ============================================================================
+    // END VIEW FLAG SYSTEM
+    // ============================================================================
+
     // ── Viewport evaluation ───────────────────────────────────────────────────
-    // Evaluates the full operator chain from Output downward.
-    // Transforms, subnets, merges etc. all apply correctly because we follow
-    // the chain top-down and pass each node's result to the next.
-    // Returns the single final MeshData connected to Output (what the viewport shows).
+    // 👁️ MODIFIED - Now respects view flag
+    // Evaluates from the view flag node if set, otherwise from Output.
+    // This allows viewing intermediate results in the node chain.
     pub fn evaluate_for_viewport(
         &self,
         eval_subnet: &impl Fn(SubnetId, &MeshData) -> MeshData,
     ) -> Option<MeshData> {
-        let root = self.nodes.iter().find(|n| matches!(n.node_type, NodeType::Output))?;
-        let (src, _) = root.inputs.first()?.connected_output?;
+        // 👁️ Use view flag if set, otherwise use Output
+        let display_node_id = self.get_viewport_node()?;
+        
+        // If viewing a node with no output (like Output itself), walk upstream
+        let node = self.nodes.iter().find(|n| n.id == display_node_id)?;
+        
+        // If this is the Output node, get its input
+        if matches!(node.node_type, NodeType::Output) {
+            let (src, _) = node.inputs.first()?.connected_output?;
+            let mut cache = HashMap::new();
+            return self.eval_node(src, &mut cache, eval_subnet)
+                .map(|r| r.into_mesh());
+        }
+        
+        // Otherwise, evaluate the flagged node directly
         let mut cache = HashMap::new();
-        self.eval_node(src, &mut cache, eval_subnet)
+        self.eval_node(display_node_id, &mut cache, eval_subnet)
             .map(|r| r.into_mesh())
     }
 

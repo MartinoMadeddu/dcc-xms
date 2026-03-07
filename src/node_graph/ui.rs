@@ -31,6 +31,8 @@ mod xsi {
     pub const SOCK_OUT_DRAG:  Color32 = Color32::from_rgb(230, 195, 100);
     pub const SEL_RECT:       Color32 = Color32::from_rgba_premultiplied(100, 140, 200, 40);
     pub const SEL_RECT_BORDER:Color32 = Color32::from_rgb(120, 160, 220);
+    pub const VIEW_FLAG:      Color32 = Color32::from_rgb(100, 180, 255); // 👁️ NEW - Blue for active view flag
+    pub const VIEW_FLAG_HOV:  Color32 = Color32::from_rgb(150, 210, 255); // 👁️ NEW - Lighter blue on hover
 }
 
 // ============================================================================
@@ -334,7 +336,53 @@ fn draw_node(
         node_type_label(&node.node_type),
         egui::FontId::proportional(9.0 * zoom), xsi::TEXT_DIM);
 
+
     let dr = ui.allocate_rect(title_rect, egui::Sense::click_and_drag());
+
+    // ============================================================================
+    // 👁️ NEW - VIEW FLAG BUTTON
+    // ============================================================================
+    // Draw view flag button in top-right corner of title bar
+    let has_view_flag = graph.has_view_flag(id);
+    let eye_icon = if has_view_flag { "👁" } else { "○" };
+    let eye_size = 16.0 * zoom;
+    let eye_pos = egui::pos2(np.x + NODE_WIDTH * zoom - eye_size - 4.0 * zoom, np.y + 8.0 * zoom);
+    let eye_rect = egui::Rect::from_min_size(eye_pos, egui::vec2(eye_size, eye_size));
+    
+    let eye_response = ui.allocate_rect(eye_rect, egui::Sense::click());
+    
+    // Draw the eye button
+    let eye_color = if has_view_flag {
+        if eye_response.hovered() { xsi::VIEW_FLAG_HOV } else { xsi::VIEW_FLAG }
+    } else {
+        if eye_response.hovered() { xsi::TEXT } else { xsi::TEXT_DIM }
+    };
+    
+    painter.text(
+        egui::pos2(eye_pos.x + eye_size / 2.0, eye_pos.y + eye_size / 2.0),
+        egui::Align2::CENTER_CENTER,
+        eye_icon,
+        egui::FontId::proportional(12.0 * zoom),
+        eye_color
+    );
+    
+// Handle click - toggle view flag
+    if eye_response.clicked() {
+        graph.toggle_view_flag(id);
+    }
+    
+    // Tooltip - simpler API
+    if eye_response.hovered() {
+        let tooltip_text = if has_view_flag {
+            "Viewport showing this node (click to revert to Output)"
+        } else {
+            "Click to view this node's output in viewport"
+        };
+        eye_response.on_hover_text(tooltip_text);
+    }
+    // ============================================================================
+    // END VIEW_FLAG_BUTTON
+    // ============================================================================
 
     // ── Output sockets ────────────────────────────────────────────────────────
     for (i, out) in node.outputs.iter().enumerate() {

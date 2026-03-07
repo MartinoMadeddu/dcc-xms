@@ -103,9 +103,21 @@ pub fn draw_subnet_node_properties(ui: &mut egui::Ui, graph: &mut SubnetGraph) {
             ui.label("Lerp Vec3");
             ui.add(egui::Slider::new(t, 0.0..=1.0).text("t"));
         }
+        SubnetNodeType::ScatterPoints { count, seed } => {
+            ui.label("Scatter Points");
+            ui.horizontal(|ui| {
+                ui.label("Count:");
+                ui.add(egui::DragValue::new(count).speed(1).clamp_range(1..=10000));
+            });
+            ui.horizontal(|ui| {
+                ui.label("Seed:");
+                ui.add(egui::DragValue::new(seed).speed(1));
+            });
+        }
         SubnetNodeType::SubInput  => { ui.label("Subnet Input — no parameters.");  }
         SubnetNodeType::SubOutput => { ui.label("Subnet Output — no parameters."); }
         _ => { ui.label("No editable parameters."); }
+
     }
 }
 
@@ -234,6 +246,12 @@ pub fn draw_subnet_graph(ui: &mut egui::Ui, graph: &mut SubnetGraph) {
         ui.label(egui::RichText::new("Interpolate").strong());
         if ui.button("≈  Lerp").clicked() {
             graph.add_node("Lerp".into(), SubnetNodeType::LerpVec3 { t: 0.5 }, cp);
+            ui.close_menu();
+        }
+        ui.separator();
+        ui.label(egui::RichText::new("Points").strong());
+        if ui.button("→  Scatter Points").clicked() {
+            graph.add_node("Scatter".into(), SubnetNodeType::ScatterPoints { count: 100, seed: 0 }, cp);
             ui.close_menu();
         }
     });

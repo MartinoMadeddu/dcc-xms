@@ -33,10 +33,26 @@ pub fn draw_prim_inspector(
     egui::Frame::none()
         .fill(xsi::BG)
         .show(ui, |ui| {
-            let mesh_opt = get_mesh(graph);
+            // CRITICAL FIX: Only call get_mesh if cache is invalid!
+            let selected_node = graph.selected_node;
+            let graph_version = graph.graph_version;
+            
+            // Clone the mesh so we don't hold a reference to state
+            let mesh = if state.is_cache_valid(selected_node, graph_version) {
+                // ✅ Cache hit - clone cached mesh (cheap compared to cooking!)
+                state.get_cached_mesh().cloned()
+            } else {
+                // ✅ Cache miss - cook and cache
+                if let Some(fresh_mesh) = get_mesh(graph) {
+                    state.update_cache(selected_node, fresh_mesh.clone(), graph_version);
+                    Some(fresh_mesh)
+                } else {
+                    None
+                }
+            };
 
             // ── Path breadcrumb ───────────────────────────────────────────────
-            let path_str = if let Some(id) = graph.selected_node {
+            let path_str = if let Some(id) = selected_node {
                 graph.nodes.iter()
                     .find(|n| n.id == id)
                     .map(|n| format!("/{}", n.name))
@@ -58,7 +74,7 @@ pub fn draw_prim_inspector(
                     );
                 });
 
-            let Some(mesh) = mesh_opt else {
+            let Some(mesh) = mesh else {
                 ui.add_space(12.0);
                 ui.centered_and_justified(|ui| {
                     ui.label(egui::RichText::new("No mesh data for selected node.")
@@ -99,10 +115,10 @@ pub fn draw_prim_inspector(
 
             ui.separator();
 
-            // ── Spreadsheet ───────────────────────────────────────────────────
+            // ── Spreadsheet (rest unchanged) ──────────────────────────────────
             match state.active_tab {
+                // ... rest of your existing code ...
                 PrimInspectorTab::Vertex => {
-                    // Always show P (position), then N if present, then other vertex vars
                     let mut cols: Vec<(&str, Vec<Vec<f32>>)> = vec![
                         ("P", mesh.vertices.iter()
                             .map(|v| vec![v[0], v[1], v[2]]).collect()),
@@ -112,7 +128,6 @@ pub fn draw_prim_inspector(
                             cols.push((&pv.name, pv.values.clone()));
                         }
                     }
-                    // Insert N after P if it exists
                     if !mesh.normals.is_empty() {
                         cols.insert(1, ("N", mesh.normals.iter()
                             .map(|n| vec![n[0], n[1], n[2]]).collect()));
@@ -120,8 +135,6 @@ pub fn draw_prim_inspector(
                     draw_spreadsheet(ui, state, vertex_count, &cols);
                 }
                 PrimInspectorTab::Uniform => {
-                    // Show face indices as rows, face primvars as columns
-                    // Reconstruct faces from triangulated indices (groups of 3)
                     let face_rows: Vec<Vec<f32>> = (0..face_count)
                         .map(|f| {
                             let base = f * 3;
@@ -175,7 +188,7 @@ pub fn draw_prim_inspector(
 }
 
 // ── Tab button ────────────────────────────────────────────────────────────────
-
+// Update tab_btn to use the new method
 fn tab_btn(ui: &mut egui::Ui, state: &mut PrimInspectorState, tab: PrimInspectorTab, label: &str) {
     let is_active = state.active_tab == tab;
     let btn = egui::Button::new(
@@ -188,10 +201,11 @@ fn tab_btn(ui: &mut egui::Ui, state: &mut PrimInspectorState, tab: PrimInspector
     .min_size(egui::vec2(0.0, 22.0));
 
     if ui.add(btn).clicked() {
-        state.active_tab  = tab;
-        state.row_offset  = 0;
+        state.set_active_tab(tab);  // ✅ Use new method
     }
 }
+
+
 
 // ── Spreadsheet grid ──────────────────────────────────────────────────────────
 
