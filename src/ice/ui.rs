@@ -5,7 +5,7 @@ use super::{SubnetGraph, SubnetNode};
 
 const NODE_W:   f32 = 160.0;
 const NODE_H:   f32 = 60.0;
-const SOCK_R:   f32 = 8.0;
+const SOCK_R:   f32 = 5.0;
 const SOCK_HIT: f32 = 22.0; // large invisible hit area
 const ROUNDING: f32 = 8.0;
 

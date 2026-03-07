@@ -4,8 +4,8 @@ use crate::types::{ConnectionId, NodeId, NodeType, SubnetId, node_type_icon};
 use super::{GraphNode, NodeGraphState};
 
 pub const NODE_WIDTH:  f32 = 180.0;
-pub const NODE_HEIGHT: f32 = 70.0;
-const SOCKET_RADIUS:   f32 = 7.0;
+pub const NODE_HEIGHT: f32 = 50.0;
+const SOCKET_RADIUS:   f32 = 6.0;
 const SOCKET_HIT:      f32 = 22.0;
 const NODE_ROUNDING:   f32 = 8.0;
 
@@ -288,7 +288,7 @@ fn node_type_label(t: &NodeType) -> &'static str {
         NodeType::Merge                => "Merge",
         NodeType::ScatterPoints { .. } => "Scatter Points",
         NodeType::CopyToPoints         => "Copy to Points",
-        NodeType::Subnet { .. }        => "Subnet",
+        NodeType::Subnet { .. }        => "Integrated Creation Engine",
         NodeType::Output               => "Output",
     }
 }
@@ -495,10 +495,10 @@ fn add_node_menu(ui: &mut egui::Ui, graph: &mut NodeGraphState, cp: egui::Pos2) 
         graph.add_node("CopyToPoints".into(), NodeType::CopyToPoints, cp); added = true;
     }
     ui.separator();
-    ui.label(egui::RichText::new("Container").strong());
-    if ui.button("▣  Subnet").clicked() {
-        graph.add_node("Subnet".into(), NodeType::Subnet {
-            id: SubnetId(usize::MAX), name: "Subnet".into() }, cp); added = true;
+    ui.label(egui::RichText::new("Integrated Creation Engine").strong());
+    if ui.button("▣  ICE").clicked() {
+        graph.add_node("ICE".into(), NodeType::Subnet {
+            id: SubnetId(usize::MAX), name: "ICE".into() }, cp); added = true;
     }
     if added { ui.close_menu(); }
     added

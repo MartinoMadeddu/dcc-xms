@@ -3,7 +3,7 @@ mod node_graph;
 mod scene_graph;
 mod properties;
 mod viewport;
-mod subnet;
+mod ice;
 mod usd_loader;
 mod prim_inspector;
 
@@ -14,7 +14,7 @@ use types::{MainCamera, GeneratedMesh, GroundGrid, MeshData, SceneHierarchy, Sub
 use node_graph::NodeGraphState;
 use scene_graph::OperatorStack;
 use viewport::camera::{CameraOrbitState, camera_controller, focus_camera, draw_origin_label};
-use subnet::{SubnetStore, GraphNavigation, ui::{draw_subnet_graph, draw_breadcrumb}};
+use ice::{SubnetStore, GraphNavigation, ui::{draw_subnet_graph, draw_breadcrumb}};
 use node_graph::ui::draw_node_graph;
 use scene_graph::ui::{draw_scene_explorer, draw_operator_stack};
 use properties::ui::draw_properties_panel;

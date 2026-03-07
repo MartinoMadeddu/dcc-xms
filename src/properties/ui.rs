@@ -3,8 +3,8 @@ use bevy_egui::egui;
 use crate::types::{NodeType, node_type_label};
 use crate::node_graph::NodeGraphState;
 use crate::scene_graph::SceneGraph;
-use crate::subnet::{SubnetStore, GraphNavigation};
-use crate::subnet::ui::draw_subnet_node_properties;
+use crate::ice::{SubnetStore, GraphNavigation};
+use crate::ice::ui::draw_subnet_node_properties;
 
 mod xsi {
     use bevy_egui::egui::Color32;
