@@ -34,7 +34,7 @@ fn main() {
         .init_resource::<GraphNavigation>()
         .init_resource::<ViewportRect>()
         .init_resource::<PrimInspectorState>()
-        .add_systems(Startup, setup_scene)
+        .add_systems(Startup, (setup_scene, setup_egui_theme))
         .add_systems(Update, (
             dcc_ui,
             update_operator_stack,
@@ -47,7 +47,11 @@ fn main() {
         ))
         .run();
 }
+// -- Egui theme setup ------------------------------------------------
 
+fn setup_egui_theme(mut contexts: EguiContexts) {
+    apply_grey_theme(contexts.ctx_mut());
+}
 // ── Global egui theme ─────────────────────────────────────────────────────────
 
 fn apply_grey_theme(ctx: &egui::Context) {
@@ -97,13 +101,13 @@ fn dcc_ui(
     windows:        Query<&Window>,
 ) {
     let ctx = contexts.ctx_mut();
-    apply_grey_theme(ctx);
 
-    let win_h = windows.get_single().map(|w| w.physical_height() as f32).unwrap_or(600.0);
-    let win_w = windows.get_single().map(|w| w.physical_width()  as f32).unwrap_or(800.0);
-    let scale = ctx.pixels_per_point();
-    let win_w_pts = win_w / scale;
-    let win_h_pts = win_h / scale;
+    let (win_w, win_h) = windows.get_single()
+        .map(|w| (w.physical_width() as f32, w.physical_height() as f32))
+        .unwrap_or((800.0, 600.0));
+    let scale          = ctx.pixels_per_point();
+    let win_w_pts      = win_w / scale;
+    let win_h_pts      = win_h / scale;
     let mut used_right_pts = 0.0f32;
 
     // ── Properties panel ─────────────────────────────────────────────────────
