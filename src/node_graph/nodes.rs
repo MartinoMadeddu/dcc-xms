@@ -8,7 +8,7 @@ use std::path::Path;
 pub fn evaluate_node_type(
     node_type:   &NodeType,
     inputs:      &[EvalResult],
-    eval_subnet: &impl Fn(SubnetId, &MeshData) -> MeshData,
+    eval_subnet: &impl Fn(SubnetId, &MeshData, Option<&MeshData>) -> MeshData,
 ) -> Option<EvalResult> {
     match node_type {
         NodeType::CreateCube   { size }             => Some(EvalResult::Single(create_cube(*size))),
@@ -53,9 +53,15 @@ pub fn evaluate_node_type(
                 Some(EvalResult::Single(copy_to_points(&inputs[0].as_mesh(), &inputs[1].as_mesh())))
             } else { None },
 
-        NodeType::Subnet { id, .. } =>
-            inputs.first()
-                .map(|r| EvalResult::Single(eval_subnet(*id, &r.as_mesh()))),
+        NodeType::Subnet { id, .. } => {
+            // First input is the main geometry, second (if exists) is template
+            let main_geo = inputs.first().map(|r| r.as_mesh());
+            let template_geo = inputs.get(1).map(|r| r.as_mesh());
+            
+            main_geo.map(|geo| {
+                EvalResult::Single(eval_subnet(*id, &geo, template_geo.as_ref()))
+            })
+        }
 
         NodeType::Output => inputs.first().cloned(),
     }

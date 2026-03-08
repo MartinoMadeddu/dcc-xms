@@ -107,7 +107,7 @@ pub fn draw_subnet_node_properties(ui: &mut egui::Ui, graph: &mut SubnetGraph) {
             ui.label("Scatter Points");
             ui.horizontal(|ui| {
                 ui.label("Count:");
-                ui.add(egui::DragValue::new(count).speed(1).clamp_range(1..=10000));
+                ui.add(egui::DragValue::new(count).speed(1).range(1..=10000));
             });
             ui.horizontal(|ui| {
                 ui.label("Seed:");
@@ -252,6 +252,16 @@ pub fn draw_subnet_graph(ui: &mut egui::Ui, graph: &mut SubnetGraph) {
         ui.label(egui::RichText::new("Points").strong());
         if ui.button("→  Scatter Points").clicked() {
             graph.add_node("Scatter".into(), SubnetNodeType::ScatterPoints { count: 100, seed: 0 }, cp);
+            ui.close_menu();
+        }
+        ui.separator();
+        ui.label(egui::RichText::new("Geometry").strong());
+        if ui.button("📦  Get Template").clicked() {
+            graph.add_node("GetTemplate".into(), SubnetNodeType::GetTemplate, cp);
+            ui.close_menu();
+        }
+        if ui.button("❇  Copy to Points").clicked() {
+            graph.add_node("CopyToPoints".into(), SubnetNodeType::CopyToPoints, cp);
             ui.close_menu();
         }
     });

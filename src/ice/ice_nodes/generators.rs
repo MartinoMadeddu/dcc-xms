@@ -1,6 +1,6 @@
 //! Geometry generation nodes
 
-use crate::core::{Attribute, Topology};
+use crate::core::Topology;
 use crate::ice::ops::{ExecutionContext, IceNode};
 use bevy::prelude::*;
 
@@ -73,12 +73,145 @@ impl IceNode for ScatterPoints {
         ctx.geometry.points = scattered;
         ctx.geometry.topology = Topology::Points;
         ctx.geometry.clear_attributes(); // Scattered points have no attributes yet
-
+        
         Ok(())
     }
 
     fn name(&self) -> &str {
         "ScatterPoints"
+    }
+}
+
+// ============================================================================
+// COPY TO POINTS
+// ============================================================================
+
+/// Copy template geometry to each point in the current geometry
+/// 
+/// Requires:
+/// - Current geometry with points (P attribute)
+/// - Template geometry in external context (passed via subnet's template input)
+#[derive(Clone, Debug, Default)]
+pub struct CopyToPoints;
+
+impl CopyToPoints {
+    pub fn new() -> Self {
+        Self
+    }
+}
+impl IceNode for CopyToPoints {
+    fn execute(&self, ctx: &mut ExecutionContext) -> Result<(), String> {
+        // Get current points (where to copy to)
+        let current_points = ctx.geometry.points.clone();
+        
+        if current_points.is_empty() {
+            return Err("CopyToPoints: No points to copy to".into());
+        }
+
+        // Get template geometry from external context and clone what we need
+        let template = ctx.get_external_geometry("template")
+            .ok_or_else(|| {
+                "CopyToPoints: No template geometry available. \
+                 Connect a geometry to the ICE subnet node's template input.".to_string()
+            })?;
+
+        if template.points.is_empty() {
+            return Err("CopyToPoints: Template has no points".into());
+        }
+
+        // ✅ Clone template data upfront to avoid borrow issues
+        let template_points = template.points.clone();
+        let template_topology = template.topology.clone();
+
+        // Copy template to each point
+        let mut out_points = Vec::new();
+        let mut out_indices = Vec::new();
+
+        for target_pos in &current_points {
+            let offset = out_points.len();
+            
+            // Copy template points, offset by target position
+            for template_pt in &template_points {
+                out_points.push(*template_pt + *target_pos);
+            }
+
+            // Copy template topology, offset indices
+            match &template_topology {
+                Topology::PolyMesh { face_indices, .. } => {
+                    out_indices.extend(
+                        face_indices.iter().map(|&idx| idx + offset)
+                    );
+                }
+                _ => {}
+            }
+        }
+
+        // Update context geometry
+        ctx.geometry.points = out_points;
+        
+        // Update topology
+        match &template_topology {
+            Topology::PolyMesh { face_counts, .. } => {
+                // Replicate face counts for each instance
+                let mut new_face_counts = Vec::new();
+                for _ in 0..current_points.len() {
+                    new_face_counts.extend(face_counts);
+                }
+                ctx.geometry.topology = Topology::PolyMesh {
+                    face_counts: new_face_counts,
+                    face_indices: out_indices,
+                };
+            }
+            _ => {
+                ctx.geometry.topology = Topology::Points;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn name(&self) -> &str {
+        "CopyToPoints"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::Geometry;
+
+    #[test]
+    fn test_copy_to_points() {
+        // Create target points (where to copy to)
+        let target_points = vec![
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(10.0, 0.0, 0.0),
+            Vec3::new(0.0, 10.0, 0.0),
+        ];
+        let target_geo = Geometry::from_points(target_points);
+        
+        // Create template (a simple triangle to copy)
+        let template_points = vec![
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+        ];
+        let template_indices = vec![0, 1, 2];
+        let template_geo = Geometry::from_triangles(template_points, template_indices);
+        
+        // Setup execution context
+        let mut ctx = ExecutionContext::from_geometry(target_geo);
+        ctx.add_external_geometry("template", template_geo);
+        
+        // Execute CopyToPoints
+        let copy = CopyToPoints::new();
+        copy.execute(&mut ctx).unwrap();
+        
+        // Should have 3 copies × 3 points = 9 points total
+        assert_eq!(ctx.geometry.point_count(), 9);
+        
+        // Should have 3 triangles
+        assert_eq!(ctx.geometry.primitive_count(), 3);
     }
 }
 

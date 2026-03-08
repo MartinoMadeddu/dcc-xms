@@ -208,7 +208,7 @@ fn dcc_ui(
             let get_mesh = |g: &NodeGraphState| -> Option<MeshData> {
                 let id = g.selected_node?;
                 let mut cache = std::collections::HashMap::new();
-                let eval_subnet = |_sid: SubnetId, mesh: &MeshData| mesh.clone();
+                let eval_subnet = |_sid: SubnetId, mesh: &MeshData, _template: Option<&MeshData>| mesh.clone();
                 g.eval_node(id, &mut cache, &eval_subnet)
                  .map(|r| r.into_mesh())
             };
@@ -273,9 +273,11 @@ fn update_scene_hierarchy(
 ) {
     if !graph.is_changed() && !subnets.is_changed() { return; }
 
-    let eval_subnet = |sid: SubnetId, mesh: &MeshData| -> MeshData {
-        subnets.get(sid)
-            .map(|sg| sg.evaluate(mesh))
+    // Update the closure to accept template parameter
+    let eval_subnet = |sid: SubnetId, mesh: &MeshData, template: Option<&MeshData>| -> MeshData {
+        subnets
+            .get(sid)
+            .map(|sg| sg.evaluate(mesh, template))
             .unwrap_or_else(|| mesh.clone())
     };
 
@@ -294,9 +296,10 @@ fn update_generated_meshes(
     if !graph.is_changed() && !subnets.is_changed() { return; }
     for e in query.iter() { commands.entity(e).despawn(); }
 
-    let eval_subnet = |sid: SubnetId, mesh: &MeshData| -> MeshData {
-        subnets.get(sid)
-            .map(|sg| sg.evaluate(mesh))
+    let eval_subnet = |sid: SubnetId, mesh: &MeshData, template: Option<&MeshData>| -> MeshData {
+        subnets
+            .get(sid)
+            .map(|sg| sg.evaluate(mesh, template))
             .unwrap_or_else(|| mesh.clone())
     };
 

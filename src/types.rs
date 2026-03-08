@@ -103,6 +103,8 @@ pub enum SubnetNodeType {
     ConstInt   { value: i32  },
 
     ScatterPoints { count: u32, seed: u32 },
+    GetTemplate,
+    CopyToPoints,
 }
 
 pub fn subnet_node_icon(t: &SubnetNodeType) -> &'static str {
@@ -120,6 +122,8 @@ pub fn subnet_node_icon(t: &SubnetNodeType) -> &'static str {
         SubnetNodeType::ConstFloat { .. }   => "→f",
         SubnetNodeType::ConstInt { .. }     => "→i",
         SubnetNodeType::ScatterPoints { .. } => "⁙",
+        SubnetNodeType::GetTemplate          => "📄",
+        SubnetNodeType::CopyToPoints         => "📦",
     }
 }
 

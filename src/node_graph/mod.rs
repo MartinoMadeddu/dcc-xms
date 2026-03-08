@@ -118,7 +118,7 @@ impl NodeGraphState {
             NodeType::ScatterPoints { .. }  => (vec![i("Surface")], vec![o("Points")]),
             NodeType::CopyToPoints          => (vec![i("Template"), i("Points")], vec![o("Geo")]),
             NodeType::Output                => (vec![i("Scene")], vec![]),
-            NodeType::Subnet { .. }         => (vec![i("In")], vec![o("Out")]),
+            NodeType::Subnet { .. }         => (vec![i("Geometry"), i("Template")], vec![o("Out")]),
         }
     }
 
@@ -232,7 +232,7 @@ impl NodeGraphState {
     // This allows viewing intermediate results in the node chain.
     pub fn evaluate_for_viewport(
         &self,
-        eval_subnet: &impl Fn(SubnetId, &MeshData) -> MeshData,
+        eval_subnet: &impl Fn(SubnetId, &MeshData, Option<&MeshData>) -> MeshData,
     ) -> Option<MeshData> {
         // 👁️ Use view flag if set, otherwise use Output
         let display_node_id = self.get_viewport_node()?;
@@ -259,7 +259,7 @@ impl NodeGraphState {
         &self,
         id:          NodeId,
         cache:       &mut HashMap<NodeId, Option<EvalResult>>,
-        eval_subnet: &impl Fn(SubnetId, &MeshData) -> MeshData,
+        eval_subnet: &impl Fn(SubnetId, &MeshData, Option<&MeshData>) -> MeshData,
     ) -> Option<EvalResult> {
         if let Some(cached) = cache.get(&id) { return cached.clone(); }
 
@@ -282,7 +282,7 @@ impl NodeGraphState {
     // appear as scene objects.
     pub fn evaluate_for_scene(
         &self,
-        eval_subnet: &impl Fn(SubnetId, &MeshData) -> MeshData,
+        eval_subnet: &impl Fn(SubnetId, &MeshData, Option<&MeshData>) -> MeshData,
     ) -> Vec<(NodeId, String, EvalResult)> {
         let mut cache  = HashMap::new();
         let mut out    = vec![];
@@ -303,7 +303,7 @@ impl NodeGraphState {
         &self,
         id:          NodeId,
         cache:       &mut HashMap<NodeId, Option<EvalResult>>,
-        eval_subnet: &impl Fn(SubnetId, &MeshData) -> MeshData,
+        eval_subnet: &impl Fn(SubnetId, &MeshData, Option<&MeshData>) -> MeshData,
         out:         &mut Vec<(NodeId, String, EvalResult)>,
         visited:     &mut std::collections::HashSet<NodeId>,
     ) {

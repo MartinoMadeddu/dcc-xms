@@ -109,9 +109,9 @@ impl SubnetGraph {
         };
         match t {
             SubnetNodeType::SubInput =>
-                (vec![], vec![o("Mesh", "Mesh"), o("Points", "Vec3")]),
+                (vec![], vec![o("Mesh", "Mesh"), o("Points", "Vec3"), o("Template", "Mesh")]),
             SubnetNodeType::SubOutput =>
-                (vec![i("Points", "Vec3"), i("Mesh", "Mesh")], vec![o("Out", "Mesh")]),
+                (vec![i("Output", "AnyMesh")], vec![o("Out", "AnyMesh")]),
             SubnetNodeType::AddVec3 | SubnetNodeType::SubtractVec3 | SubnetNodeType::CrossProduct =>
                 (vec![i("A", "Vec3"), i("B", "Vec3")], vec![o("Result", "Vec3")]),
             SubnetNodeType::MultiplyVec3 { .. } =>
@@ -125,9 +125,13 @@ impl SubnetGraph {
             SubnetNodeType::ConstVec3  { .. } => (vec![], vec![o("Value", "Vec3")]),
             SubnetNodeType::ConstFloat { .. } => (vec![], vec![o("Value", "Float")]),
             SubnetNodeType::ConstInt   { .. } => (vec![], vec![o("Value", "Int")]),
-            // ✅ NEW - ScatterPoints
             SubnetNodeType::ScatterPoints { .. } =>
                 (vec![i("Geometry", "Mesh")], vec![o("Points", "Points")]),
+
+            SubnetNodeType::GetTemplate =>
+                (vec![], vec![o("Template", "Mesh")]),
+            SubnetNodeType::CopyToPoints =>
+                (vec![i("Points", "Points"), i("Template", "Mesh")], vec![o("Instances", "Mesh")]),
         }
     }
 
@@ -158,10 +162,10 @@ impl SubnetGraph {
     }
 
     // ============================================================================
-    // ✅ NEW EVALUATION - Array-based, graph traversed once
+    // NEW EVALUATION - Array-based, graph traversed once
     // ============================================================================
 
-    pub fn evaluate(&self, input_mesh: &MeshData) -> MeshData {
+    pub fn evaluate(&self, input_mesh: &MeshData, template_mesh: Option<&MeshData>) -> MeshData {
         // Find SubInput and SubOutput nodes
         let _sub_in = match self.nodes.iter().find(|n| matches!(n.node_type, SubnetNodeType::SubInput)) {
             Some(n) => n,
@@ -174,12 +178,12 @@ impl SubnetGraph {
         };
 
         // Check if anything is connected to SubOutput
-        let (src_id, _src_out) = match sub_out.inputs.first().and_then(|i| i.connected_output) {
+        let (src_id, _src_out) = match sub_out.inputs[0].connected_output {
             Some(conn) => conn,
             None => return input_mesh.clone(),
         };
 
-        // ✅ Create execution context with full geometry
+        // Create execution context with full geometry
         let positions: Vec<Vec3> = input_mesh.vertices.iter()
             .map(|v| Vec3::from_array(*v))
             .collect();
@@ -190,6 +194,18 @@ impl SubnetGraph {
         
         let geometry = Geometry::from_triangles(positions, indices);
         let mut ctx = ExecutionContext::from_geometry(geometry);
+
+        // ✅ NEW: Add template geometry to external context if provided
+        if let Some(template) = template_mesh {
+            let template_positions: Vec<Vec3> = template.vertices.iter()
+                .map(|v| Vec3::from_array(*v))
+                .collect();
+            let template_indices: Vec<usize> = template.indices.iter()
+                .map(|&i| i as usize)
+                .collect();
+            let template_geo = Geometry::from_triangles(template_positions, template_indices);
+            ctx.add_external_geometry("template", template_geo);
+        }
 
         // Get the execution order (topological sort from SubOutput backwards)
         let exec_order = self.get_execution_order(src_id);
@@ -217,23 +233,27 @@ impl SubnetGraph {
         };
 
         MeshData {
-            vertices: result_positions.clone(),
+            vertices: if matches!(ctx.geometry.topology, crate::core::Topology::Points) {
+                vec![]                   // point clouds have no renderable vertices
+            } else {
+                result_positions.clone()
+            },
             indices: result_indices,
             points: if matches!(ctx.geometry.topology, crate::core::Topology::Points) {
-                result_positions
+                result_positions         // scatter output lives here
             } else {
                 vec![]
             },
             ..Default::default()
         }
     }
-
+    
     /// Get execution order via topological sort (from target backwards)
     fn get_execution_order(&self, target_node: NodeId) -> Vec<NodeId> {
         let mut order = Vec::new();
         let mut visited = std::collections::HashSet::new();
         self.visit_node(target_node, &mut visited, &mut order);
-        order.reverse(); // We built it backwards, reverse for execution order
+        //order.reverse(); // We built it backwards, reverse for execution order
         order
     }
 
@@ -350,6 +370,15 @@ impl SubnetGraph {
             SubnetNodeType::ScatterPoints { count, seed } => {
                 let scatter = ice_nodes::ScatterPoints::new(*count, *seed);
                 scatter.execute(ctx)
+            }
+            SubnetNodeType::GetTemplate => {
+                let get_template = ice_nodes::GetTemplate::new();
+                get_template.execute(ctx)
+            }
+            
+            SubnetNodeType::CopyToPoints => {
+                let copy = ice_nodes::CopyToPoints::new();
+                copy.execute(ctx)
             }
         }
     }
