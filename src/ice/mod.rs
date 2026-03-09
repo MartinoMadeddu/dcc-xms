@@ -9,7 +9,7 @@ use bevy::prelude::*;
 use bevy_egui::egui;
 use crate::types::{
     ConnectionId, MeshData, NodeId, SubnetId,
-    SubnetNodeType,
+    SubnetNodeType, GetAttributeTarget,
 };
 use crate::core::{Attribute, Geometry};
 use ops::{ExecutionContext, IceNode};  // ✅ Added IceNode trait import!
@@ -130,6 +130,8 @@ impl SubnetGraph {
 
             SubnetNodeType::GetTemplate =>
                 (vec![], vec![o("Template", "Mesh")]),
+            SubnetNodeType::GetAttribute { .. } =>
+                (vec![], vec![o("Value", "Any")]),
             SubnetNodeType::CopyToPoints =>
                 (vec![i("Points", "Points"), i("Template", "Mesh")], vec![o("Instances", "Mesh")]),
         }
@@ -171,7 +173,7 @@ impl SubnetGraph {
             Some(n) => n,
             None => return input_mesh.clone(),
         };
-        
+
         let sub_out = match self.nodes.iter().find(|n| matches!(n.node_type, SubnetNodeType::SubOutput)) {
             Some(n) => n,
             None => return input_mesh.clone(),
@@ -183,34 +185,39 @@ impl SubnetGraph {
             None => return input_mesh.clone(),
         };
 
-        // Create execution context with full geometry
-        let positions: Vec<Vec3> = input_mesh.vertices.iter()
-            .map(|v| Vec3::from_array(*v))
-            .collect();
-        
-        let indices: Vec<usize> = input_mesh.indices.iter()
-            .map(|&i| i as usize)
-            .collect();
-        
-        let geometry = Geometry::from_triangles(positions, indices);
-        let mut ctx = ExecutionContext::from_geometry(geometry);
+        // FIX: populate standard attributes on a local copy BEFORE building context
+        let mut owned = input_mesh.clone();
+        owned.ensure_standard_attributes();
 
-        // ✅ NEW: Add template geometry to external context if provided
-        if let Some(template) = template_mesh {
-            let template_positions: Vec<Vec3> = template.vertices.iter()
-                .map(|v| Vec3::from_array(*v))
-                .collect();
-            let template_indices: Vec<usize> = template.indices.iter()
-                .map(|&i| i as usize)
-                .collect();
-            let template_geo = Geometry::from_triangles(template_positions, template_indices);
-            ctx.add_external_geometry("template", template_geo);
+        // Build execution context from the now-fully-populated mesh
+        let positions: Vec<Vec3> = owned.positions.values.iter().copied().collect();
+        let indices: Vec<usize>  = owned.indices.iter().map(|&i| i as usize).collect();
+        let geometry = Geometry::from_triangles(positions, indices);
+        let mut ctx  = ExecutionContext::from_geometry(geometry);
+
+        // Bridge all MeshData attributes into the ICE context
+        // so every node can read ptIndex, primIndex, N, uv etc. by name
+        for (_name, attr) in &owned.attributes {
+            match attr {
+                crate::types::AnyAttribute::Vec3(a) =>
+                    ctx.set_vec3(Attribute::new(a.name.clone(), a.values.clone())),
+                crate::types::AnyAttribute::Float(a) =>
+                    ctx.set_float(Attribute::new(a.name.clone(), a.values.clone())),
+                crate::types::AnyAttribute::Int(a) =>
+                    ctx.set_int(Attribute::new(a.name.clone(), a.values.clone())),
+                _ => {} // Vec2, Vec4, Quat, Bool — not yet supported in ICE context
+            }
         }
 
-        // Get the execution order (topological sort from SubOutput backwards)
-        let exec_order = self.get_execution_order(src_id);
+        // Add template geometry to external context if provided
+        if let Some(template) = template_mesh {
+            let t_pos: Vec<Vec3>   = template.positions.values.iter().copied().collect();
+            let t_idx: Vec<usize>  = template.indices.iter().map(|&i| i as usize).collect();
+            ctx.add_external_geometry("template", Geometry::from_triangles(t_pos, t_idx));
+        }
 
-        // Execute each node in order
+        // Topological sort from SubOutput backwards, then execute
+        let exec_order = self.get_execution_order(src_id);
         for node_id in exec_order {
             if let Err(e) = self.execute_node(node_id, &mut ctx) {
                 eprintln!("ICE execution error at node {:?}: {}", node_id, e);
@@ -218,32 +225,21 @@ impl SubnetGraph {
             }
         }
 
-        // Extract result from context
-        let result_positions: Vec<[f32; 3]> = ctx.geometry.points.iter()
-            .map(|v| v.to_array())
-            .collect();
-        
-        // Get topology back out
+        // Extract result
+        let result_positions: Vec<Vec3> = ctx.geometry.points.clone();
         let result_indices: Vec<u32> = match &ctx.geometry.topology {
-            crate::core::Topology::PolyMesh { face_indices, .. } => {
-                face_indices.iter().map(|&i| i as u32).collect()
-            }
+            crate::core::Topology::PolyMesh { face_indices, .. } =>
+                face_indices.iter().map(|&i| i as u32).collect(),
             crate::core::Topology::Points => vec![],
             _ => input_mesh.indices.clone(),
         };
 
+        let is_points = matches!(ctx.geometry.topology, crate::core::Topology::Points);
         MeshData {
-            vertices: if matches!(ctx.geometry.topology, crate::core::Topology::Points) {
-                vec![]                   // point clouds have no renderable vertices
-            } else {
-                result_positions.clone()
-            },
+            positions: crate::types::Attribute::vertex("P",
+                if is_points { vec![] } else { result_positions.clone() }),
             indices: result_indices,
-            points: if matches!(ctx.geometry.topology, crate::core::Topology::Points) {
-                result_positions         // scatter output lives here
-            } else {
-                vec![]
-            },
+            points:  if is_points { result_positions } else { vec![] },
             ..Default::default()
         }
     }
@@ -374,6 +370,24 @@ impl SubnetGraph {
             SubnetNodeType::GetTemplate => {
                 let get_template = ice_nodes::GetTemplate::new();
                 get_template.execute(ctx)
+            }
+
+            SubnetNodeType::GetAttribute { target } => {
+                let name = match target {
+                    GetAttributeTarget::P          => "P",
+                    GetAttributeTarget::N          => "N",
+                    GetAttributeTarget::PtIndex    => "ptIndex",
+                    GetAttributeTarget::PrimIndex  => "primIndex",
+                    GetAttributeTarget::PtsNumber  => "ptsNumber",
+                    GetAttributeTarget::PrimsNumber => "primsNumber",
+                    GetAttributeTarget::Uv         => "uv",
+                    GetAttributeTarget::Custom(s)  => s.as_str(),
+                };
+                // Verify the attribute exists, error clearly if not
+                if ctx.get_vec3(name).is_err() && ctx.get_int(name).is_err() && ctx.get_float(name).is_err() {
+                    return Err(format!("getAttribute: '{}' not found in context", name));
+                }
+                Ok(()) // data is already in ctx, downstream nodes read by name
             }
             
             SubnetNodeType::CopyToPoints => {

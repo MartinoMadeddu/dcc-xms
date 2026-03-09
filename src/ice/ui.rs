@@ -1,6 +1,6 @@
 use bevy::prelude::Vec3;
 use bevy_egui::egui;
-use crate::types::{ConnectionId, SubnetNodeType, subnet_node_icon};
+use crate::types::{ConnectionId, SubnetNodeType, GetAttributeTarget, subnet_node_icon};
 use super::{SubnetGraph, SubnetNode};
 
 const NODE_W:   f32 = 160.0;
@@ -116,6 +116,47 @@ pub fn draw_subnet_node_properties(ui: &mut egui::Ui, graph: &mut SubnetGraph) {
         }
         SubnetNodeType::SubInput  => { ui.label("Subnet Input — no parameters.");  }
         SubnetNodeType::SubOutput => { ui.label("Subnet Output — no parameters."); }
+
+        SubnetNodeType::GetAttribute { target } => {
+            ui.label("Attribute");
+            let current = match target {
+                GetAttributeTarget::P           => 0,
+                GetAttributeTarget::N           => 1,
+                GetAttributeTarget::PtIndex     => 2,
+                GetAttributeTarget::PrimIndex   => 3,
+                GetAttributeTarget::PtsNumber   => 4,
+                GetAttributeTarget::PrimsNumber => 5,
+                GetAttributeTarget::Uv          => 6,
+                GetAttributeTarget::Custom(_)   => 7,
+            };
+            let options = ["P", "N", "ptIndex", "primIndex", 
+                        "ptsNumber", "primsNumber", "uv", "Custom"];
+            let mut selected = current;
+            egui::ComboBox::from_id_source("get_attr_dropdown")
+                .selected_text(options[selected])
+                .show_ui(ui, |ui| {
+                    for (i, label) in options.iter().enumerate() {
+                        ui.selectable_value(&mut selected, i, *label);
+                    }
+                });
+            if selected != current {
+                *target = match selected {
+                    0 => GetAttributeTarget::P,
+                    1 => GetAttributeTarget::N,
+                    2 => GetAttributeTarget::PtIndex,
+                    3 => GetAttributeTarget::PrimIndex,
+                    4 => GetAttributeTarget::PtsNumber,
+                    5 => GetAttributeTarget::PrimsNumber,
+                    6 => GetAttributeTarget::Uv,
+                    _ => GetAttributeTarget::Custom(String::new()),
+                };
+            }
+            // Custom name text input
+            if let GetAttributeTarget::Custom(ref mut name) = target {
+                ui.text_edit_singleline(name);
+            }
+        }
+
         _ => { ui.label("No editable parameters."); }
 
     }
@@ -258,6 +299,10 @@ pub fn draw_subnet_graph(ui: &mut egui::Ui, graph: &mut SubnetGraph) {
         ui.label(egui::RichText::new("Geometry").strong());
         if ui.button("📦  Get Template").clicked() {
             graph.add_node("GetTemplate".into(), SubnetNodeType::GetTemplate, cp);
+            ui.close_menu();
+        }
+        if ui.button("🔍  Get Attribute").clicked() {
+            graph.add_node("GetAttribute".into(), SubnetNodeType::GetAttribute { target: crate::types::GetAttributeTarget::P }, cp);
             ui.close_menu();
         }
         if ui.button("❇  Copy to Points").clicked() {

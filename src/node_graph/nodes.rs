@@ -1,10 +1,8 @@
 use bevy::prelude::{EulerRot, Quat, Vec3};
-use crate::types::{EvalResult, MeshData, NamedMesh, NodeType, SubnetId};
+use crate::types::{Attribute, EvalResult, MeshData, NamedMesh, NodeType, PrimVarInterp, SubnetId};
 use crate::usd_loader::load_usd_meshes;
 use std::path::Path;
 
-/// Evaluate one node given its already-resolved upstream inputs.
-/// Returns an `EvalResult` — either a single merged mesh or a list of named prims.
 pub fn evaluate_node_type(
     node_type:   &NodeType,
     inputs:      &[EvalResult],
@@ -24,10 +22,7 @@ pub fn evaluate_node_type(
                         .map(|(path, mesh)| NamedMesh { path, mesh })
                         .collect()
                 )),
-                Err(e) => {
-                    eprintln!("[LoadUsd] failed to load '{}': {}", path, e);
-                    None
-                }
+                Err(e) => { eprintln!("[LoadUsd] failed to load '{}': {}", path, e); None }
             }
         }
 
@@ -54,10 +49,8 @@ pub fn evaluate_node_type(
             } else { None },
 
         NodeType::Subnet { id, .. } => {
-            // First input is the main geometry, second (if exists) is template
-            let main_geo = inputs.first().map(|r| r.as_mesh());
+            let main_geo     = inputs.first().map(|r| r.as_mesh());
             let template_geo = inputs.get(1).map(|r| r.as_mesh());
-            
             main_geo.map(|geo| {
                 EvalResult::Single(eval_subnet(*id, &geo, template_geo.as_ref()))
             })
@@ -68,6 +61,8 @@ pub fn evaluate_node_type(
 }
 
 // ── Generators ────────────────────────────────────────────────────────────────
+// from_triangles still accepts Vec<[f32;3]> for convenience — no changes needed
+// in the generator bodies for vertex data.
 
 pub fn create_cube(size: f32) -> MeshData {
     let s = size / 2.0;
@@ -83,6 +78,7 @@ pub fn create_cube(size: f32) -> MeshData {
         ],
     );
     m.compute_normals();
+    m.ensure_standard_attributes();
     m
 }
 
@@ -106,18 +102,16 @@ pub fn create_sphere(radius: f32, segments: u32) -> MeshData {
     }
     let mut m = MeshData::from_triangles(verts, idx);
     m.compute_normals();
+    m.ensure_standard_attributes();
     m
 }
 
 pub fn create_grid(rows: u32, cols: u32, size: f32) -> MeshData {
     let mut verts = Vec::new();
     let mut idx   = Vec::new();
-    let rc = rows + 1;
-    let cc = cols + 1;
-    let cw = size / cols as f32;
-    let ch = size / rows as f32;
-    let ox = -size / 2.0;
-    let oz = -size / 2.0;
+    let (rc, cc)  = (rows + 1, cols + 1);
+    let (cw, ch)  = (size / cols as f32, size / rows as f32);
+    let (ox, oz)  = (-size / 2.0, -size / 2.0);
     for r in 0..rc {
         for c in 0..cc {
             verts.push([ox + c as f32 * cw, 0.0, oz + r as f32 * ch]);
@@ -126,14 +120,13 @@ pub fn create_grid(rows: u32, cols: u32, size: f32) -> MeshData {
     for r in 0..rows {
         for c in 0..cols {
             let tl = r * cc + c;
-            let tr = tl + 1;
-            let bl = tl + cc;
-            let br = bl + 1;
+            let (tr, bl, br) = (tl + 1, tl + cc, tl + cc + 1);
             idx.extend_from_slice(&[tl, bl, tr, tr, bl, br]);
         }
     }
     let mut m = MeshData::from_triangles(verts, idx);
     m.compute_normals();
+    m.ensure_standard_attributes();
     m
 }
 
@@ -141,38 +134,52 @@ pub fn create_grid(rows: u32, cols: u32, size: f32) -> MeshData {
 
 pub fn transform(mesh: &MeshData, t: Vec3, r: Vec3, s: Vec3) -> MeshData {
     let rot = Quat::from_euler(EulerRot::XYZ, r.x, r.y, r.z);
+
+    // Positions: Vec3 directly now — no from_array / to_array needed
+    let new_positions: Vec<Vec3> = mesh.positions.values.iter()
+        .map(|v| rot * (*v * s) + t)
+        .collect();
+
+    // Points: also Vec3
+    let new_points: Vec<Vec3> = mesh.points.iter()
+        .map(|p| rot * (*p * s) + t)
+        .collect();
+
     let mut m = MeshData {
-        vertices: mesh.vertices.iter()
-            .map(|v| (rot * (Vec3::from_array(*v) * s) + t).to_array())
-            .collect(),
-        indices:  mesh.indices.clone(),
-        points:   mesh.points.iter()
-            .map(|p| (rot * (Vec3::from_array(*p) * s) + t).to_array())
-            .collect(),
+        positions: Attribute::vertex("P", new_positions),
+        indices:   mesh.indices.clone(),
+        points:    new_points,
+        face_count: mesh.face_count,
         ..Default::default()
     };
-    // Recompute normals after transform so they stay correct
-    if !mesh.normals.is_empty() {
+
+    // Recompute normals if the source had them
+    if mesh.normals.is_some() {
         m.compute_normals();
     }
     m
 }
 
 pub fn merge(a: &MeshData, b: &MeshData) -> MeshData {
-    let mut verts = a.vertices.clone();
-    let mut idx   = a.indices.clone();
-    let off = verts.len() as u32;
-    verts.extend(&b.vertices);
-    idx.extend(b.indices.iter().map(|i| i + off));
-    let mut pts = a.points.clone();
-    pts.extend(&b.points);
+    let mut positions = a.positions.values.clone();
+    let off           = positions.len() as u32;
+    positions.extend_from_slice(&b.positions.values);
+
+    let mut indices = a.indices.clone();
+    indices.extend(b.indices.iter().map(|i| i + off));
+
+    let mut points = a.points.clone();
+    points.extend_from_slice(&b.points);
+
+    let face_count = indices.len() / 3;
+
     let mut m = MeshData {
-        vertices:   verts,
-        indices:    idx,
-        points:     pts,
+        positions:  Attribute::vertex("P", positions),
+        indices,
+        points,
+        face_count,
         ..Default::default()
     };
-    m.face_count = m.indices.len() / 3;
     m.compute_normals();
     m
 }
@@ -180,17 +187,26 @@ pub fn merge(a: &MeshData, b: &MeshData) -> MeshData {
 pub fn scatter_points(mesh: &MeshData, count: u32, seed: u32) -> MeshData {
     let mut pts = Vec::with_capacity(count as usize);
     let mut rng = LcgRng::new(seed);
-    let tris: Vec<([f32; 3], [f32; 3], [f32; 3])> = mesh.indices
+    let n       = mesh.positions.len();
+
+    // Collect triangles as (Vec3, Vec3, Vec3) — no array conversion needed
+    let tris: Vec<(Vec3, Vec3, Vec3)> = mesh.indices
         .chunks(3)
         .filter_map(|c| {
             if c.len() < 3 { return None; }
-            let (a, b, d) = (c[0] as usize, c[1] as usize, c[2] as usize);
-            if a < mesh.vertices.len() && b < mesh.vertices.len() && d < mesh.vertices.len() {
-                Some((mesh.vertices[a], mesh.vertices[b], mesh.vertices[d]))
+            let (ai, bi, ci) = (c[0] as usize, c[1] as usize, c[2] as usize);
+            if ai < n && bi < n && ci < n {
+                Some((
+                    mesh.positions.values[ai],
+                    mesh.positions.values[bi],
+                    mesh.positions.values[ci],
+                ))
             } else { None }
         })
         .collect();
+
     if tris.is_empty() { return MeshData::default(); }
+
     for _ in 0..count {
         let ti = rng.next_u32() as usize % tris.len();
         let (a, b, c) = tris[ti];
@@ -198,40 +214,47 @@ pub fn scatter_points(mesh: &MeshData, count: u32, seed: u32) -> MeshData {
         let mut r2 = rng.next_f32();
         if r1 + r2 > 1.0 { r1 = 1.0 - r1; r2 = 1.0 - r2; }
         let r3 = 1.0 - r1 - r2;
-        pts.push([
-            a[0]*r3 + b[0]*r1 + c[0]*r2,
-            a[1]*r3 + b[1]*r1 + c[1]*r2,
-            a[2]*r3 + b[2]*r1 + c[2]*r2,
-        ]);
+        pts.push(a * r3 + b * r1 + c * r2);
     }
+
     MeshData {
-        vertices: vec![],
-        indices:  vec![],
-        points:   pts,
+        positions: Attribute::vertex("P", vec![]),
+        points:    pts,
         ..Default::default()
     }
 }
 
 pub fn copy_to_points(template: &MeshData, point_cloud: &MeshData) -> MeshData {
-    let pts = if !point_cloud.points.is_empty() {
+    // Use scatter points if present, otherwise fall back to mesh positions
+    let pts: &[Vec3] = if !point_cloud.points.is_empty() {
         &point_cloud.points
     } else {
-        &point_cloud.vertices
+        &point_cloud.positions.values
     };
-    let mut out_verts = Vec::new();
-    let mut out_idx   = Vec::new();
+
+    let template_verts = &template.positions.values;
+    let mut out_pos  = Vec::with_capacity(pts.len() * template_verts.len());
+    let mut out_idx  = Vec::with_capacity(pts.len() * template.indices.len());
+
     for pt in pts {
-        let offset = out_verts.len() as u32;
-        let t = Vec3::from_array(*pt);
-        for v in &template.vertices {
-            out_verts.push((Vec3::from_array(*v) + t).to_array());
-        }
+        let offset = out_pos.len() as u32;
+        out_pos.extend(template_verts.iter().map(|v| *v + *pt));
         out_idx.extend(template.indices.iter().map(|i| i + offset));
     }
-    let mut m = MeshData::from_triangles(out_verts, out_idx);
+
+    let face_count = out_idx.len() / 3;
+    let mut m = MeshData {
+        positions:  Attribute::vertex("P", out_pos),
+        indices:    out_idx,
+        face_count,
+        ..Default::default()
+    };
     m.compute_normals();
+    m.ensure_standard_attributes();
     m
 }
+
+// ── LCG RNG (unchanged) ───────────────────────────────────────────────────────
 
 struct LcgRng(u64);
 impl LcgRng {

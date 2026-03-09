@@ -6,7 +6,7 @@ mod properties;
 mod viewport;
 mod ice;
 mod usd_loader;
-mod prim_inspector;
+//mod prim_inspector;         // commented out
 
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts, EguiPlugin};
@@ -19,7 +19,7 @@ use ice::{SubnetStore, GraphNavigation, ui::{draw_subnet_graph, draw_breadcrumb}
 use node_graph::ui::draw_node_graph;
 use scene_graph::ui::{draw_scene_explorer, draw_operator_stack};
 use properties::ui::draw_properties_panel;
-use prim_inspector::ui::draw_prim_inspector;
+//use prim_inspector::ui::draw_prim_inspector;         // commented out
 use types::NodeType;
 
 fn main() {
@@ -97,7 +97,7 @@ fn dcc_ui(
     mut subnets:    ResMut<SubnetStore>,
     mut nav:        ResMut<GraphNavigation>,
     mut vp_rect:    ResMut<ViewportRect>,
-    mut prim_state: ResMut<PrimInspectorState>,
+    //mut prim_state: ResMut<PrimInspectorState>,
     windows:        Query<&Window>,
 ) {
     let ctx = contexts.ctx_mut();
@@ -196,7 +196,7 @@ fn dcc_ui(
     // ── Primitive Inspector (bottom of viewport area) ─────────────────────────
     // Must be added BEFORE the viewport rect is finalised so egui accounts for
     // its height when we compute the remaining space.
-    let insp_resp = egui::TopBottomPanel::bottom("prim_inspector_panel")
+/*    let insp_resp = egui::TopBottomPanel::bottom("prim_inspector_panel")
         .resizable(true)
         .default_height(220.0)
         .min_height(120.0)
@@ -219,7 +219,16 @@ fn dcc_ui(
 
             draw_prim_inspector(ui, &graph, &mut prim_state, &get_mesh);
         });
-    let insp_h_pts = insp_resp.response.rect.height();
+        let insp_h_pts = insp_resp.response.rect.height();
+    */
+    let insp_h_pts = 0.0f32;
+    let insp_resp = egui::TopBottomPanel::bottom("prim_inspector_panel")
+        .resizable(true)
+        .default_height(220.0)
+        .min_height(120.0)
+        .show(ctx, |ui| {
+            ui.label("Primitive Inspector (disabled)");
+    });
 
     // ── Viewport rect (remaining space after all panels) ──────────────────────
     vp_rect.0 = Some(egui::Rect::from_min_max(
@@ -308,7 +317,7 @@ fn update_generated_meshes(
     };
 
     if let Some(md) = graph.evaluate_for_viewport(&eval_subnet) {
-        if md.vertices.is_empty() { return; }
+        if md.positions.is_empty() { return; }
         commands.spawn((
             PbrBundle {
                 mesh: meshes.add(mesh_data_to_bevy(&md)),
@@ -352,13 +361,9 @@ fn mesh_data_to_bevy(d: &MeshData) -> Mesh {
         bevy::render::mesh::PrimitiveTopology::TriangleList,
         bevy::render::render_asset::RenderAssetUsages::default(),
     );
-    m.insert_attribute(Mesh::ATTRIBUTE_POSITION, d.vertices.clone());
-    // Use computed normals if available, otherwise flat up-normals
-    let normals: Vec<[f32; 3]> = if d.normals.len() == d.vertices.len() {
-        d.normals.clone()
-    } else {
-        d.vertices.iter().map(|_| [0.0f32, 1.0, 0.0]).collect()
-    };
+    m.insert_attribute(Mesh::ATTRIBUTE_POSITION, d.positions_as_arrays());
+
+    let normals = d.normals_as_arrays();
     m.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
     m.insert_indices(bevy::render::mesh::Indices::U32(d.indices.clone()));
     m

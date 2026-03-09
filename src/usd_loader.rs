@@ -87,9 +87,8 @@ fn mat4_from_rotate_xyz_degrees(r: [f64; 3]) -> Mat4 {
 /// Apply a world-space Mat4 to all vertices of a MeshData in place.
 fn apply_transform(mesh: &mut MeshData, xform: &Mat4) {
     if *xform == Mat4::IDENTITY { return; }
-    for v in &mut mesh.vertices {
-        let p  = xform.transform_point3(Vec3::new(v[0], v[1], v[2]));
-        *v = [p.x, p.y, p.z];
+    for v in mesh.positions_mut() {
+        *v = xform.transform_point3(*v);
     }
 }
 
