@@ -1,5 +1,7 @@
 use bevy::prelude::{EulerRot, Quat, Vec3};
-use crate::types::{EvalResult, MeshData, NamedMesh, NodeType, SubnetId};
+use crate::types::{EvalResult, MeshData, NamedMesh, NodeType, RetimeMode, SubnetId};
+use crate::core::anim::{self, AnimData, FrameRate};
+use std::sync::Arc;
 use crate::usd_loader::load_usd_meshes;
 use std::path::Path;
 
@@ -64,7 +66,49 @@ pub fn evaluate_node_type(
         }
 
         NodeType::Output => inputs.first().cloned(),
+
+        // ── Animation ────────────────────────────────────────────────────────
+        NodeType::LoadFbx { path, take } =>
+            crate::fbx_loader::load_fbx_cached(path, *take).ok()
+                .map(|l| EvalResult::Anim(l.anim)),
+
+        NodeType::TestClip { seconds, fps_num, fps_den } =>
+            anim::memo(&format!("{node_type:?}"), None, || {
+                Some(anim::create_test_clip(*seconds, FrameRate::new(*fps_num, *fps_den)))
+            }).map(EvalResult::Anim),
+
+        NodeType::RenameJoints { find, replace, strip_namespace, prefix } =>
+            anim_op(node_type, inputs, |a| a.renamed(find, replace, *strip_namespace, prefix)),
+
+        NodeType::TrimClip { head, tail } =>
+            anim_op(node_type, inputs, |a| a.trimmed(*head as usize, *tail as usize)),
+
+        NodeType::Retime { fps_num, fps_den, mode } =>
+            anim_op(node_type, inputs, |a| {
+                let rate = FrameRate::new(*fps_num, *fps_den);
+                match mode {
+                    RetimeMode::Resample    => a.resampled(rate),
+                    RetimeMode::Reinterpret => a.reinterpreted(rate),
+                }
+            }),
+
+        NodeType::SetTimecode { hours, minutes, seconds, frames, drop_frame } =>
+            anim_op(node_type, inputs, |a| {
+                a.with_start_timecode(*hours, *minutes, *seconds, *frames, *drop_frame)
+            }),
     }
+}
+
+/// Run a clip operator on the first input. Returns nothing when the input is
+/// not animation. The result is memoised on the node parameters and the input.
+fn anim_op(
+    node_type: &NodeType,
+    inputs:    &[EvalResult],
+    op:        impl FnOnce(&AnimData) -> AnimData,
+) -> Option<EvalResult> {
+    let input: &Arc<AnimData> = inputs.first()?.as_anim()?;
+    anim::memo(&format!("{node_type:?}"), Some(input), || Some(op(input)))
+        .map(EvalResult::Anim)
 }
 
 // ── Generators ────────────────────────────────────────────────────────────────

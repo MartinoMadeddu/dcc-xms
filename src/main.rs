@@ -7,6 +7,8 @@ mod viewport;
 mod ice;
 mod usd_loader;
 mod prim_inspector;
+mod fbx_loader;
+mod timeline;
 
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts, EguiPlugin};
@@ -21,6 +23,8 @@ use scene_graph::ui::{draw_scene_explorer, draw_operator_stack};
 use properties::ui::draw_properties_panel;
 use prim_inspector::ui::draw_prim_inspector;
 use types::NodeType;
+use timeline::{Playback, TimelineState, resolve_source, ui::draw_timeline};
+use properties::ui::AnimContext;
 
 fn main() {
     App::new()
@@ -34,7 +38,8 @@ fn main() {
         .init_resource::<GraphNavigation>()
         .init_resource::<ViewportRect>()
         .init_resource::<PrimInspectorState>()
-        .add_systems(Startup, (setup_scene, setup_egui_theme))
+        .init_resource::<Playback>()
+        .add_systems(Startup, (setup_scene, setup_egui_theme, setup_gizmos))
         .add_systems(Update, (
             dcc_ui,
             update_operator_stack,
@@ -44,6 +49,7 @@ fn main() {
             camera_controller,
             focus_camera,
             draw_origin_label,
+            draw_skeleton.after(dcc_ui),
         ))
         .run();
 }
@@ -98,9 +104,33 @@ fn dcc_ui(
     mut nav:        ResMut<GraphNavigation>,
     mut vp_rect:    ResMut<ViewportRect>,
     mut prim_state: ResMut<PrimInspectorState>,
+    mut playback:   ResMut<Playback>,
+    time:           Res<Time>,
     windows:        Query<&Window>,
 ) {
     let ctx = contexts.ctx_mut();
+
+    // ── Timeline (full width, bottom) ────────────────────────────────────────
+    // Range, rate and timecode come from the clip of the selected node.
+    let timeline_state = resolve_source(&graph);
+    let keys_free      = !ctx.wants_keyboard_input();
+    let timeline_resp  = egui::TopBottomPanel::bottom("timeline_panel")
+        .resizable(false)
+        .frame(egui::Frame::none())
+        .show(ctx, |ui| {
+            draw_timeline(ui, &mut playback, &timeline_state, time.delta_seconds_f64(), keys_free);
+        });
+    let timeline_h_pts = timeline_resp.response.rect.height();
+
+    // Clips around the selected node, for the properties panel.
+    let anim_ctx = match &timeline_state {
+        TimelineState::Source(s) if s.from_selection => AnimContext {
+            time:   playback.time,
+            output: Some(s.clip.clone()),
+            input:  s.input.clone(),
+        },
+        _ => AnimContext { time: playback.time, output: None, input: None },
+    };
 
     let (win_w, win_h) = windows.get_single()
         .map(|w| (w.physical_width() as f32, w.physical_height() as f32))
@@ -117,7 +147,7 @@ fn dcc_ui(
         .min_width(180.0)
         .show(ctx, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
-                draw_properties_panel(ui, &mut graph, &*stack, &mut subnets, &nav);
+                draw_properties_panel(ui, &mut graph, &*stack, &mut subnets, &nav, &anim_ctx);
             });
         });
     used_right_pts += props_resp.response.rect.width();
@@ -224,7 +254,7 @@ fn dcc_ui(
     // ── Viewport rect (remaining space after all panels) ──────────────────────
     vp_rect.0 = Some(egui::Rect::from_min_max(
         egui::pos2(0.0, 0.0),
-        egui::pos2(win_w_pts - used_right_pts, win_h_pts - insp_h_pts),
+        egui::pos2(win_w_pts - used_right_pts, win_h_pts - insp_h_pts - timeline_h_pts),
     ));
 
     // ── Viewport overlay label ────────────────────────────────────────────────
@@ -248,6 +278,7 @@ fn dcc_ui(
                         "Alt/Cmd + RMB: zoom",
                         "Scroll: zoom",
                         "F: focus",
+                        "Space: play  |  Left/Right: step",
                     ] {
                         ui.label(egui::RichText::new(*line)
                             .color(egui::Color32::from_rgb(190, 190, 190)));
@@ -322,6 +353,50 @@ fn update_generated_meshes(
             },
             GeneratedMesh,
         ));
+    }
+}
+
+// ── Skeleton display ──────────────────────────────────────────────────────────
+// Draws the clip of the viewed node (view flag, else Output) at the playhead.
+
+fn setup_gizmos(mut store: ResMut<GizmoConfigStore>) {
+    let (config, _) = store.config_mut::<DefaultGizmoConfigGroup>();
+    config.line_width = 2.5;
+    config.depth_bias = -1.0;   // draw over the ground grid and meshes
+}
+
+fn draw_skeleton(
+    graph:      Res<NodeGraphState>,
+    playback:   Res<Playback>,
+    mut gizmos: Gizmos,
+) {
+    let Some(id)   = graph.display_source() else { return };
+    let Some(clip) = graph.eval_anim(id)    else { return };
+    if clip.joints.is_empty() { return; }
+
+    let pose = clip.world_pose(clip.index_at(playback.time));
+    let pos: Vec<Vec3> = pose.iter().map(|m| m.w_axis.truncate()).collect();
+
+    // Marker size follows the skeleton, so centimetre and metre rigs both read.
+    let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+    for p in &pos { lo = lo.min(*p); hi = hi.max(*p); }
+    let r = ((hi - lo).max_element() * 0.012).max(1e-4);
+
+    let bone_col  = Color::srgb(0.95, 0.82, 0.35);
+    let joint_col = Color::srgb(0.95, 0.95, 0.95);
+    for (j, joint) in clip.joints.iter().enumerate() {
+        match joint.parent {
+            Some(p) => { gizmos.line(pos[p], pos[j], bone_col); }
+            None => {
+                // Root: small axis tripod showing its orientation.
+                let m = pose[j];
+                let l = r * 5.0;
+                gizmos.line(pos[j], pos[j] + m.x_axis.truncate().normalize_or_zero() * l, Color::srgb(1.0, 0.2, 0.2));
+                gizmos.line(pos[j], pos[j] + m.y_axis.truncate().normalize_or_zero() * l, Color::srgb(0.2, 1.0, 0.2));
+                gizmos.line(pos[j], pos[j] + m.z_axis.truncate().normalize_or_zero() * l, Color::srgb(0.3, 0.5, 1.0));
+            }
+        }
+        gizmos.sphere(pos[j], Quat::IDENTITY, r, joint_col).resolution(8);
     }
 }
 
