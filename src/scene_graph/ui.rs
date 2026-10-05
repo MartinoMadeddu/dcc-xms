@@ -4,14 +4,16 @@ use crate::types::{NodeId, SceneHierarchy, SceneObjectId};
 use super::OperatorStack;
 
 mod xsi {
+    // Light-theme colours. `theme::c` returns the dark counterpart in dark mode.
+    #![allow(non_snake_case)]
     use bevy_egui::egui::Color32;
-    pub const PANEL_BG:    Color32 = Color32::from_rgb(118, 118, 118);
-    pub const HEADER:      Color32 = Color32::from_rgb(230, 230, 230);
-    pub const NAME:        Color32 = Color32::from_rgb(220, 220, 220);
-    pub const TYPE_LABEL:  Color32 = Color32::from_rgb(170, 170, 170);
-    pub const SEL_BG:      Color32 = Color32::from_rgb( 90, 105, 120);
-    pub const SEL_NAME:    Color32 = Color32::from_rgb(240, 238, 230);
-    pub const DIVIDER:     Color32 = Color32::from_rgb( 90,  90,  90);
+    pub fn PANEL_BG() -> Color32 { crate::theme::c(118, 118, 118) }
+    pub fn HEADER() -> Color32 { crate::theme::c(230, 230, 230) }
+    pub fn NAME() -> Color32 { crate::theme::c(220, 220, 220) }
+    pub fn TYPE_LABEL() -> Color32 { crate::theme::c(170, 170, 170) }
+    pub fn SEL_BG() -> Color32 { crate::theme::c( 90, 105, 120) }
+    pub fn SEL_NAME() -> Color32 { crate::theme::c(240, 238, 230) }
+    pub fn DIVIDER() -> Color32 { crate::theme::c( 90,  90,  90) }
 }
 
 // ── Scene Explorer (object-centric) ──────────────────────────────────────────
@@ -27,10 +29,10 @@ pub fn draw_scene_explorer(
     graph:     &mut NodeGraphState,
 ) {
     egui::Frame::none()
-        .fill(xsi::PANEL_BG)
+        .fill(xsi::PANEL_BG())
         .inner_margin(6.0)
         .show(ui, |ui| {
-            ui.colored_label(xsi::HEADER,
+            ui.colored_label(xsi::HEADER(),
                 egui::RichText::new("Scene Explorer").strong().size(14.0));
             ui.separator();
 
@@ -100,7 +102,7 @@ pub fn draw_scene_explorer(
 
                         // Selection background
                         if is_sel {
-                            painter.rect_filled(row_rect, 0.0, xsi::SEL_BG);
+                            painter.rect_filled(row_rect, 0.0, xsi::SEL_BG());
                         }
 
                         // ── Tree lines ────────────────────────────────────────
@@ -138,19 +140,19 @@ pub fn draw_scene_explorer(
                             let cy = exp_rect.center().y;
                             painter.line_segment(
                                 [egui::pos2(cx - 3.0, cy), egui::pos2(cx + 3.0, cy)],
-                                egui::Stroke::new(1.5, xsi::NAME),
+                                egui::Stroke::new(1.5, xsi::NAME()),
                             );
                             if !obj.expanded {
                                 painter.line_segment(
                                     [egui::pos2(cx, cy - 3.0), egui::pos2(cx, cy + 3.0)],
-                                    egui::Stroke::new(1.5, xsi::NAME),
+                                    egui::Stroke::new(1.5, xsi::NAME()),
                                 );
                             }
                         }
 
                         // ── Icon + label ──────────────────────────────────────
                         let text_x   = indent_x + EXPANDER_W + 4.0;
-                        let text_col = if is_sel { xsi::SEL_NAME } else { xsi::NAME };
+                        let text_col = if is_sel { xsi::SEL_NAME() } else { xsi::NAME() };
                         painter.text(
                             egui::pos2(text_x, mid_y),
                             egui::Align2::LEFT_CENTER,
@@ -187,10 +189,10 @@ pub fn draw_operator_stack(
     graph: &mut NodeGraphState,
 ) {
     egui::Frame::none()
-        .fill(xsi::PANEL_BG)
+        .fill(xsi::PANEL_BG())
         .inner_margin(6.0)
         .show(ui, |ui| {
-            ui.colored_label(xsi::HEADER,
+            ui.colored_label(xsi::HEADER(),
                 egui::RichText::new("Operator Stack").strong().size(14.0));
             ui.separator();
 
@@ -222,9 +224,9 @@ pub fn draw_operator_stack(
                                 egui::RichText::new(
                                     format!("{} {}", entry.type_icon, entry.name)
                                 )
-                                .color(if is_sel { xsi::SEL_NAME } else { xsi::NAME })
+                                .color(if is_sel { xsi::SEL_NAME() } else { xsi::NAME() })
                             )
-                            .fill(if is_sel { xsi::SEL_BG } else { egui::Color32::TRANSPARENT })
+                            .fill(if is_sel { xsi::SEL_BG() } else { egui::Color32::TRANSPARENT })
                             .frame(true)
                             .min_size(egui::vec2(ui.available_width(), 36.0));
 
@@ -235,7 +237,7 @@ pub fn draw_operator_stack(
                                 egui::Align2::LEFT_TOP,
                                 entry.type_label,
                                 egui::FontId::proportional(9.0),
-                                xsi::TYPE_LABEL,
+                                xsi::TYPE_LABEL(),
                             );
 
                             if resp.clicked() { select_id = Some(entry.node_id); }

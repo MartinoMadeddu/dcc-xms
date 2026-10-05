@@ -10,29 +10,31 @@ const SOCKET_HIT:      f32 = 22.0;
 const NODE_ROUNDING:   f32 = 8.0;
 
 mod xsi {
+    // Light-theme colours. `theme::c` returns the dark counterpart in dark mode.
+    #![allow(non_snake_case)]
     use bevy_egui::egui::Color32;
-    pub const BG:             Color32 = Color32::from_rgb(100, 100, 100);
-    pub const GRID:           Color32 = Color32::from_rgb( 90,  90,  90);
-    pub const NODE_BODY:      Color32 = Color32::from_rgb(130, 130, 130);
-    pub const NODE_BODY_SEL:  Color32 = Color32::from_rgb(110, 120, 135);
-    pub const NODE_TITLE:     Color32 = Color32::from_rgb(105, 105, 105);
-    pub const NODE_TITLE_SUB: Color32 = Color32::from_rgb( 80,  90, 100);
-    pub const BORDER:         Color32 = Color32::from_rgb( 70,  70,  70);
-    pub const BORDER_SEL:     Color32 = Color32::from_rgb(180, 200, 220);
-    pub const TEXT:           Color32 = Color32::from_rgb(230, 230, 230);
-    pub const TEXT_DIM:       Color32 = Color32::from_rgb(190, 190, 190);
-    pub const WIRE:           Color32 = Color32::from_rgb(160, 160, 155);
-    pub const WIRE_HOV:       Color32 = Color32::from_rgb(220, 185,  90);
-    pub const SOCK_IN:        Color32 = Color32::from_rgb(100, 140, 100);
-    pub const SOCK_IN_CONN:   Color32 = Color32::from_rgb(130, 175, 130);
-    pub const SOCK_IN_HOV:    Color32 = Color32::from_rgb(170, 215, 170);
-    pub const SOCK_OUT:       Color32 = Color32::from_rgb(150, 120,  85);
-    pub const SOCK_OUT_HOV:   Color32 = Color32::from_rgb(200, 165, 120);
-    pub const SOCK_OUT_DRAG:  Color32 = Color32::from_rgb(230, 195, 100);
-    pub const SEL_RECT:       Color32 = Color32::from_rgba_premultiplied(100, 140, 200, 40);
-    pub const SEL_RECT_BORDER:Color32 = Color32::from_rgb(120, 160, 220);
-    pub const VIEW_FLAG:      Color32 = Color32::from_rgb(100, 180, 255); // 👁️ NEW - Blue for active view flag
-    pub const VIEW_FLAG_HOV:  Color32 = Color32::from_rgb(150, 210, 255); // 👁️ NEW - Lighter blue on hover
+    pub fn BG() -> Color32 { crate::theme::c(100, 100, 100) }
+    pub fn GRID() -> Color32 { crate::theme::c( 90,  90,  90) }
+    pub fn NODE_BODY() -> Color32 { crate::theme::raised(130, 130, 130) }
+    pub fn NODE_BODY_SEL() -> Color32 { crate::theme::c(110, 120, 135) }
+    pub fn NODE_TITLE() -> Color32 { crate::theme::raised(105, 105, 105) }
+    pub fn NODE_TITLE_SUB() -> Color32 { crate::theme::c( 80,  90, 100) }
+    pub fn BORDER() -> Color32 { crate::theme::outline( 70,  70,  70) }
+    pub fn BORDER_SEL() -> Color32 { crate::theme::c(180, 200, 220) }
+    pub fn TEXT() -> Color32 { crate::theme::c(230, 230, 230) }
+    pub fn TEXT_DIM() -> Color32 { crate::theme::c(190, 190, 190) }
+    pub fn WIRE() -> Color32 { crate::theme::c(160, 160, 155) }
+    pub fn WIRE_HOV() -> Color32 { crate::theme::c(220, 185,  90) }
+    pub fn SOCK_IN() -> Color32 { crate::theme::c(100, 140, 100) }
+    pub fn SOCK_IN_CONN() -> Color32 { crate::theme::c(130, 175, 130) }
+    pub fn SOCK_IN_HOV() -> Color32 { crate::theme::c(170, 215, 170) }
+    pub fn SOCK_OUT() -> Color32 { crate::theme::c(150, 120,  85) }
+    pub fn SOCK_OUT_HOV() -> Color32 { crate::theme::c(200, 165, 120) }
+    pub fn SOCK_OUT_DRAG() -> Color32 { crate::theme::c(230, 195, 100) }
+    pub fn SEL_RECT() -> Color32 { Color32::from_rgba_premultiplied(100, 140, 200, 40) }
+    pub fn SEL_RECT_BORDER() -> Color32 { crate::theme::c(120, 160, 220) }
+    pub fn VIEW_FLAG() -> Color32 { crate::theme::c(100, 180, 255) } // 👁️ NEW - Blue for active view flag
+    pub fn VIEW_FLAG_HOV() -> Color32 { crate::theme::c(150, 210, 255) } // 👁️ NEW - Lighter blue on hover
 }
 
 // ============================================================================
@@ -103,7 +105,7 @@ pub fn draw_node_graph(ui: &mut egui::Ui, graph: &mut NodeGraphState) -> Option<
     }
 
     // ── Background + grid ────────────────────────────────────────────────────
-    painter.rect_filled(canvas_rect, 0.0, xsi::BG);
+    painter.rect_filled(canvas_rect, 0.0, xsi::BG());
     let grid_spacing = 50.0 * zoom;
     let offset_x = pan.x % grid_spacing;
     let offset_y = pan.y % grid_spacing;
@@ -111,14 +113,14 @@ pub fn draw_node_graph(ui: &mut egui::Ui, graph: &mut NodeGraphState) -> Option<
     while x < canvas_rect.max.x {
         painter.line_segment(
             [egui::pos2(x, canvas_rect.min.y), egui::pos2(x, canvas_rect.max.y)],
-            egui::Stroke::new(1.0, xsi::GRID));
+            egui::Stroke::new(1.0, xsi::GRID()));
         x += grid_spacing;
     }
     let mut y = canvas_rect.min.y + offset_y;
     while y < canvas_rect.max.y {
         painter.line_segment(
             [egui::pos2(canvas_rect.min.x, y), egui::pos2(canvas_rect.max.x, y)],
-            egui::Stroke::new(1.0, xsi::GRID));
+            egui::Stroke::new(1.0, xsi::GRID()));
         y += grid_spacing;
     }
 
@@ -217,8 +219,8 @@ pub fn draw_node_graph(ui: &mut egui::Ui, graph: &mut NodeGraphState) -> Option<
 
             // Draw the marquee rectangle in screen space
             let sr = egui::Rect::from_two_pos(to_screen(start), to_screen(cur));
-            painter.rect_filled(sr, 2.0, xsi::SEL_RECT);
-            painter.rect_stroke(sr, 2.0, egui::Stroke::new(1.0, xsi::SEL_RECT_BORDER));
+            painter.rect_filled(sr, 2.0, xsi::SEL_RECT());
+            painter.rect_stroke(sr, 2.0, egui::Stroke::new(1.0, xsi::SEL_RECT_BORDER()));
         }
     }
 
@@ -315,27 +317,27 @@ fn draw_node(
 
     // ── Node body ─────────────────────────────────────────────────────────────
     painter.rect_filled(rect, NODE_ROUNDING * zoom,
-        if is_sel { xsi::NODE_BODY_SEL } else { xsi::NODE_BODY });
+        if is_sel { xsi::NODE_BODY_SEL() } else { xsi::NODE_BODY() });
     painter.rect_stroke(rect, NODE_ROUNDING * zoom, egui::Stroke::new(
         if is_sel { 2.0 } else { 1.0 },
-        if is_sel { xsi::BORDER_SEL } else { xsi::BORDER }));
+        if is_sel { xsi::BORDER_SEL() } else { xsi::BORDER() }));
 
     let title_h    = 32.0 * zoom;
     let title_rect = egui::Rect::from_min_size(np, egui::vec2(NODE_WIDTH * zoom, title_h));
     painter.rect_filled(title_rect,
         egui::Rounding { nw: NODE_ROUNDING * zoom, ne: NODE_ROUNDING * zoom, sw: 0.0, se: 0.0 },
-        if is_sub { xsi::NODE_TITLE_SUB } else { xsi::NODE_TITLE });
+        if is_sub { xsi::NODE_TITLE_SUB() } else { xsi::NODE_TITLE() });
 
     painter.text(
         egui::pos2(np.x + NODE_WIDTH * zoom / 2.0, np.y + 11.0 * zoom),
         egui::Align2::CENTER_CENTER,
         &format!("{} {}", node_type_icon(&node.node_type), node.name),
-        egui::FontId::proportional(12.0 * zoom), xsi::TEXT);
+        egui::FontId::proportional(12.0 * zoom), xsi::TEXT());
     painter.text(
         egui::pos2(np.x + NODE_WIDTH * zoom / 2.0, np.y + 24.0 * zoom),
         egui::Align2::CENTER_CENTER,
         node_type_label(&node.node_type),
-        egui::FontId::proportional(9.0 * zoom), xsi::TEXT_DIM);
+        egui::FontId::proportional(9.0 * zoom), xsi::TEXT_DIM());
 
 
     let dr = ui.allocate_rect(title_rect, egui::Sense::click_and_drag());
@@ -354,9 +356,9 @@ fn draw_node(
     
     // Draw the eye button
     let eye_color = if has_view_flag {
-        if eye_response.hovered() { xsi::VIEW_FLAG_HOV } else { xsi::VIEW_FLAG }
+        if eye_response.hovered() { xsi::VIEW_FLAG_HOV() } else { xsi::VIEW_FLAG() }
     } else {
-        if eye_response.hovered() { xsi::TEXT } else { xsi::TEXT_DIM }
+        if eye_response.hovered() { xsi::TEXT() } else { xsi::TEXT_DIM() }
     };
     
     painter.text(
@@ -394,12 +396,12 @@ fn draw_node(
 
         let is_wiring = graph.connecting_from == Some((id, i));
         painter.circle_filled(sp, SOCKET_RADIUS * zoom,
-            if is_wiring         { xsi::SOCK_OUT_DRAG }
-            else if sr.hovered() { xsi::SOCK_OUT_HOV  }
-            else                 { xsi::SOCK_OUT       });
+            if is_wiring         { xsi::SOCK_OUT_DRAG() }
+            else if sr.hovered() { xsi::SOCK_OUT_HOV()  }
+            else                 { xsi::SOCK_OUT()       });
         painter.text(egui::pos2(sp.x, sp.y + SOCKET_RADIUS * zoom + 3.0),
             egui::Align2::CENTER_TOP, &out.name,
-            egui::FontId::proportional(9.0 * zoom), xsi::TEXT_DIM);
+            egui::FontId::proportional(9.0 * zoom), xsi::TEXT_DIM());
 
         if sr.drag_started() || (sr.is_pointer_button_down_on() && graph.connecting_from.is_none()) {
             graph.connecting_from = Some((id, i));
@@ -414,12 +416,12 @@ fn draw_node(
         let sr  = ui.allocate_rect(hit, egui::Sense::drag());
 
         painter.circle_filled(sp, SOCKET_RADIUS * zoom,
-            if sr.hovered()                        { xsi::SOCK_IN_HOV  }
-            else if inp.connected_output.is_some() { xsi::SOCK_IN_CONN }
-            else                                   { xsi::SOCK_IN      });
+            if sr.hovered()                        { xsi::SOCK_IN_HOV()  }
+            else if inp.connected_output.is_some() { xsi::SOCK_IN_CONN() }
+            else                                   { xsi::SOCK_IN()      });
         painter.text(egui::pos2(sp.x, sp.y - SOCKET_RADIUS * zoom - 3.0),
             egui::Align2::CENTER_BOTTOM, &inp.name,
-            egui::FontId::proportional(9.0 * zoom), xsi::TEXT_DIM);
+            egui::FontId::proportional(9.0 * zoom), xsi::TEXT_DIM());
 
         if sr.hovered() && ui.input(|inp| inp.pointer.primary_released()) {
             if let Some((fn_, fo)) = graph.connecting_from {
@@ -617,9 +619,9 @@ pub fn draw_wire(painter: &egui::Painter, from: egui::Pos2, to: egui::Pos2, hove
     let (width, color) = if selected {
         (3.5, egui::Color32::from_rgb(220, 120, 80))
     } else if hovered {
-        (3.5, xsi::WIRE_HOV)
+        (3.5, xsi::WIRE_HOV())
     } else {
-        (2.0, xsi::WIRE)
+        (2.0, xsi::WIRE())
     };
     painter.add(egui::Shape::line(pts, egui::Stroke::new(width, color)));
 }

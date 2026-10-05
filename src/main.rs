@@ -13,6 +13,7 @@ mod file_browser;
 mod batch;
 mod graph_io;
 mod timeline;
+mod theme;
 
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts, EguiPlugin};
@@ -65,41 +66,7 @@ fn main() {
 // -- Egui theme setup ------------------------------------------------
 
 fn setup_egui_theme(mut contexts: EguiContexts) {
-    apply_grey_theme(contexts.ctx_mut());
-}
-// ── Global egui theme ─────────────────────────────────────────────────────────
-
-fn apply_grey_theme(ctx: &egui::Context) {
-    let mut style = (*ctx.style()).clone();
-
-    let bg_fill       = egui::Color32::from_rgb(118, 118, 118);
-    let bg_fill_dark  = egui::Color32::from_rgb(100, 100, 100);
-    let bg_fill_mid   = egui::Color32::from_rgb(110, 110, 110);
-    let stroke_subtle = egui::Stroke::new(1.0, egui::Color32::from_rgb(80, 80, 80));
-    let text_col      = egui::Color32::from_rgb(230, 230, 230);
-    let text_dim      = egui::Color32::from_rgb(190, 190, 190);
-
-    style.visuals.panel_fill           = bg_fill;
-    style.visuals.window_fill          = bg_fill;
-    style.visuals.extreme_bg_color     = bg_fill_dark;
-    style.visuals.faint_bg_color       = bg_fill_mid;
-    style.visuals.code_bg_color        = bg_fill_dark;
-    style.visuals.window_stroke        = stroke_subtle;
-    style.visuals.widgets.noninteractive.bg_fill   = bg_fill;
-    style.visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0, text_dim);
-    style.visuals.widgets.inactive.bg_fill         = bg_fill_mid;
-    style.visuals.widgets.inactive.fg_stroke       = egui::Stroke::new(1.0, text_col);
-    style.visuals.widgets.hovered.bg_fill          = egui::Color32::from_rgb(140, 140, 140);
-    style.visuals.widgets.hovered.fg_stroke        = egui::Stroke::new(1.0, text_col);
-    style.visuals.widgets.active.bg_fill           = egui::Color32::from_rgb(150, 150, 150);
-    style.visuals.widgets.active.fg_stroke         = egui::Stroke::new(1.0, egui::Color32::WHITE);
-    style.visuals.widgets.open.bg_fill             = bg_fill_dark;
-    style.visuals.widgets.open.fg_stroke           = egui::Stroke::new(1.0, text_col);
-    style.visuals.selection.bg_fill    = egui::Color32::from_rgb(100, 130, 160);
-    style.visuals.selection.stroke     = egui::Stroke::new(1.0, egui::Color32::from_rgb(160, 195, 225));
-    style.visuals.hyperlink_color      = egui::Color32::from_rgb(160, 195, 230);
-
-    ctx.set_style(style);
+    theme::init(contexts.ctx_mut());
 }
 
 // ── UI ────────────────────────────────────────────────────────────────────────
@@ -272,6 +239,10 @@ fn dcc_ui(
                         if ui.button("💾 Save").on_hover_text("Save this graph").clicked() {
                             browser.open(BrowseTarget::SaveGraph, BrowseMode::Save, "Save graph", &["json"], "graph.json");
                         }
+                        let label = if theme::is_dark() { "Light mode" } else { "Dark mode" };
+                        if ui.button(label).on_hover_text("Switch colour theme").clicked() {
+                            theme::set_dark(ui.ctx(), !theme::is_dark());
+                        }
                         // Ready-made graphs. Picking one replaces the current graph.
                         ui.menu_button("Templates", |ui| {
                             if ui.button("Mocap split")
@@ -367,8 +338,8 @@ fn dcc_ui(
         .interactable(false)
         .show(ctx, |ui| {
             egui::Frame::none()
-                .fill(egui::Color32::from_rgba_premultiplied(90, 90, 90, 220))
-                .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(70, 70, 70)))
+                .fill(theme::c(90, 90, 90).gamma_multiply(0.86))
+                .stroke(egui::Stroke::new(1.0_f32, theme::c(70, 70, 70)))
                 .rounding(6.0)
                 .inner_margin(8.0)
                 .show(ui, |ui| {

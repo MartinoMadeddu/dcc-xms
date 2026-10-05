@@ -12,12 +12,14 @@ use crate::ice::{SubnetStore, GraphNavigation};
 use crate::ice::ui::draw_subnet_node_properties;
 
 mod xsi {
+    // Light-theme colours. `theme::c` returns the dark counterpart in dark mode.
+    #![allow(non_snake_case)]
     use bevy_egui::egui::Color32;
-    pub const PANEL_BG:    Color32 = Color32::from_rgb(118, 118, 118);
-    pub const SECTION_BG:  Color32 = Color32::from_rgb(108, 108, 108);
-    pub const HEADER_TEXT: Color32 = Color32::from_rgb(230, 230, 230);
-    pub const LABEL:       Color32 = Color32::from_rgb(210, 210, 210);
-    pub const DIM:         Color32 = Color32::from_rgb(170, 170, 170);
+    pub fn PANEL_BG() -> Color32 { crate::theme::c(118, 118, 118) }
+    pub fn SECTION_BG() -> Color32 { crate::theme::c(108, 108, 108) }
+    pub fn HEADER_TEXT() -> Color32 { crate::theme::c(230, 230, 230) }
+    pub fn LABEL() -> Color32 { crate::theme::c(210, 210, 210) }
+    pub fn DIM() -> Color32 { crate::theme::c(170, 170, 170) }
 }
 
 /// Clips around the selected node and the playhead, so animation nodes can
@@ -52,7 +54,7 @@ pub fn draw_properties_panel(
     io:      &mut PanelIo,
 ) {
     egui::Frame::none()
-        .fill(xsi::PANEL_BG)
+        .fill(xsi::PANEL_BG())
         .inner_margin(6.0)
         .show(ui, |ui| {
             if let Some(sid) = nav.current_subnet {
@@ -72,13 +74,13 @@ pub fn draw_properties(
     anim:   &AnimContext,
     io:     &mut PanelIo,
 ) {
-    ui.colored_label(xsi::HEADER_TEXT,
+    ui.colored_label(xsi::HEADER_TEXT(),
         egui::RichText::new("Properties").strong().size(14.0));
     ui.separator();
 
     let sel_id = match graph.selected_node {
         Some(id) => id,
-        None => { ui.colored_label(xsi::DIM, "No node selected."); return; }
+        None => { ui.colored_label(xsi::DIM(), "No node selected."); return; }
     };
 
     let (node_name, type_str) = match graph.nodes.iter().find(|n| n.id == sel_id) {
@@ -88,10 +90,10 @@ pub fn draw_properties(
 
     // Name section
     section(ui, |ui| {
-        ui.colored_label(xsi::DIM, type_str);
+        ui.colored_label(xsi::DIM(), type_str);
         ui.add_space(2.0);
         ui.horizontal(|ui| {
-            ui.colored_label(xsi::LABEL, "Name:");
+            ui.colored_label(xsi::LABEL(), "Name:");
             if let Some(node) = graph.nodes.iter_mut().find(|n| n.id == sel_id) {
                 ui.text_edit_singleline(&mut node.name);
             }
@@ -159,7 +161,7 @@ pub fn draw_properties(
                 section(ui, |ui| {
                     for (lbl, v) in [("X", &mut rotation.x), ("Y", &mut rotation.y), ("Z", &mut rotation.z)] {
                         ui.horizontal(|ui| {
-                            ui.colored_label(xsi::LABEL, format!("{lbl}:"));
+                            ui.colored_label(xsi::LABEL(), format!("{lbl}:"));
                             let mut deg = v.to_degrees();
                             if ui.add(egui::DragValue::new(&mut deg).speed(1.0)).changed() {
                                 *v = deg.to_radians();
@@ -186,18 +188,18 @@ pub fn draw_properties(
             }
             NodeType::CopyToPoints => {
                 section(ui, |ui| {
-                    ui.colored_label(xsi::LABEL, "Input 0 → Template mesh");
-                    ui.colored_label(xsi::LABEL, "Input 1 → Point cloud");
+                    ui.colored_label(xsi::LABEL(), "Input 0 → Template mesh");
+                    ui.colored_label(xsi::LABEL(), "Input 1 → Point cloud");
                 });
             }
             NodeType::Subnet { .. } => {
                 section(ui, |ui| {
-                    ui.colored_label(xsi::DIM, "Dive in with double-click.");
+                    ui.colored_label(xsi::DIM(), "Dive in with double-click.");
                 });
             }
             NodeType::Merge | NodeType::Output => {
                 section(ui, |ui| {
-                    ui.colored_label(xsi::DIM, "No editable parameters.");
+                    ui.colored_label(xsi::DIM(), "No editable parameters.");
                 });
             }
 
@@ -225,7 +227,7 @@ pub fn draw_properties(
                         }
                     }
                 });
-                ui.colored_label(xsi::DIM, egui::RichText::new(
+                ui.colored_label(xsi::DIM(), egui::RichText::new(
                     "Skeleton and one take, baked per frame. Converted to Y-up, metres. Meshes are not read.").small());
             }
             NodeType::TestClip { seconds, fps_num, fps_den } => {
@@ -239,9 +241,9 @@ pub fn draw_properties(
                 section_label(ui, "Rename");
                 section(ui, |ui| {
                     ui.checkbox(strip_namespace, "Strip namespace (text before last ':')");
-                    ui.horizontal(|ui| { ui.colored_label(xsi::LABEL, "Find:");    ui.text_edit_singleline(find); });
-                    ui.horizontal(|ui| { ui.colored_label(xsi::LABEL, "Replace:"); ui.text_edit_singleline(replace); });
-                    ui.horizontal(|ui| { ui.colored_label(xsi::LABEL, "Prefix:");  ui.text_edit_singleline(prefix); });
+                    ui.horizontal(|ui| { ui.colored_label(xsi::LABEL(), "Find:");    ui.text_edit_singleline(find); });
+                    ui.horizontal(|ui| { ui.colored_label(xsi::LABEL(), "Replace:"); ui.text_edit_singleline(replace); });
+                    ui.horizontal(|ui| { ui.colored_label(xsi::LABEL(), "Prefix:");  ui.text_edit_singleline(prefix); });
                 });
                 if let (Some(i), Some(o)) = (&anim.input, &anim.output) {
                     ui.add_space(4.0);
@@ -249,7 +251,7 @@ pub fn draw_properties(
                     section(ui, |ui| {
                         egui::ScrollArea::vertical().id_source("rename_preview").max_height(220.0).show(ui, |ui| {
                             for (a, b) in i.joints.iter().zip(o.joints.iter()) {
-                                let col = if a.name == b.name { xsi::DIM } else { xsi::HEADER_TEXT };
+                                let col = if a.name == b.name { xsi::DIM() } else { xsi::HEADER_TEXT() };
                                 ui.colored_label(col, format!("{}  >  {}", a.name, b.name));
                             }
                         });
@@ -261,9 +263,9 @@ pub fn draw_properties(
                 section(ui, |ui| {
                     let max = anim.input.as_ref().map(|i| i.frames.saturating_sub(1) as u32).unwrap_or(100_000);
                     ui.horizontal(|ui| {
-                        ui.colored_label(xsi::LABEL, "Head:");
+                        ui.colored_label(xsi::LABEL(), "Head:");
                         ui.add(egui::DragValue::new(head).range(0..=max));
-                        ui.colored_label(xsi::LABEL, "Tail:");
+                        ui.colored_label(xsi::LABEL(), "Tail:");
                         ui.add(egui::DragValue::new(tail).range(0..=max));
                     });
                     if let Some(i) = &anim.input {
@@ -327,11 +329,11 @@ pub fn draw_properties(
                     let name = |i: usize| files[i].file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
 
                     ui.horizontal(|ui| {
-                        ui.colored_label(xsi::LABEL, "Index:");
+                        ui.colored_label(xsi::LABEL(), "Index:");
                         if ui.add_enabled(*index > 0, egui::Button::new("◀")).clicked() { *index -= 1; }
                         ui.add(egui::DragValue::new(index).range(0..=last).speed(0.1));
                         if ui.add_enabled(*index < last, egui::Button::new("▶")).clicked() { *index += 1; }
-                        ui.colored_label(xsi::DIM, format!("of {}", files.len()));
+                        ui.colored_label(xsi::DIM(), format!("of {}", files.len()));
                     });
                     egui::ComboBox::from_id_source("fbx_dir_file")
                         .width(ui.available_width() - 8.0)
@@ -374,7 +376,7 @@ pub fn draw_properties(
                     let mut remove = None;
                     for (n, pick) in picks.iter_mut().enumerate() {
                         ui.horizontal(|ui| {
-                            ui.colored_label(xsi::LABEL, format!("Char {}:", n + 1));
+                            ui.colored_label(xsi::LABEL(), format!("Char {}:", n + 1));
                             let text = match &*pick {
                                 SplitPick::Character(i) => match chars.get(*i as usize) {
                                     Some((_, name)) => format!("#{} {name}", i + 1),
@@ -419,12 +421,12 @@ pub fn draw_properties(
                 ui.add_space(4.0);
                 section(ui, |ui| {
                     match &input {
-                        None => { ui.colored_label(xsi::DIM, "No clip connected."); }
-                        Some(_) if chars.is_empty() => { ui.colored_label(xsi::DIM, "No characters found in the incoming clip."); }
+                        None => { ui.colored_label(xsi::DIM(), "No clip connected."); }
+                        Some(_) if chars.is_empty() => { ui.colored_label(xsi::DIM(), "No characters found in the incoming clip."); }
                         Some(c) => {
-                            ui.colored_label(xsi::DIM, format!("{} characters in the incoming clip:", chars.len()));
+                            ui.colored_label(xsi::DIM(), format!("{} characters in the incoming clip:", chars.len()));
                             for (i, (root, name)) in chars.iter().enumerate() {
-                                ui.colored_label(xsi::LABEL, format!(
+                                ui.colored_label(xsi::LABEL(), format!(
                                     "#{} {name}  ({} joints, root \"{}\")",
                                     i + 1, c.subtree(*root).len(), c.joints[*root].name));
                             }
@@ -436,15 +438,15 @@ pub fn draw_properties(
             NodeType::AutoTPose { set_hip_height, hip_height } => {
                 section_label(ui, "Neutral pose");
                 section(ui, |ui| {
-                    ui.colored_label(xsi::DIM, "Rotations zeroed, root at the origin, hips centred. One frame, no animation.");
+                    ui.colored_label(xsi::DIM(), "Rotations zeroed, root at the origin, hips centred. One frame, no animation.");
                     let rest = anim.input.as_ref().and_then(|c| c.hip_joint().map(|h| (c.joints[h].name.clone(), c.joints[h].rest.translation.y * 100.0)));
                     if let Some((name, h)) = &rest {
-                        ui.colored_label(xsi::LABEL, format!("Hips: {name}, {h:.2} cm in the file"));
+                        ui.colored_label(xsi::LABEL(), format!("Hips: {name}, {h:.2} cm in the file"));
                     }
                     ui.checkbox(set_hip_height, "Set hip height");
                     ui.add_enabled_ui(*set_hip_height, |ui| {
                         ui.horizontal(|ui| {
-                            ui.colored_label(xsi::LABEL, "Height:");
+                            ui.colored_label(xsi::LABEL(), "Height:");
                             ui.add(egui::DragValue::new(hip_height).speed(0.1).range(0.0..=300.0).suffix(" cm"));
                             if let Some((_, h)) = &rest {
                                 if ui.small_button("From file").clicked() { *hip_height = *h; }
@@ -472,13 +474,13 @@ pub fn draw_properties(
                             if ui.small_button("x").on_hover_text("Remove").clicked() { remove = Some(n); }
                         });
                         ui.horizontal(|ui| {
-                            ui.colored_label(xsi::LABEL, "Rot");
+                            ui.colored_label(xsi::LABEL(), "Rot");
                             for v in e.rotation.iter_mut() {
                                 ui.add(egui::DragValue::new(v).speed(0.5).suffix("°"));
                             }
                         });
                         ui.horizontal(|ui| {
-                            ui.colored_label(xsi::LABEL, "Pos");
+                            ui.colored_label(xsi::LABEL(), "Pos");
                             for v in e.translation.iter_mut() {
                                 ui.add(egui::DragValue::new(v).speed(0.1).suffix(" cm"));
                             }
@@ -490,17 +492,17 @@ pub fn draw_properties(
                 if ui.button("+ Add joint").clicked() {
                     edits.push(PoseEdit { joint: String::new(), rotation: [0.0; 3], translation: [0.0; 3] });
                 }
-                ui.colored_label(xsi::DIM, egui::RichText::new(
+                ui.colored_label(xsi::DIM(), egui::RichText::new(
                     "Rotation X, Y, Z in degrees, added in the parent's space. Applied to every frame.").small());
             }
 
             NodeType::ProxySkin { thickness } => {
                 section_label(ui, "Proxy mesh");
                 section(ui, |ui| {
-                    ui.colored_label(xsi::DIM, "Sphere per bone, cylinder per link, each bound to one bone. Built in the pose of the first frame.");
+                    ui.colored_label(xsi::DIM(), "Sphere per bone, cylinder per link, each bound to one bone. Built in the pose of the first frame.");
                     labeled_slider(ui, "Thickness", thickness, 0.25..=4.0);
                     if let Some(skin) = anim.output.as_ref().and_then(|c| c.skin.as_ref()) {
-                        ui.colored_label(xsi::LABEL, format!("{} vertices, {} faces", skin.positions.len(), skin.faces.len()));
+                        ui.colored_label(xsi::LABEL(), format!("{} vertices, {} faces", skin.positions.len(), skin.faces.len()));
                     }
                 });
             }
@@ -509,25 +511,25 @@ pub fn draw_properties(
                 section_label(ui, "Output file");
                 section(ui, |ui| {
                     path_row(ui, path, crate::types::DEFAULT_WRITE_PATH, io, sel_id, BrowseMode::Folder, "Choose output folder", &["fbx"]);
-                    ui.colored_label(xsi::DIM, egui::RichText::new(
+                    ui.colored_label(xsi::DIM(), egui::RichText::new(
                         "{dir} source folder   {file} source file\n{char} character   {take} take name").small());
                     match &anim.output {
                         Some(c) => {
-                            ui.colored_label(xsi::LABEL, format!("Writes: {}", crate::fbx_writer::resolve_path(path, c).display()));
-                            ui.colored_label(xsi::DIM, format!(
+                            ui.colored_label(xsi::LABEL(), format!("Writes: {}", crate::fbx_writer::resolve_path(path, c).display()));
+                            ui.colored_label(xsi::DIM(), format!(
                                 "{} joints, {}{}",
                                 c.joints.len(),
                                 if c.frames > 1 { format!("{} frames", c.frames) } else { "pose only".into() },
                                 match &c.skin { Some(s) => format!(", mesh {} verts", s.positions.len()), None => String::new() }));
                         }
-                        None => { ui.colored_label(xsi::DIM, "No clip connected."); }
+                        None => { ui.colored_label(xsi::DIM(), "No clip connected."); }
                     }
                 });
                 ui.add_space(4.0);
                 let running = io.batch.0.lock().unwrap().running;
                 section(ui, |ui| {
                     ui.add_enabled_ui(!running, |ui| {
-                        ui.colored_label(xsi::DIM, "This node");
+                        ui.colored_label(xsi::DIM(), "This node");
                         ui.horizontal(|ui| {
                             if ui.button("Write this file").clicked() {
                                 io.action = Some(PanelAction::Write { targets: vec![sel_id], all_files: false });
@@ -536,7 +538,7 @@ pub fn draw_properties(
                                 io.action = Some(PanelAction::Write { targets: vec![sel_id], all_files: true });
                             }
                         });
-                        ui.colored_label(xsi::DIM, format!("All {} Write nodes", all_writers.len()));
+                        ui.colored_label(xsi::DIM(), format!("All {} Write nodes", all_writers.len()));
                         ui.horizontal(|ui| {
                             if ui.button("Write this file").clicked() {
                                 io.action = Some(PanelAction::Write { targets: all_writers.clone(), all_files: false });
@@ -554,7 +556,7 @@ pub fn draw_properties(
     if resync { graph.sync_sockets(sel_id); }
 
     ui.add_space(6.0);
-    ui.colored_label(xsi::DIM, format!("「{}」", node_name));
+    ui.colored_label(xsi::DIM(), format!("「{}」", node_name));
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -584,7 +586,7 @@ fn batch_log(ui: &mut egui::Ui, batch: &BatchState) {
         }
         egui::ScrollArea::vertical().id_source("batch_log").max_height(260.0).stick_to_bottom(true).show(ui, |ui| {
             for line in &p.log {
-                let col = if line.starts_with("FAILED") { egui::Color32::from_rgb(230, 150, 150) } else { xsi::LABEL };
+                let col = if line.starts_with("FAILED") { egui::Color32::from_rgb(230, 150, 150) } else { xsi::LABEL() };
                 ui.colored_label(col, egui::RichText::new(line).small());
             }
         });
@@ -594,7 +596,7 @@ fn batch_log(ui: &mut egui::Ui, batch: &BatchState) {
 fn rate_combo(ui: &mut egui::Ui, id: &str, num: &mut u32, den: &mut u32) {
     let cur = FrameRate::new(*num, *den);
     ui.horizontal(|ui| {
-        ui.colored_label(xsi::LABEL, "Rate:");
+        ui.colored_label(xsi::LABEL(), "Rate:");
         egui::ComboBox::from_id_source(id)
             .selected_text(format!("{} fps", cur.label()))
             .show_ui(ui, |ui| {
@@ -617,46 +619,46 @@ fn clip_summary(ui: &mut egui::Ui, anim: &AnimContext) {
     ui.add_space(4.0);
     section(ui, |ui| {
         match &anim.input {
-            Some(i) => { ui.colored_label(xsi::DIM, format!("In:   {}", line(i))); }
-            None    => { ui.colored_label(xsi::DIM, "In:   no clip connected"); }
+            Some(i) => { ui.colored_label(xsi::DIM(), format!("In:   {}", line(i))); }
+            None    => { ui.colored_label(xsi::DIM(), "In:   no clip connected"); }
         }
         if let Some(o) = &anim.output {
-            ui.colored_label(xsi::LABEL, format!("Out:  {}", line(o)));
+            ui.colored_label(xsi::LABEL(), format!("Out:  {}", line(o)));
         }
     });
 }
 
 fn section(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
     egui::Frame::none()
-        .fill(xsi::SECTION_BG)
+        .fill(xsi::SECTION_BG())
         .inner_margin(egui::vec2(8.0, 6.0))
         .rounding(4.0)
         .show(ui, add);
 }
 
 fn section_label(ui: &mut egui::Ui, label: &str) {
-    ui.colored_label(xsi::DIM, egui::RichText::new(label).size(10.0).strong());
+    ui.colored_label(xsi::DIM(), egui::RichText::new(label).size(10.0).strong());
     ui.add_space(2.0);
 }
 
 fn labeled_slider(ui: &mut egui::Ui, label: &str, val: &mut f32, range: std::ops::RangeInclusive<f32>) {
     ui.horizontal(|ui| {
-        ui.colored_label(xsi::LABEL, format!("{label}:"));
+        ui.colored_label(xsi::LABEL(), format!("{label}:"));
         ui.add(egui::Slider::new(val, range));
     });
 }
 
 fn labeled_slider_u32(ui: &mut egui::Ui, label: &str, val: &mut u32, range: std::ops::RangeInclusive<u32>) {
     ui.horizontal(|ui| {
-        ui.colored_label(xsi::LABEL, format!("{label}:"));
+        ui.colored_label(xsi::LABEL(), format!("{label}:"));
         ui.add(egui::Slider::new(val, range));
     });
 }
 
 fn drag_vec3(ui: &mut egui::Ui, v: &mut Vec3, speed: f64) {
     ui.horizontal(|ui| {
-        ui.colored_label(xsi::LABEL, "X:"); ui.add(egui::DragValue::new(&mut v.x).speed(speed));
-        ui.colored_label(xsi::LABEL, "Y:"); ui.add(egui::DragValue::new(&mut v.y).speed(speed));
-        ui.colored_label(xsi::LABEL, "Z:"); ui.add(egui::DragValue::new(&mut v.z).speed(speed));
+        ui.colored_label(xsi::LABEL(), "X:"); ui.add(egui::DragValue::new(&mut v.x).speed(speed));
+        ui.colored_label(xsi::LABEL(), "Y:"); ui.add(egui::DragValue::new(&mut v.y).speed(speed));
+        ui.colored_label(xsi::LABEL(), "Z:"); ui.add(egui::DragValue::new(&mut v.z).speed(speed));
     });
 }

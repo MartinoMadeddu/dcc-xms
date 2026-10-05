@@ -9,19 +9,21 @@ const HEADER_H:   f32 = 24.0;
 const MAX_ROWS:   usize = 200; // max rows rendered at once (virtual scroll)
 
 mod xsi {
+    // Light-theme colours. `theme::c` returns the dark counterpart in dark mode.
+    #![allow(non_snake_case)]
     use bevy_egui::egui::Color32;
-    pub const BG:         Color32 = Color32::from_rgb(72, 72, 72);
-    pub const HEADER_BG:  Color32 = Color32::from_rgb(58, 58, 58);
-    pub const ROW_EVEN:   Color32 = Color32::from_rgb(72, 72, 72);
-    pub const ROW_ODD:    Color32 = Color32::from_rgb(66, 66, 66);
-    pub const BORDER:     Color32 = Color32::from_rgb(50, 50, 50);
-    pub const TEXT:       Color32 = Color32::from_rgb(210, 210, 210);
-    pub const TEXT_DIM:   Color32 = Color32::from_rgb(150, 150, 150);
-    pub const TEXT_IDX:   Color32 = Color32::from_rgb(120, 130, 145);
-    pub const TAB_ACTIVE: Color32 = Color32::from_rgb(80, 95, 115);
-    pub const TAB_BG:     Color32 = Color32::from_rgb(58, 58, 58);
-    pub const BREADCRUMB: Color32 = Color32::from_rgb(160, 165, 170);
-    pub const PATH_BG:    Color32 = Color32::from_rgb(45, 45, 45);
+    pub fn BG() -> Color32 { crate::theme::c(72, 72, 72) }
+    pub fn HEADER_BG() -> Color32 { crate::theme::c(58, 58, 58) }
+    pub fn ROW_EVEN() -> Color32 { crate::theme::c(72, 72, 72) }
+    pub fn ROW_ODD() -> Color32 { crate::theme::c(66, 66, 66) }
+    pub fn BORDER() -> Color32 { crate::theme::c(50, 50, 50) }
+    pub fn TEXT() -> Color32 { crate::theme::c(210, 210, 210) }
+    pub fn TEXT_DIM() -> Color32 { crate::theme::c(150, 150, 150) }
+    pub fn TEXT_IDX() -> Color32 { crate::theme::c(120, 130, 145) }
+    pub fn TAB_ACTIVE() -> Color32 { crate::theme::c(80, 95, 115) }
+    pub fn TAB_BG() -> Color32 { crate::theme::c(58, 58, 58) }
+    pub fn BREADCRUMB() -> Color32 { crate::theme::c(160, 165, 170) }
+    pub fn PATH_BG() -> Color32 { crate::theme::c(45, 45, 45) }
 }
 
 pub fn draw_prim_inspector(
@@ -31,7 +33,7 @@ pub fn draw_prim_inspector(
     get_mesh: &dyn Fn(&NodeGraphState) -> Option<MeshData>,
 ) {
     egui::Frame::none()
-        .fill(xsi::BG)
+        .fill(xsi::BG())
         .show(ui, |ui| {
             // CRITICAL FIX: Only call get_mesh if cache is invalid!
             let selected_node = graph.selected_node;
@@ -62,13 +64,13 @@ pub fn draw_prim_inspector(
             };
 
             egui::Frame::none()
-                .fill(xsi::PATH_BG)
+                .fill(xsi::PATH_BG())
                 .inner_margin(egui::vec2(8.0, 4.0))
                 .show(ui, |ui| {
                     ui.set_min_width(ui.available_width());
                     ui.label(
                         egui::RichText::new(&path_str)
-                            .color(xsi::BREADCRUMB)
+                            .color(xsi::BREADCRUMB())
                             .monospace()
                             .size(10.0),
                     );
@@ -78,7 +80,7 @@ pub fn draw_prim_inspector(
                 ui.add_space(12.0);
                 ui.centered_and_justified(|ui| {
                     ui.label(egui::RichText::new("No mesh data for selected node.")
-                        .color(xsi::TEXT_DIM));
+                        .color(xsi::TEXT_DIM()));
                 });
                 return;
             };
@@ -98,7 +100,7 @@ pub fn draw_prim_inspector(
             let fv_count     = mesh.num_face_varying();
 
             egui::Frame::none()
-                .fill(xsi::TAB_BG)
+                .fill(xsi::TAB_BG())
                 .show(ui, |ui| {
                     ui.set_min_width(ui.available_width());
                     ui.horizontal(|ui| {
@@ -165,7 +167,7 @@ pub fn draw_prim_inspector(
                     if cols.is_empty() {
                         ui.add_space(12.0);
                         ui.label(egui::RichText::new("No FaceVarying primvars.")
-                            .color(xsi::TEXT_DIM));
+                            .color(xsi::TEXT_DIM()));
                     } else {
                         draw_spreadsheet(ui, state, fv_count, &cols);
                     }
@@ -178,7 +180,7 @@ pub fn draw_prim_inspector(
                     if cols.is_empty() {
                         ui.add_space(12.0);
                         ui.label(egui::RichText::new("No Constant primvars.")
-                            .color(xsi::TEXT_DIM));
+                            .color(xsi::TEXT_DIM()));
                     } else {
                         draw_spreadsheet(ui, state, const_vars.len(), &cols);
                     }
@@ -193,10 +195,10 @@ fn tab_btn(ui: &mut egui::Ui, state: &mut PrimInspectorState, tab: PrimInspector
     let is_active = state.active_tab == tab;
     let btn = egui::Button::new(
         egui::RichText::new(label)
-            .color(if is_active { egui::Color32::WHITE } else { xsi::TEXT_DIM })
+            .color(if is_active { egui::Color32::WHITE } else { xsi::TEXT_DIM() })
             .size(11.0),
     )
-    .fill(if is_active { xsi::TAB_ACTIVE } else { egui::Color32::TRANSPARENT })
+    .fill(if is_active { xsi::TAB_ACTIVE() } else { egui::Color32::TRANSPARENT })
     .frame(true)
     .min_size(egui::vec2(0.0, 22.0));
 
@@ -218,7 +220,7 @@ fn draw_spreadsheet(
     cols:      &[(&str, Vec<Vec<f32>>)],
 ) {
     if row_count == 0 || cols.is_empty() {
-        ui.label(egui::RichText::new("No data.").color(xsi::TEXT_DIM));
+        ui.label(egui::RichText::new("No data.").color(xsi::TEXT_DIM()));
         return;
     }
 
@@ -269,12 +271,12 @@ fn draw_spreadsheet(
             outer_rect.min,
             egui::vec2(outer_rect.width(), HEADER_H),
         );
-        painter.rect_filled(hdr_rect, 0.0, xsi::HEADER_BG);
+        painter.rect_filled(hdr_rect, 0.0, xsi::HEADER_BG());
 
         // Index column header
         painter.rect_stroke(
             egui::Rect::from_min_size(hdr_rect.min, egui::vec2(IDX_COL_W, HEADER_H)),
-            0.0, egui::Stroke::new(1.0, xsi::BORDER),
+            0.0, egui::Stroke::new(1.0, xsi::BORDER()),
         );
 
         for (ci, cd) in col_defs.iter().enumerate() {
@@ -283,20 +285,20 @@ fn draw_spreadsheet(
                 egui::pos2(x, outer_rect.min.y),
                 egui::vec2(DATA_COL_W, HEADER_H),
             );
-            painter.rect_stroke(cell, 0.0, egui::Stroke::new(1.0, xsi::BORDER));
+            painter.rect_stroke(cell, 0.0, egui::Stroke::new(1.0, xsi::BORDER()));
             painter.text(
                 cell.center(),
                 egui::Align2::CENTER_CENTER,
                 &cd.header,
                 egui::FontId::proportional(11.0),
-                xsi::TEXT,
+                xsi::TEXT(),
             );
         }
 
         // ── Data rows ─────────────────────────────────────────────────────────
         for (ri, row_idx) in (state.row_offset..state.row_offset + visible_rows).enumerate() {
             let y = outer_rect.min.y + HEADER_H + ri as f32 * ROW_H;
-            let row_col = if ri % 2 == 0 { xsi::ROW_EVEN } else { xsi::ROW_ODD };
+            let row_col = if ri % 2 == 0 { xsi::ROW_EVEN() } else { xsi::ROW_ODD() };
 
             let row_rect = egui::Rect::from_min_size(
                 egui::pos2(outer_rect.min.x, y),
@@ -309,13 +311,13 @@ fn draw_spreadsheet(
                 egui::pos2(outer_rect.min.x, y),
                 egui::vec2(IDX_COL_W, ROW_H),
             );
-            painter.rect_stroke(idx_cell, 0.0, egui::Stroke::new(1.0, xsi::BORDER));
+            painter.rect_stroke(idx_cell, 0.0, egui::Stroke::new(1.0, xsi::BORDER()));
             painter.text(
                 idx_cell.center(),
                 egui::Align2::CENTER_CENTER,
                 &row_idx.to_string(),
                 egui::FontId::proportional(10.0),
-                xsi::TEXT_IDX,
+                xsi::TEXT_IDX(),
             );
 
             // Data cells
@@ -325,7 +327,7 @@ fn draw_spreadsheet(
                     egui::pos2(x, y),
                     egui::vec2(DATA_COL_W, ROW_H),
                 );
-                painter.rect_stroke(cell, 0.0, egui::Stroke::new(1.0, xsi::BORDER));
+                painter.rect_stroke(cell, 0.0, egui::Stroke::new(1.0, xsi::BORDER()));
 
                 // Find value
                 let val_str = cols.iter()
@@ -340,7 +342,7 @@ fn draw_spreadsheet(
                     egui::Align2::RIGHT_CENTER,
                     &val_str,
                     egui::FontId::monospace(10.0),
-                    xsi::TEXT,
+                    xsi::TEXT(),
                 );
             }
         }
