@@ -197,7 +197,10 @@ fn dcc_ui(
         .default_width(260.0)
         .min_width(180.0)
         .show(ctx, |ui| {
-            egui::ScrollArea::vertical().show(ui, |ui| {
+            // A panel takes the size of what is inside it. A scroll area that
+            // never shrinks keeps it at the size the user dragged it to:
+            // text wraps, anything still too wide or tall scrolls.
+            egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
                 let mut io = PanelIo { browser: &mut *browser, batch: &*batch, action: None };
                 draw_properties_panel(ui, &mut graph, &*stack, &mut subnets, &nav, &anim_ctx, &mut io);
                 if let Some(PanelAction::Write { targets, all_files }) = io.action {
@@ -247,14 +250,20 @@ fn dcc_ui(
                         } else {
                             ui.label("Right-click: add  |  Shift+drag: pan  |  Esc: cancel wire");
                             ui.separator();
-                            draw_subnet_graph(ui, sg);
+                            // Canvas in its own child Ui: see the note below.
+                            let rect = ui.available_rect_before_wrap();
+                            let mut canvas = ui.child_ui(rect, *ui.layout(), None);
+                            draw_subnet_graph(&mut canvas, sg);
+                            ui.allocate_rect(rect, egui::Sense::hover());
                         }
                     } else {
                         nav.current_subnet = None;
                     }
                 }
                 None => {
-                    ui.horizontal(|ui| {
+                    // Wraps when the panel is narrow, so the buttons never
+                    // push the panel wider than the user made it.
+                    ui.horizontal_wrapped(|ui| {
                         ui.heading("Node Graph");
                         ui.separator();
                         if ui.button("📂 Open").on_hover_text("Load a saved graph").clicked() {
@@ -263,13 +272,17 @@ fn dcc_ui(
                         if ui.button("💾 Save").on_hover_text("Save this graph").clicked() {
                             browser.open(BrowseTarget::SaveGraph, BrowseMode::Save, "Save graph", &["json"], "graph.json");
                         }
-                        if ui.button("Mocap split template")
-                            .on_hover_text("Replace the graph with: folder of takes, split per character, animation and skinned T-pose written per character")
-                            .clicked()
-                        {
-                            graph_io::mocap_split_template(&mut graph);
-                            graph_file.message = "Template loaded. Select the Takes node and choose a folder.".into();
-                        }
+                        // Ready-made graphs. Picking one replaces the current graph.
+                        ui.menu_button("Templates", |ui| {
+                            if ui.button("Mocap split")
+                                .on_hover_text("Folder of takes, split per character, animation and skinned T-pose written per character")
+                                .clicked()
+                            {
+                                graph_io::mocap_split_template(&mut graph);
+                                graph_file.message = "Template loaded. Select the Takes node and choose a folder.".into();
+                                ui.close_menu();
+                            }
+                        });
                     });
                     if !graph_file.message.is_empty() {
                         ui.label(egui::RichText::new(&graph_file.message).small());
@@ -277,7 +290,14 @@ fn dcc_ui(
                     ui.label("Right-click/Tab: add  |  Shift+drag: pan  |  Esc: cancel wire  |  Double-click subnet: dive in");
                     ui.separator();
 
-                    let dive = draw_node_graph(ui, &mut graph);
+                    // The canvas gets its own child Ui. Nodes are widgets placed
+                    // at arbitrary positions; drawn straight into the panel, a
+                    // node dragged or panned past the panel edge would stretch
+                    // the panel to contain it.
+                    let rect = ui.available_rect_before_wrap();
+                    let mut canvas = ui.child_ui(rect, *ui.layout(), None);
+                    let dive = draw_node_graph(&mut canvas, &mut graph);
+                    ui.allocate_rect(rect, egui::Sense::hover());
 
                     for node in graph.nodes.iter_mut() {
                         if let NodeType::Subnet { id, name } = &mut node.node_type {
@@ -306,6 +326,12 @@ fn dcc_ui(
         .min_height(120.0)
         // Constrain to the viewport column only (left of all right panels)
         .show(ctx, |ui| {
+            // Same as the properties panel: keep the height the user set,
+            // whatever the amount of data shown.
+            egui::ScrollArea::both()
+                .id_source("prim_inspector_scroll")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new("Primitive Inspector")
                     .strong()
@@ -322,6 +348,7 @@ fn dcc_ui(
             };
 
             draw_prim_inspector(ui, &graph, &mut prim_state, &get_mesh);
+                });
         });
     let insp_h_pts = insp_resp.response.rect.height();
 
