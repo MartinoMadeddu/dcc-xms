@@ -574,6 +574,28 @@ fn add_node_menu(ui: &mut egui::Ui, graph: &mut NodeGraphState, cp: egui::Pos2) 
         graph.add_node("SetTimecode".into(), NodeType::SetTimecode {
             hours: 1, minutes: 0, seconds: 0, frames: 0, drop_frame: false }, cp); added = true;
     }
+    ui.separator();
+    ui.label(egui::RichText::new("Batch / Export").strong());
+    if ui.button("📂  Load FBX Folder").clicked() {
+        graph.add_node("Takes".into(), NodeType::LoadFbxDir { dir: String::new(), index: 0, take: 0 }, cp); added = true;
+    }
+    if ui.button("Ψ  Split Characters").clicked() {
+        graph.add_node("Split".into(), NodeType::SplitSkeleton {
+            picks: vec![crate::types::SplitPick::Character(0), crate::types::SplitPick::Character(1)] }, cp); added = true;
+    }
+    if ui.button("✚  Auto T-Pose").clicked() {
+        graph.add_node("TPose".into(), NodeType::AutoTPose { set_hip_height: false, hip_height: 90.0 }, cp); added = true;
+    }
+    if ui.button("🔧  Fix Pose").clicked() {
+        graph.add_node("FixPose".into(), NodeType::FixPose { edits: vec![] }, cp); added = true;
+    }
+    if ui.button("⬟  Proxy Skin").clicked() {
+        graph.add_node("ProxySkin".into(), NodeType::ProxySkin { thickness: 1.0 }, cp); added = true;
+    }
+    if ui.button("💾  Write FBX").clicked() {
+        graph.add_node("Write".into(), NodeType::WriteFbx {
+            path: crate::types::DEFAULT_WRITE_PATH.into() }, cp); added = true;
+    }
     if added { ui.close_menu(); }
     added
 }

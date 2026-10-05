@@ -7,6 +7,9 @@ use bevy_egui::egui;
 use crate::types::{ConnectionId, EvalResult, MeshData, NodeId, NodeType, SubnetId};
 use nodes::evaluate_node_type;
 
+/// Results of one evaluation pass, per node output socket.
+pub type EvalCache = HashMap<(NodeId, usize), Option<EvalResult>>;
+
 // ============================================================================
 // GRAPH DATA STRUCTURES
 // ============================================================================
@@ -45,7 +48,7 @@ pub struct Connection {
 // NODE GRAPH STATE  (Bevy Resource)
 // ============================================================================
 
-#[derive(Resource)]
+#[derive(Resource, Clone)]
 pub struct NodeGraphState {
     pub nodes:               Vec<GraphNode>,
     pub connections:         Vec<Connection>,
@@ -124,7 +127,16 @@ impl NodeGraphState {
             NodeType::RenameJoints { .. }
             | NodeType::TrimClip { .. }
             | NodeType::Retime { .. }
-            | NodeType::SetTimecode { .. }  => (vec![i("Clip")], vec![o("Clip")]),
+            | NodeType::SetTimecode { .. }
+            | NodeType::AutoTPose { .. }
+            | NodeType::FixPose { .. }
+            | NodeType::ProxySkin { .. }
+            | NodeType::WriteFbx { .. }     => (vec![i("Clip")], vec![o("Clip")]),
+            NodeType::LoadFbxDir { .. }     => (vec![], vec![o("Clip")]),
+            NodeType::SplitSkeleton { picks } => (
+                vec![i("Clip")],
+                (0..picks.len()).map(|n| OutputSocket { name: format!("Char {}", n + 1) }).collect(),
+            ),
         }
     }
 
@@ -248,9 +260,9 @@ impl NodeGraphState {
         
         // If this is the Output node, get its input
         if matches!(node.node_type, NodeType::Output) {
-            let (src, _) = node.inputs.first()?.connected_output?;
+            let (src, out) = node.inputs.first()?.connected_output?;
             let mut cache = HashMap::new();
-            return self.eval_node(src, &mut cache, eval_subnet)
+            return self.eval_node_out(src, out, &mut cache, eval_subnet)
                 .map(|r| r.into_mesh());
         }
         
@@ -274,9 +286,14 @@ impl NodeGraphState {
     /// Clip produced by one node, if it produces animation. Clip operators
     /// never go through subnets, so no subnet evaluator is needed.
     pub fn eval_anim(&self, id: NodeId) -> Option<std::sync::Arc<crate::core::anim::AnimData>> {
+        self.eval_anim_out(id, 0)
+    }
+
+    /// Clip on one output socket of a node.
+    pub fn eval_anim_out(&self, id: NodeId, output: usize) -> Option<std::sync::Arc<crate::core::anim::AnimData>> {
         let passthrough = |_: SubnetId, mesh: &MeshData, _: Option<&MeshData>| mesh.clone();
         let mut cache = HashMap::new();
-        match self.eval_anim_node(id, &mut cache, &passthrough)? {
+        match self.eval_anim_node(id, output, &mut cache, &passthrough)? {
             EvalResult::Anim(a) => Some(a),
             _ => None,
         }
@@ -287,18 +304,16 @@ impl NodeGraphState {
     fn eval_anim_node(
         &self,
         id:          NodeId,
-        cache:       &mut HashMap<NodeId, Option<EvalResult>>,
+        output:      usize,
+        cache:       &mut EvalCache,
         eval_subnet: &impl Fn(SubnetId, &MeshData, Option<&MeshData>) -> MeshData,
     ) -> Option<EvalResult> {
         let node = self.nodes.iter().find(|n| n.id == id)?;
         match &node.node_type {
-            NodeType::LoadFbx { .. } | NodeType::TestClip { .. }
-            | NodeType::RenameJoints { .. } | NodeType::TrimClip { .. }
-            | NodeType::Retime { .. } | NodeType::SetTimecode { .. } =>
-                self.eval_node(id, cache, eval_subnet),
+            t if t.is_anim() => self.eval_node_out(id, output, cache, eval_subnet),
             NodeType::Output => {
-                let (src, _) = node.inputs.first()?.connected_output?;
-                self.eval_anim_node(src, cache, eval_subnet)
+                let (src, out) = node.inputs.first()?.connected_output?;
+                self.eval_anim_node(src, out, cache, eval_subnet)
             }
             _ => None,
         }
@@ -308,20 +323,32 @@ impl NodeGraphState {
     pub fn eval_node(
         &self,
         id:          NodeId,
-        cache:       &mut HashMap<NodeId, Option<EvalResult>>,
+        cache:       &mut EvalCache,
         eval_subnet: &impl Fn(SubnetId, &MeshData, Option<&MeshData>) -> MeshData,
     ) -> Option<EvalResult> {
-        if let Some(cached) = cache.get(&id) { return cached.clone(); }
+        self.eval_node_out(id, 0, cache, eval_subnet)
+    }
+
+    /// Evaluate one output socket of a node. Each input is taken from the
+    /// output socket it is wired to.
+    pub fn eval_node_out(
+        &self,
+        id:          NodeId,
+        output:      usize,
+        cache:       &mut EvalCache,
+        eval_subnet: &impl Fn(SubnetId, &MeshData, Option<&MeshData>) -> MeshData,
+    ) -> Option<EvalResult> {
+        if let Some(cached) = cache.get(&(id, output)) { return cached.clone(); }
 
         let node = self.nodes.iter().find(|n| n.id == id)?;
 
         let inputs: Vec<EvalResult> = node.inputs.iter()
             .filter_map(|s| s.connected_output
-                .and_then(|(src, _)| self.eval_node(src, cache, eval_subnet)))
+                .and_then(|(src, out)| self.eval_node_out(src, out, cache, eval_subnet)))
             .collect();
 
-        let result = evaluate_node_type(&node.node_type, &inputs, eval_subnet);
-        cache.insert(id, result.clone());
+        let result = evaluate_node_type(&node.node_type, &inputs, eval_subnet, output);
+        cache.insert((id, output), result.clone());
         result
     }
 
@@ -334,30 +361,26 @@ impl NodeGraphState {
         &self,
         eval_subnet: &impl Fn(SubnetId, &MeshData, Option<&MeshData>) -> MeshData,
     ) -> Vec<(NodeId, String, EvalResult)> {
-        let mut cache  = HashMap::new();
+        let mut cache: EvalCache = HashMap::new();
         let mut out    = vec![];
         let mut visited = std::collections::HashSet::new();
 
+        let root_src = self.nodes.iter()
+            .find(|n| matches!(n.node_type, NodeType::Output))
+            .and_then(|n| n.inputs.first())
+            .and_then(|i| i.connected_output);
+
         // Only walk nodes reachable from Output
-        if let Some(root) = self.nodes.iter().find(|n| matches!(n.node_type, NodeType::Output)) {
-            if let Some(inp) = root.inputs.first() {
-                if let Some((src, _)) = inp.connected_output {
-                    self.walk_for_scene(src, &mut cache, eval_subnet, &mut out, &mut visited);
-                }
-            }
+        if let Some((src, _)) = root_src {
+            self.walk_for_scene(src, &mut cache, eval_subnet, &mut out, &mut visited);
         }
 
         // Animation: show the skeleton that reaches Output, after every
-        // operator, so renames are visible in the explorer.
-        if let Some(src) = self.nodes.iter()
-            .find(|n| matches!(n.node_type, NodeType::Output))
-            .and_then(|n| n.inputs.first())
-            .and_then(|i| i.connected_output)
-            .map(|(src, _)| src)
-        {
-            if let Some(Some(r @ EvalResult::Anim(_))) = cache.get(&src) {
+        // operator, so renames and splits are visible in the explorer.
+        if let Some((src, socket)) = root_src {
+            if let Some(r @ EvalResult::Anim(_)) = self.eval_node_out(src, socket, &mut cache, eval_subnet) {
                 if let Some(n) = self.nodes.iter().find(|n| n.id == src) {
-                    out.push((n.id, n.name.clone(), r.clone()));
+                    out.push((n.id, n.name.clone(), r));
                 }
             }
         }
@@ -367,7 +390,7 @@ impl NodeGraphState {
     fn walk_for_scene(
         &self,
         id:          NodeId,
-        cache:       &mut HashMap<NodeId, Option<EvalResult>>,
+        cache:       &mut EvalCache,
         eval_subnet: &impl Fn(SubnetId, &MeshData, Option<&MeshData>) -> MeshData,
         out:         &mut Vec<(NodeId, String, EvalResult)>,
         visited:     &mut std::collections::HashSet<NodeId>,
@@ -386,27 +409,45 @@ impl NodeGraphState {
             }
         }
 
-        // Evaluate this node (uses cache so work isn't duplicated)
-        if !cache.contains_key(&id) {
-            let inputs: Vec<EvalResult> = node.inputs.iter()
-                .filter_map(|s| s.connected_output
-                    .and_then(|(src, _)| cache.get(&src).and_then(|r| r.clone())))
-                .collect();
-            let result = evaluate_node_type(&node.node_type, &inputs, eval_subnet);
-            cache.insert(id, result);
-        }
-
-        // Only generator nodes appear in the scene explorer
-        if let Some(r) = cache.get(&id).and_then(|r| r.clone()) {
-            match &node.node_type {
-                NodeType::CreateCube { .. }
-                | NodeType::CreateSphere { .. }
-                | NodeType::CreateGrid { .. }
-                | NodeType::LoadUsd { .. } => {
-                    out.push((node.id, node.name.clone(), r));
-                }
-                _ => {}
+        // Only mesh generator nodes appear in the scene explorer
+        if matches!(node.node_type,
+            NodeType::CreateCube { .. } | NodeType::CreateSphere { .. }
+            | NodeType::CreateGrid { .. } | NodeType::LoadUsd { .. })
+        {
+            if let Some(r) = self.eval_node_out(id, 0, cache, eval_subnet) {
+                out.push((node.id, node.name.clone(), r));
             }
         }
+    }
+
+    /// Clips the viewport should draw: the viewed node's clip, or one per
+    /// output when the viewed node is a Split.
+    pub fn display_clips(&self) -> Vec<std::sync::Arc<crate::core::anim::AnimData>> {
+        let Some(id) = self.get_viewport_node() else { return vec![] };
+        let Some(node) = self.nodes.iter().find(|n| n.id == id) else { return vec![] };
+        match &node.node_type {
+            NodeType::Output => node.inputs.first()
+                .and_then(|i| i.connected_output)
+                .and_then(|(src, out)| self.eval_anim_out(src, out))
+                .into_iter().collect(),
+            NodeType::SplitSkeleton { picks } =>
+                (0..picks.len()).filter_map(|o| self.eval_anim_out(id, o)).collect(),
+            _ => self.eval_anim(id).into_iter().collect(),
+        }
+    }
+
+    /// Make a node's sockets match its type again after its parameters
+    /// changed the socket count, and drop wires to sockets that are gone.
+    pub fn sync_sockets(&mut self, id: NodeId) {
+        let Some(node) = self.nodes.iter_mut().find(|n| n.id == id) else { return };
+        let (_, outputs) = Self::create_sockets(&node.node_type);
+        if outputs.len() == node.outputs.len() { return; }
+        let count = outputs.len();
+        node.outputs = outputs;
+        let dead: Vec<ConnectionId> = self.connections.iter()
+            .filter(|c| c.from_node == id && c.from_output >= count)
+            .map(|c| c.id).collect();
+        for cid in dead { self.remove_connection(cid); }
+        self.mark_dirty();
     }
 }

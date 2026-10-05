@@ -2,7 +2,10 @@ use bevy::prelude::Vec3;
 use bevy_egui::egui;
 use std::sync::Arc;
 use crate::types::{NodeType, RetimeMode, node_type_label};
-use crate::core::anim::{AnimData, FrameRate, RATE_PRESETS};
+use crate::core::anim::{AnimData, FrameRate, PoseEdit, RATE_PRESETS};
+use crate::types::{NodeId, SplitPick};
+use crate::file_browser::{BrowseMode, BrowseTarget, FileBrowser};
+use crate::batch::{self, BatchState};
 use crate::node_graph::NodeGraphState;
 use crate::scene_graph::SceneGraph;
 use crate::ice::{SubnetStore, GraphNavigation};
@@ -26,6 +29,19 @@ pub struct AnimContext {
     pub input:  Option<Arc<AnimData>>,
 }
 
+/// Things a node's parameters can ask the application to do.
+pub enum PanelAction {
+    /// Run these Write FBX nodes, for the current file or the whole folder.
+    Write { targets: Vec<NodeId>, all_files: bool },
+}
+
+/// Services the panel can reach beyond the graph.
+pub struct PanelIo<'a> {
+    pub browser: &'a mut FileBrowser,
+    pub batch:   &'a BatchState,
+    pub action:  Option<PanelAction>,
+}
+
 pub fn draw_properties_panel(
     ui:      &mut egui::Ui,
     graph:   &mut NodeGraphState,
@@ -33,6 +49,7 @@ pub fn draw_properties_panel(
     subnets: &mut SubnetStore,
     nav:     &GraphNavigation,
     anim:    &AnimContext,
+    io:      &mut PanelIo,
 ) {
     egui::Frame::none()
         .fill(xsi::PANEL_BG)
@@ -44,7 +61,7 @@ pub fn draw_properties_panel(
                     return;
                 }
             }
-            draw_properties(ui, graph, scene, anim);
+            draw_properties(ui, graph, scene, anim, io);
         });
 }
 
@@ -53,6 +70,7 @@ pub fn draw_properties(
     graph:  &mut NodeGraphState,
     _scene: &SceneGraph,
     anim:   &AnimContext,
+    io:     &mut PanelIo,
 ) {
     ui.colored_label(xsi::HEADER_TEXT,
         egui::RichText::new("Properties").strong().size(14.0));
@@ -81,6 +99,12 @@ pub fn draw_properties(
     });
 
     ui.add_space(4.0);
+
+    // Facts about the graph the parameter widgets need, gathered before the
+    // node is borrowed for editing.
+    let all_writers  = batch::write_nodes(graph);
+    let batch_files  = batch::file_count(graph, &batch::upstream_folder_loaders(graph, &[sel_id]));
+    let mut resync   = false;
 
     // Type-specific parameters
     if let Some(node) = graph.nodes.iter_mut().find(|n| n.id == sel_id) {
@@ -111,15 +135,7 @@ pub fn draw_properties(
                 ui.separator();
 
                 ui.label("Path:");
-                let mut buf = path.clone();
-                let changed = ui.add(
-                    egui::TextEdit::singleline(&mut buf)
-                        .hint_text("/path/to/file.usda")
-                        .desired_width(f32::INFINITY),
-                ).changed();
-                if changed {
-                    *path = buf;
-                }
+                path_row(ui, path, "/path/to/file.usda", io, sel_id, BrowseMode::File, "Open USD", &["usda", "usdc", "usdz", "usd"]);
 
                 // Quick file-existence indicator
                 if path.is_empty() {
@@ -189,9 +205,7 @@ pub fn draw_properties(
             NodeType::LoadFbx { path, take } => {
                 section_label(ui, "FBX File");
                 section(ui, |ui| {
-                    ui.add(egui::TextEdit::singleline(path)
-                        .hint_text("/path/to/take.fbx")
-                        .desired_width(f32::INFINITY));
+                    path_row(ui, path, "/path/to/take.fbx", io, sel_id, BrowseMode::File, "Open FBX", &["fbx"]);
                     match crate::fbx_loader::load_fbx_cached(path, *take) {
                         Ok(loaded) => {
                             ui.label(egui::RichText::new("✔ Loaded").color(egui::Color32::from_rgb(140, 200, 140)));
@@ -296,14 +310,286 @@ pub fn draw_properties(
                 });
                 clip_summary(ui, anim);
             }
+
+            // ── Batch / export ───────────────────────────────────────────────
+            NodeType::LoadFbxDir { dir, index, take } => {
+                section_label(ui, "FBX Folder");
+                let files = crate::fbx_loader::list_fbx(dir);
+                section(ui, |ui| {
+                    path_row(ui, dir, "/path/to/folder", io, sel_id, BrowseMode::Folder, "Choose FBX folder", &["fbx"]);
+                    if files.is_empty() {
+                        let msg = if dir.is_empty() { "No folder set" } else { "✘ No .fbx files in this folder" };
+                        ui.label(egui::RichText::new(msg).color(egui::Color32::from_rgb(200, 120, 120)));
+                        return;
+                    }
+                    let last = files.len() as u32 - 1;
+                    *index = (*index).min(last);
+                    let name = |i: usize| files[i].file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+
+                    ui.horizontal(|ui| {
+                        ui.colored_label(xsi::LABEL, "Index:");
+                        if ui.add_enabled(*index > 0, egui::Button::new("◀")).clicked() { *index -= 1; }
+                        ui.add(egui::DragValue::new(index).range(0..=last).speed(0.1));
+                        if ui.add_enabled(*index < last, egui::Button::new("▶")).clicked() { *index += 1; }
+                        ui.colored_label(xsi::DIM, format!("of {}", files.len()));
+                    });
+                    egui::ComboBox::from_id_source("fbx_dir_file")
+                        .width(ui.available_width() - 8.0)
+                        .selected_text(name(*index as usize))
+                        .show_ui(ui, |ui| {
+                            for i in 0..files.len() {
+                                ui.selectable_value(index, i as u32, format!("{i}  {}", name(i)));
+                            }
+                        });
+
+                    match crate::fbx_loader::load_fbx_cached(&files[*index as usize].to_string_lossy(), *take) {
+                        Ok(loaded) => {
+                            ui.label(egui::RichText::new("✔ Loaded").color(egui::Color32::from_rgb(140, 200, 140)));
+                            if loaded.takes.len() > 1 {
+                                let cur = (*take as usize).min(loaded.takes.len() - 1);
+                                egui::ComboBox::from_label("Take")
+                                    .selected_text(loaded.takes[cur].clone())
+                                    .show_ui(ui, |ui| {
+                                        for (i, n) in loaded.takes.iter().enumerate() {
+                                            ui.selectable_value(take, i as u32, n);
+                                        }
+                                    });
+                            }
+                        }
+                        Err(e) => {
+                            ui.label(egui::RichText::new(format!("✘ {e}")).color(egui::Color32::from_rgb(200, 120, 120)));
+                        }
+                    }
+                });
+                clip_summary(ui, anim);
+            }
+
+            NodeType::SplitSkeleton { picks } => {
+                section_label(ui, "Outputs (one per character)");
+                let input = anim.input.clone();
+                let chars: Vec<(usize, String)> = input.as_ref()
+                    .map(|c| c.character_roots().into_iter().map(|r| (r, c.character_name(r))).collect())
+                    .unwrap_or_default();
+                section(ui, |ui| {
+                    let mut remove = None;
+                    for (n, pick) in picks.iter_mut().enumerate() {
+                        ui.horizontal(|ui| {
+                            ui.colored_label(xsi::LABEL, format!("Char {}:", n + 1));
+                            let text = match &*pick {
+                                SplitPick::Character(i) => match chars.get(*i as usize) {
+                                    Some((_, name)) => format!("#{} {name}", i + 1),
+                                    None            => format!("#{} (not in this file)", i + 1),
+                                },
+                                SplitPick::Joint(name) => format!("joint {name}"),
+                            };
+                            egui::ComboBox::from_id_source(("split_pick", n))
+                                .width(150.0)
+                                .selected_text(text)
+                                .show_ui(ui, |ui| {
+                                    ui.weak("Characters, by position");
+                                    for (i, (_, name)) in chars.iter().enumerate() {
+                                        ui.selectable_value(pick, SplitPick::Character(i as u32), format!("#{} {name}", i + 1));
+                                    }
+                                    if let Some(c) = &input {
+                                        ui.separator();
+                                        ui.weak("Any joint, by name");
+                                        for j in &c.joints {
+                                            ui.selectable_value(pick, SplitPick::Joint(j.name.clone()), &j.name);
+                                        }
+                                    }
+                                });
+                            if ui.small_button("x").on_hover_text("Remove this output").clicked() { remove = Some(n); }
+                        });
+                    }
+                    if let Some(n) = remove { picks.remove(n); resync = true; }
+                    ui.horizontal(|ui| {
+                        if ui.button("+ Add output").clicked() {
+                            picks.push(SplitPick::Character(picks.len() as u32));
+                            resync = true;
+                        }
+                        if ui.add_enabled(!chars.is_empty(), egui::Button::new("Auto-detect"))
+                            .on_hover_text("One output per character found in the incoming clip")
+                            .clicked()
+                        {
+                            *picks = (0..chars.len() as u32).map(SplitPick::Character).collect();
+                            resync = true;
+                        }
+                    });
+                });
+                ui.add_space(4.0);
+                section(ui, |ui| {
+                    match &input {
+                        None => { ui.colored_label(xsi::DIM, "No clip connected."); }
+                        Some(_) if chars.is_empty() => { ui.colored_label(xsi::DIM, "No characters found in the incoming clip."); }
+                        Some(c) => {
+                            ui.colored_label(xsi::DIM, format!("{} characters in the incoming clip:", chars.len()));
+                            for (i, (root, name)) in chars.iter().enumerate() {
+                                ui.colored_label(xsi::LABEL, format!(
+                                    "#{} {name}  ({} joints, root \"{}\")",
+                                    i + 1, c.subtree(*root).len(), c.joints[*root].name));
+                            }
+                        }
+                    }
+                });
+            }
+
+            NodeType::AutoTPose { set_hip_height, hip_height } => {
+                section_label(ui, "Neutral pose");
+                section(ui, |ui| {
+                    ui.colored_label(xsi::DIM, "Rotations zeroed, root at the origin, hips centred. One frame, no animation.");
+                    let rest = anim.input.as_ref().and_then(|c| c.hip_joint().map(|h| (c.joints[h].name.clone(), c.joints[h].rest.translation.y * 100.0)));
+                    if let Some((name, h)) = &rest {
+                        ui.colored_label(xsi::LABEL, format!("Hips: {name}, {h:.2} cm in the file"));
+                    }
+                    ui.checkbox(set_hip_height, "Set hip height");
+                    ui.add_enabled_ui(*set_hip_height, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.colored_label(xsi::LABEL, "Height:");
+                            ui.add(egui::DragValue::new(hip_height).speed(0.1).range(0.0..=300.0).suffix(" cm"));
+                            if let Some((_, h)) = &rest {
+                                if ui.small_button("From file").clicked() { *hip_height = *h; }
+                            }
+                        });
+                    });
+                });
+            }
+
+            NodeType::FixPose { edits } => {
+                section_label(ui, "Manual corrections");
+                let joints: Vec<String> = anim.input.as_ref()
+                    .map(|c| c.joints.iter().map(|j| j.name.clone()).collect())
+                    .unwrap_or_default();
+                let mut remove = None;
+                for (n, e) in edits.iter_mut().enumerate() {
+                    section(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            egui::ComboBox::from_id_source(("fix_joint", n))
+                                .width(170.0)
+                                .selected_text(if e.joint.is_empty() { "pick a joint".to_string() } else { e.joint.clone() })
+                                .show_ui(ui, |ui| {
+                                    for j in &joints { ui.selectable_value(&mut e.joint, j.clone(), j); }
+                                });
+                            if ui.small_button("x").on_hover_text("Remove").clicked() { remove = Some(n); }
+                        });
+                        ui.horizontal(|ui| {
+                            ui.colored_label(xsi::LABEL, "Rot");
+                            for v in e.rotation.iter_mut() {
+                                ui.add(egui::DragValue::new(v).speed(0.5).suffix("°"));
+                            }
+                        });
+                        ui.horizontal(|ui| {
+                            ui.colored_label(xsi::LABEL, "Pos");
+                            for v in e.translation.iter_mut() {
+                                ui.add(egui::DragValue::new(v).speed(0.1).suffix(" cm"));
+                            }
+                        });
+                    });
+                    ui.add_space(2.0);
+                }
+                if let Some(n) = remove { edits.remove(n); }
+                if ui.button("+ Add joint").clicked() {
+                    edits.push(PoseEdit { joint: String::new(), rotation: [0.0; 3], translation: [0.0; 3] });
+                }
+                ui.colored_label(xsi::DIM, egui::RichText::new(
+                    "Rotation X, Y, Z in degrees, added in the parent's space. Applied to every frame.").small());
+            }
+
+            NodeType::ProxySkin { thickness } => {
+                section_label(ui, "Proxy mesh");
+                section(ui, |ui| {
+                    ui.colored_label(xsi::DIM, "Sphere per bone, cylinder per link, each bound to one bone. Built in the pose of the first frame.");
+                    labeled_slider(ui, "Thickness", thickness, 0.25..=4.0);
+                    if let Some(skin) = anim.output.as_ref().and_then(|c| c.skin.as_ref()) {
+                        ui.colored_label(xsi::LABEL, format!("{} vertices, {} faces", skin.positions.len(), skin.faces.len()));
+                    }
+                });
+            }
+
+            NodeType::WriteFbx { path } => {
+                section_label(ui, "Output file");
+                section(ui, |ui| {
+                    path_row(ui, path, crate::types::DEFAULT_WRITE_PATH, io, sel_id, BrowseMode::Folder, "Choose output folder", &["fbx"]);
+                    ui.colored_label(xsi::DIM, egui::RichText::new(
+                        "{dir} source folder   {file} source file\n{char} character   {take} take name").small());
+                    match &anim.output {
+                        Some(c) => {
+                            ui.colored_label(xsi::LABEL, format!("Writes: {}", crate::fbx_writer::resolve_path(path, c).display()));
+                            ui.colored_label(xsi::DIM, format!(
+                                "{} joints, {}{}",
+                                c.joints.len(),
+                                if c.frames > 1 { format!("{} frames", c.frames) } else { "pose only".into() },
+                                match &c.skin { Some(s) => format!(", mesh {} verts", s.positions.len()), None => String::new() }));
+                        }
+                        None => { ui.colored_label(xsi::DIM, "No clip connected."); }
+                    }
+                });
+                ui.add_space(4.0);
+                let running = io.batch.0.lock().unwrap().running;
+                section(ui, |ui| {
+                    ui.add_enabled_ui(!running, |ui| {
+                        ui.colored_label(xsi::DIM, "This node");
+                        ui.horizontal(|ui| {
+                            if ui.button("Write this file").clicked() {
+                                io.action = Some(PanelAction::Write { targets: vec![sel_id], all_files: false });
+                            }
+                            if ui.add_enabled(batch_files > 0, egui::Button::new(format!("Write whole folder ({batch_files})"))).clicked() {
+                                io.action = Some(PanelAction::Write { targets: vec![sel_id], all_files: true });
+                            }
+                        });
+                        ui.colored_label(xsi::DIM, format!("All {} Write nodes", all_writers.len()));
+                        ui.horizontal(|ui| {
+                            if ui.button("Write this file").clicked() {
+                                io.action = Some(PanelAction::Write { targets: all_writers.clone(), all_files: false });
+                            }
+                            if ui.add_enabled(batch_files > 0, egui::Button::new(format!("Write whole folder ({batch_files})"))).clicked() {
+                                io.action = Some(PanelAction::Write { targets: all_writers.clone(), all_files: true });
+                            }
+                        });
+                    });
+                });
+                batch_log(ui, io.batch);
+            }
         }
     }
+    if resync { graph.sync_sockets(sel_id); }
 
     ui.add_space(6.0);
     ui.colored_label(xsi::DIM, format!("「{}」", node_name));
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// Text field for a path with a folder button that opens the file browser.
+fn path_row(
+    ui: &mut egui::Ui, value: &mut String, hint: &str, io: &mut PanelIo,
+    node: NodeId, mode: BrowseMode, title: &str, exts: &[&str],
+) {
+    ui.horizontal(|ui| {
+        if ui.button("📂").on_hover_text("Browse").clicked() {
+            io.browser.open(BrowseTarget::Node(node), mode, title, exts, "");
+        }
+        ui.add(egui::TextEdit::singleline(value).hint_text(hint).desired_width(f32::INFINITY));
+    });
+}
+
+/// Progress and results of the last write.
+fn batch_log(ui: &mut egui::Ui, batch: &BatchState) {
+    let p = batch.0.lock().unwrap();
+    if p.log.is_empty() && !p.running { return; }
+    ui.add_space(4.0);
+    section(ui, |ui| {
+        if p.running {
+            ui.add(egui::ProgressBar::new(p.done as f32 / p.total.max(1) as f32)
+                .text(format!("writing {} / {}", p.done, p.total)));
+        }
+        egui::ScrollArea::vertical().id_source("batch_log").max_height(260.0).stick_to_bottom(true).show(ui, |ui| {
+            for line in &p.log {
+                let col = if line.starts_with("FAILED") { egui::Color32::from_rgb(230, 150, 150) } else { xsi::LABEL };
+                ui.colored_label(col, egui::RichText::new(line).small());
+            }
+        });
+    });
+}
 
 fn rate_combo(ui: &mut egui::Ui, id: &str, num: &mut u32, den: &mut u32) {
     let cur = FrameRate::new(*num, *den);

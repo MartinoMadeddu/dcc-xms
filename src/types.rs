@@ -22,13 +22,13 @@ pub struct ViewportRect(pub Option<egui::Rect>);
 // SHARED IDs
 // ============================================================================
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct NodeId(pub usize);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ConnectionId(pub usize);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct SubnetId(pub usize);
 
 // Scene object ID — one per visible object in the scene explorer
@@ -39,13 +39,29 @@ pub struct SceneObjectId(pub usize);
 // OUTER NODE TYPES
 // ============================================================================
 
-#[derive(Clone, Debug)]
+/// Vec3 stored as a plain array in saved graphs.
+mod vec3_array {
+    use bevy::math::Vec3;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    pub fn serialize<S: Serializer>(v: &Vec3, s: S) -> Result<S::Ok, S::Error> {
+        v.to_array().serialize(s)
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec3, D::Error> {
+        <[f32; 3]>::deserialize(d).map(Vec3::from_array)
+    }
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub enum NodeType {
     CreateCube   { size: f32 },
     CreateSphere { radius: f32, segments: u32 },
     CreateGrid   { rows: u32, cols: u32, size: f32 },
     LoadUsd      { path: String },
-    Transform    { translation: Vec3, rotation: Vec3, scale: Vec3 },
+    Transform    {
+        #[serde(with = "vec3_array")] translation: Vec3,
+        #[serde(with = "vec3_array")] rotation:    Vec3,
+        #[serde(with = "vec3_array")] scale:       Vec3,
+    },
     Merge,
     ScatterPoints { count: u32, seed: u32 },
     CopyToPoints,
@@ -62,9 +78,34 @@ pub enum NodeType {
     TrimClip     { head: u32, tail: u32 },
     Retime       { fps_num: u32, fps_den: u32, mode: RetimeMode },
     SetTimecode  { hours: u32, minutes: u32, seconds: u32, frames: u32, drop_frame: bool },
+
+    // ── Batch / export ───────────────────────────────────────────────────────
+    /// One FBX out of a folder, chosen by index into the sorted file list.
+    LoadFbxDir   { dir: String, index: u32, take: u32 },
+    /// One output per entry: the picked joint and everything below it.
+    SplitSkeleton { picks: Vec<SplitPick> },
+    /// Single-frame neutral pose. `hip_height` is in centimetres.
+    AutoTPose    { set_hip_height: bool, hip_height: f32 },
+    /// Manual corrections on top of a pose.
+    FixPose      { edits: Vec<crate::core::anim::PoseEdit> },
+    /// Spheres and cylinders bound to the skeleton.
+    ProxySkin    { thickness: f32 },
+    /// Passes the clip through. Writing happens from the properties panel.
+    WriteFbx     { path: String },
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// What one output of the Split node keeps.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum SplitPick {
+    /// Nth character found in the clip. Survives name changes between files.
+    Character(u32),
+    /// Joint with this exact name.
+    Joint(String),
+}
+
+pub const DEFAULT_WRITE_PATH: &str = "{dir}/split/{file}_{char}.fbx";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum RetimeMode {
     /// Keep duration, interpolate new samples.
     Resample,
@@ -75,7 +116,15 @@ pub enum RetimeMode {
 impl NodeType {
     /// Nodes that create animation data with no input.
     pub fn is_anim_generator(&self) -> bool {
-        matches!(self, NodeType::LoadFbx { .. } | NodeType::TestClip { .. })
+        matches!(self, NodeType::LoadFbx { .. } | NodeType::LoadFbxDir { .. } | NodeType::TestClip { .. })
+    }
+
+    /// Nodes whose output is a clip.
+    pub fn is_anim(&self) -> bool {
+        self.is_anim_generator() || matches!(self,
+            NodeType::RenameJoints { .. } | NodeType::TrimClip { .. } | NodeType::Retime { .. }
+            | NodeType::SetTimecode { .. } | NodeType::SplitSkeleton { .. } | NodeType::AutoTPose { .. }
+            | NodeType::FixPose { .. } | NodeType::ProxySkin { .. } | NodeType::WriteFbx { .. })
     }
 }
 
@@ -97,6 +146,12 @@ pub fn node_type_icon(t: &NodeType) -> &'static str {
         NodeType::TrimClip { .. }      => "✂",
         NodeType::Retime { .. }        => "⏱",
         NodeType::SetTimecode { .. }   => "🕐",
+        NodeType::LoadFbxDir { .. }    => "📂",
+        NodeType::SplitSkeleton { .. } => "Ψ",
+        NodeType::AutoTPose { .. }     => "✚",
+        NodeType::FixPose { .. }       => "🔧",
+        NodeType::ProxySkin { .. }     => "⬟",
+        NodeType::WriteFbx { .. }      => "💾",
     }
 }
 
@@ -118,6 +173,12 @@ pub fn node_type_label(t: &NodeType) -> &'static str {
         NodeType::TrimClip { .. }      => "Trim Clip",
         NodeType::Retime { .. }        => "Retime",
         NodeType::SetTimecode { .. }   => "Set Timecode",
+        NodeType::LoadFbxDir { .. }    => "Load FBX Folder",
+        NodeType::SplitSkeleton { .. } => "Split Characters",
+        NodeType::AutoTPose { .. }     => "Auto T-Pose",
+        NodeType::FixPose { .. }       => "Fix Pose",
+        NodeType::ProxySkin { .. }     => "Proxy Skin",
+        NodeType::WriteFbx { .. }      => "Write FBX",
     }
 }
 

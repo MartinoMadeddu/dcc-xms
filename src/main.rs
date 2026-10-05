@@ -8,6 +8,10 @@ mod ice;
 mod usd_loader;
 mod prim_inspector;
 mod fbx_loader;
+mod fbx_writer;
+mod file_browser;
+mod batch;
+mod graph_io;
 mod timeline;
 
 use bevy::prelude::*;
@@ -24,7 +28,9 @@ use properties::ui::draw_properties_panel;
 use prim_inspector::ui::draw_prim_inspector;
 use types::NodeType;
 use timeline::{Playback, TimelineState, resolve_source, ui::draw_timeline};
-use properties::ui::AnimContext;
+use properties::ui::{AnimContext, PanelAction, PanelIo};
+use file_browser::{BrowseMode, BrowseTarget, FileBrowser};
+use batch::BatchState;
 
 fn main() {
     App::new()
@@ -39,6 +45,9 @@ fn main() {
         .init_resource::<ViewportRect>()
         .init_resource::<PrimInspectorState>()
         .init_resource::<Playback>()
+        .init_resource::<FileBrowser>()
+        .init_resource::<BatchState>()
+        .init_resource::<GraphFile>()
         .add_systems(Startup, (setup_scene, setup_egui_theme, setup_gizmos))
         .add_systems(Update, (
             dcc_ui,
@@ -105,15 +114,52 @@ fn dcc_ui(
     mut vp_rect:    ResMut<ViewportRect>,
     mut prim_state: ResMut<PrimInspectorState>,
     mut playback:   ResMut<Playback>,
+    mut browser:    ResMut<FileBrowser>,
+    mut graph_file: ResMut<GraphFile>,
+    batch:          Res<BatchState>,
     time:           Res<Time>,
     windows:        Query<&Window>,
 ) {
     let ctx = contexts.ctx_mut();
 
+    // ── Path chosen in the file browser ──────────────────────────────────────
+    if let Some((target, path)) = browser.take_result() {
+        let text = path.to_string_lossy().to_string();
+        match target {
+            BrowseTarget::Node(id) => {
+                if let Some(node) = graph.nodes.iter_mut().find(|n| n.id == id) {
+                    match &mut node.node_type {
+                        NodeType::LoadUsd { path } | NodeType::LoadFbx { path, .. } => *path = text,
+                        NodeType::LoadFbxDir { dir, index, .. } => { *dir = text; *index = 0; }
+                        // A folder was picked: keep the file name pattern.
+                        NodeType::WriteFbx { path } => {
+                            let name = path.rsplit(['/', '\\']).next().filter(|n| !n.is_empty())
+                                .unwrap_or("{file}_{char}.fbx").to_string();
+                            *path = std::path::Path::new(&text).join(name).to_string_lossy().to_string();
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            BrowseTarget::OpenGraph => {
+                graph_file.message = match graph_io::load(&mut graph, &path) {
+                    Ok(())  => format!("Opened {}", path.display()),
+                    Err(e)  => format!("Could not open {}: {e}", path.display()),
+                };
+            }
+            BrowseTarget::SaveGraph => {
+                graph_file.message = match graph_io::save(&graph, &path) {
+                    Ok(())  => format!("Saved {}", path.display()),
+                    Err(e)  => format!("Could not save {}: {e}", path.display()),
+                };
+            }
+        }
+    }
+
     // ── Timeline (full width, bottom) ────────────────────────────────────────
     // Range, rate and timecode come from the clip of the selected node.
     let timeline_state = resolve_source(&graph);
-    let keys_free      = !ctx.wants_keyboard_input();
+    let keys_free      = !ctx.wants_keyboard_input() && !browser.is_open();
     let timeline_resp  = egui::TopBottomPanel::bottom("timeline_panel")
         .resizable(false)
         .frame(egui::Frame::none())
@@ -123,13 +169,18 @@ fn dcc_ui(
     let timeline_h_pts = timeline_resp.response.rect.height();
 
     // Clips around the selected node, for the properties panel.
-    let anim_ctx = match &timeline_state {
-        TimelineState::Source(s) if s.from_selection => AnimContext {
-            time:   playback.time,
-            output: Some(s.clip.clone()),
-            input:  s.input.clone(),
+    let selected_input = graph.selected_node
+        .and_then(|id| graph.nodes.iter().find(|n| n.id == id))
+        .and_then(|n| n.inputs.first())
+        .and_then(|i| i.connected_output)
+        .and_then(|(src, out)| graph.eval_anim_out(src, out));
+    let anim_ctx = AnimContext {
+        time:   playback.time,
+        output: match &timeline_state {
+            TimelineState::Source(s) if s.from_selection => Some(s.clip.clone()),
+            _ => None,
         },
-        _ => AnimContext { time: playback.time, output: None, input: None },
+        input:  selected_input,
     };
 
     let (win_w, win_h) = windows.get_single()
@@ -147,7 +198,11 @@ fn dcc_ui(
         .min_width(180.0)
         .show(ctx, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
-                draw_properties_panel(ui, &mut graph, &*stack, &mut subnets, &nav, &anim_ctx);
+                let mut io = PanelIo { browser: &mut *browser, batch: &*batch, action: None };
+                draw_properties_panel(ui, &mut graph, &*stack, &mut subnets, &nav, &anim_ctx, &mut io);
+                if let Some(PanelAction::Write { targets, all_files }) = io.action {
+                    batch::start(&batch, &graph, targets, all_files);
+                }
             });
         });
     used_right_pts += props_resp.response.rect.width();
@@ -199,7 +254,26 @@ fn dcc_ui(
                     }
                 }
                 None => {
-                    ui.heading("Node Graph");
+                    ui.horizontal(|ui| {
+                        ui.heading("Node Graph");
+                        ui.separator();
+                        if ui.button("📂 Open").on_hover_text("Load a saved graph").clicked() {
+                            browser.open(BrowseTarget::OpenGraph, BrowseMode::File, "Open graph", &["json"], "");
+                        }
+                        if ui.button("💾 Save").on_hover_text("Save this graph").clicked() {
+                            browser.open(BrowseTarget::SaveGraph, BrowseMode::Save, "Save graph", &["json"], "graph.json");
+                        }
+                        if ui.button("Mocap split template")
+                            .on_hover_text("Replace the graph with: folder of takes, split per character, animation and skinned T-pose written per character")
+                            .clicked()
+                        {
+                            graph_io::mocap_split_template(&mut graph);
+                            graph_file.message = "Template loaded. Select the Takes node and choose a folder.".into();
+                        }
+                    });
+                    if !graph_file.message.is_empty() {
+                        ui.label(egui::RichText::new(&graph_file.message).small());
+                    }
                     ui.label("Right-click/Tab: add  |  Shift+drag: pan  |  Esc: cancel wire  |  Double-click subnet: dive in");
                     ui.separator();
 
@@ -257,6 +331,9 @@ fn dcc_ui(
         egui::pos2(win_w_pts - used_right_pts, win_h_pts - insp_h_pts - timeline_h_pts),
     ));
 
+    // ── File browser (on top of everything) ───────────────────────────────────
+    browser.show(ctx);
+
     // ── Viewport overlay label ────────────────────────────────────────────────
     egui::Area::new("viewport_label".into())
         .fixed_pos(egui::pos2(10.0, 10.0))
@@ -285,6 +362,12 @@ fn dcc_ui(
                     }
                 });
         });
+}
+
+/// Feedback line for graph open / save.
+#[derive(Resource, Default)]
+struct GraphFile {
+    message: String,
 }
 
 // ── Systems ───────────────────────────────────────────────────────────────────
@@ -323,13 +406,43 @@ fn update_scene_hierarchy(
 fn update_generated_meshes(
     graph:        Res<NodeGraphState>,
     subnets:      Res<SubnetStore>,
+    playback:     Res<Playback>,
     mut commands: Commands,
     mut meshes:   ResMut<Assets<Mesh>>,
     mut mats:     ResMut<Assets<StandardMaterial>>,
     query:        Query<Entity, With<GeneratedMesh>>,
 ) {
-    if !graph.is_changed() && !subnets.is_changed() { return; }
+    if !graph.is_changed() && !subnets.is_changed() && !playback.is_changed() { return; }
     for e in query.iter() { commands.entity(e).despawn(); }
+
+    // Meshes bound to a skeleton, posed at the playhead.
+    for clip in graph.display_clips() {
+        let Some(skin) = &clip.skin else { continue };
+        let (pos, nrm) = skin.deformed(&clip.world_pose(clip.index_at(playback.time)));
+        let mut md = MeshData {
+            vertices: pos.iter().map(|p| p.to_array()).collect(),
+            normals:  nrm.iter().map(|n| n.to_array()).collect(),
+            ..Default::default()
+        };
+        for f in &skin.faces {
+            md.indices.extend([f[0], f[1], f[2]]);
+            if !core::anim::SkinMesh::is_tri(f) { md.indices.extend([f[0], f[2], f[3]]); }
+        }
+        commands.spawn((
+            PbrBundle {
+                mesh: meshes.add(mesh_data_to_bevy(&md)),
+                material: mats.add(StandardMaterial {
+                    base_color: Color::srgb(0.55, 0.62, 0.7),
+                    perceptual_roughness: 0.6,
+                    double_sided: true,
+                    cull_mode: None,
+                    ..default()
+                }),
+                ..default()
+            },
+            GeneratedMesh,
+        ));
+    }
 
     let eval_subnet = |sid: SubnetId, mesh: &MeshData, template: Option<&MeshData>| -> MeshData {
         subnets
@@ -370,11 +483,15 @@ fn draw_skeleton(
     playback:   Res<Playback>,
     mut gizmos: Gizmos,
 ) {
-    let Some(id)   = graph.display_source() else { return };
-    let Some(clip) = graph.eval_anim(id)    else { return };
+    for clip in graph.display_clips() {
+        draw_clip_skeleton(&clip, playback.time, &mut gizmos);
+    }
+}
+
+fn draw_clip_skeleton(clip: &core::anim::AnimData, time: f64, gizmos: &mut Gizmos) {
     if clip.joints.is_empty() { return; }
 
-    let pose = clip.world_pose(clip.index_at(playback.time));
+    let pose = clip.world_pose(clip.index_at(time));
     let pos: Vec<Vec3> = pose.iter().map(|m| m.w_axis.truncate()).collect();
 
     // Marker size follows the skeleton, so centimetre and metre rigs both read.
@@ -386,7 +503,9 @@ fn draw_skeleton(
     let joint_col = Color::srgb(0.95, 0.95, 0.95);
     for (j, joint) in clip.joints.iter().enumerate() {
         match joint.parent {
-            Some(p) => { gizmos.line(pos[p], pos[j], bone_col); }
+            // A helper above the bones (a character root at the origin) is
+            // not a bone: no link is drawn from it.
+            Some(p) => { if clip.joints[p].is_bone { gizmos.line(pos[p], pos[j], bone_col); } }
             None => {
                 // Root: small axis tripod showing its orientation.
                 let m = pose[j];

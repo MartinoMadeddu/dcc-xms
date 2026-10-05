@@ -77,7 +77,7 @@ pub fn resolve_source(graph: &NodeGraphState) -> TimelineState {
     } else {
         node.inputs.first()
             .and_then(|s| s.connected_output)
-            .and_then(|(src, _)| graph.eval_anim(src))
+            .and_then(|(src, out)| graph.eval_anim_out(src, out))
             // An Output node resolves to the same clip as its input.
             .filter(|i| !Arc::ptr_eq(i, &clip))
     };

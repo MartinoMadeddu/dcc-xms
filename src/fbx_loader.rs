@@ -66,9 +66,14 @@ pub fn load_fbx(path: &str, take: u32) -> Result<LoadedFbx, String> {
         }
     }
 
-    // Parents before children.
-    let mut order: Vec<usize> = (0..n).filter(|i| keep[*i]).collect();
-    order.sort_by_key(|i| scene.nodes[*i].node_depth);
+    // Hierarchy order: each joint is followed by its whole subtree.
+    let mut order: Vec<usize> = vec![];
+    let mut stack: Vec<&ufbx::Node> = vec![&scene.root_node];
+    while let Some(nd) = stack.pop() {
+        let i = nd.element.typed_id as usize;
+        if i < n && keep[i] { order.push(i); }
+        for c in nd.children.iter().rev() { stack.push(c); }
+    }
     let joint_of: HashMap<usize, usize> =
         order.iter().enumerate().map(|(j, i)| (*i, j)).collect();
 
@@ -80,16 +85,29 @@ pub fn load_fbx(path: &str, take: u32) -> Result<LoadedFbx, String> {
             if let Some(j) = joint_of.get(&(p.element.typed_id as usize)) { parent = Some(*j); break; }
             cur = p.parent.as_deref();
         }
+        // Rotation the rig shows when its animated rotation is zero: the
+        // rest rotation with the node's own Euler rotation taken back out.
+        // Exact when the node has no post-rotation.
+        let rest  = to_transform(&nd.local_transform);
+        let euler = ufbx::euler_to_quat(nd.euler_rotation, nd.rotation_order);
+        let euler = Quat::from_xyzw(euler.x as f32, euler.y as f32, euler.z as f32, euler.w as f32);
+        let zero  = (rest.rotation * euler.inverse()).normalize();
         Joint {
-            name:   nd.element.name.to_string(),
+            name:     nd.element.name.to_string(),
             parent,
-            rest:   to_transform(&nd.local_transform),
+            rest,
+            is_bone:  nd.bone.is_some(),
+            zero_rot: if zero.angle_between(Quat::IDENTITY) < 1e-4 { Quat::IDENTITY } else { zero },
         }
     }).collect();
 
     if joints.is_empty() {
         return Err("no transform nodes in file".into());
     }
+
+    let p    = std::path::Path::new(path);
+    let stem = p.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+    let dir  = p.parent().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
 
     // ── Rate ─────────────────────────────────────────────────────────────────
     let rate = FrameRate::from_fps(scene.settings.frames_per_second);
@@ -113,6 +131,10 @@ pub fn load_fbx(path: &str, take: u32) -> Result<LoadedFbx, String> {
             drop_frame,
             start_frame: 0,
             frames:      1,
+            source:      stem.clone(),
+            source_dir:  dir.clone(),
+            subject:     String::new(),
+            skin:        None,
         }
     } else {
         let stack  = &scene.anim_stacks[(take as usize).min(scene.anim_stacks.len() - 1)];
@@ -136,6 +158,10 @@ pub fn load_fbx(path: &str, take: u32) -> Result<LoadedFbx, String> {
             start_frame: (begin * fps).round() as i64,
             frames,
             tracks:      Arc::new(tracks),
+            source:      stem.clone(),
+            source_dir:  dir.clone(),
+            subject:     String::new(),
+            skin:        None,
         }
     };
 
@@ -169,9 +195,20 @@ pub fn load_fbx_cached(path: &str, take: u32) -> Result<LoadedFbx, String> {
     };
 
     let mut cache = cache.lock().unwrap();
-    if cache.len() > 32 { cache.clear(); }
+    if cache.len() > 3 { cache.clear(); }   // clips are large
     cache.insert(key, (mtime, result.clone()));
     result
+}
+
+/// FBX files directly inside a folder, sorted by name.
+pub fn list_fbx(dir: &str) -> Vec<std::path::PathBuf> {
+    let Ok(rd) = std::fs::read_dir(dir) else { return vec![] };
+    let mut files: Vec<_> = rd.filter_map(|e| e.ok()).map(|e| e.path())
+        .filter(|p| p.is_file())
+        .filter(|p| p.extension().map(|x| x.to_string_lossy().eq_ignore_ascii_case("fbx")).unwrap_or(false))
+        .collect();
+    files.sort();
+    files
 }
 
 // ============================================================================

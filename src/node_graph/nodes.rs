@@ -7,10 +7,13 @@ use std::path::Path;
 
 /// Evaluate one node given its already-resolved upstream inputs.
 /// Returns an `EvalResult` — either a single merged mesh or a list of named prims.
+/// `output` is the index of the output socket being asked for. Only nodes
+/// with several outputs look at it.
 pub fn evaluate_node_type(
     node_type:   &NodeType,
     inputs:      &[EvalResult],
     eval_subnet: &impl Fn(SubnetId, &MeshData, Option<&MeshData>) -> MeshData,
+    output:      usize,
 ) -> Option<EvalResult> {
     match node_type {
         NodeType::CreateCube   { size }             => Some(EvalResult::Single(create_cube(*size))),
@@ -96,6 +99,42 @@ pub fn evaluate_node_type(
             anim_op(node_type, inputs, |a| {
                 a.with_start_timecode(*hours, *minutes, *seconds, *frames, *drop_frame)
             }),
+
+        // ── Batch / export ───────────────────────────────────────────────────
+        NodeType::LoadFbxDir { dir, index, take } => {
+            let files = crate::fbx_loader::list_fbx(dir);
+            let path  = files.get((*index as usize).min(files.len().checked_sub(1)?))?;
+            crate::fbx_loader::load_fbx_cached(&path.to_string_lossy(), *take).ok()
+                .map(|l| EvalResult::Anim(l.anim))
+        }
+
+        NodeType::SplitSkeleton { picks } => {
+            let input = inputs.first()?.as_anim()?;
+            let root  = split_root(input, picks.get(output)?)?;
+            anim::memo(&format!("split:{root}"), Some(input), || Some(input.split(root)))
+                .map(EvalResult::Anim)
+        }
+
+        NodeType::AutoTPose { set_hip_height, hip_height } =>
+            anim_op(node_type, inputs, |a| {
+                a.auto_tpose(set_hip_height.then_some(*hip_height * 0.01))
+            }),
+
+        NodeType::FixPose { edits } =>
+            anim_op(node_type, inputs, |a| a.pose_fixed(edits)),
+
+        NodeType::ProxySkin { thickness } =>
+            anim_op(node_type, inputs, |a| a.with_proxy_skin(*thickness)),
+
+        NodeType::WriteFbx { .. } => inputs.first().cloned(),
+    }
+}
+
+/// Joint index a Split output refers to in this clip.
+pub fn split_root(clip: &AnimData, pick: &crate::types::SplitPick) -> Option<usize> {
+    match pick {
+        crate::types::SplitPick::Character(i) => clip.character_roots().get(*i as usize).copied(),
+        crate::types::SplitPick::Joint(name)  => clip.joints.iter().position(|j| j.name == *name),
     }
 }
 
