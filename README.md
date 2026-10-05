@@ -14,19 +14,32 @@ The work is proposed upstream in [pull request #3](https://github.com/MartinoMad
 
 ## What is added
 
+Animation
 - Clip data type: skeleton, per-frame transforms, rational frame rate, timecode including drop-frame
 - FBX import through ufbx: hierarchy and one take, baked per frame, converted to Y-up metres
 - Nodes: Load FBX, Test Clip, Rename Joints, Trim Clip, Retime, Set Timecode
 - Timeline panel that takes range, rate and timecode from the selected node
 - Skeleton drawn in the viewport for the viewed node
 
+Batch and export
+- Load FBX Folder: one file out of a folder, picked by index or from a dropdown of file names
+- Split Characters: one output per character, by position or by root joint, any number of outputs
+- Auto T-Pose: rotations zeroed, root at the origin, optional hip height
+- Fix Pose: manual per-joint rotation and position corrections
+- Proxy Skin: sphere per bone and cylinder per link, bound to the skeleton
+- Write FBX: binary FBX with skeleton, animation, mesh, skin and bind pose. Writes the current file or the whole folder, in the background
+- "Mocap split template": builds the whole graph for splitting a two-character take into animation and skinned T-pose files for Unreal
+- File browser on every path field, reopening in the last folder visited
+- Graph open and save as JSON
+
 ## Not done yet
 
-- FBX export, save, undo
-- Meshes and skinning from FBX
+- Undo
+- Meshes and skinning read from FBX
 - Timeline zoom and pan
 - Curve cleanup
-- Testing with real mocap files (so far: unit tests and two small hand-written ASCII FBX files)
+- ICE subnet contents in saved graphs
+- Import into Unreal has not been tested. Written files were checked by reading them back and against a reference script, on one OptiTrack Motive take
 
 ## Build
 
