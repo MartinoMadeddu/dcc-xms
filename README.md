@@ -28,9 +28,13 @@ Batch and export
 - Fix Pose: manual per-joint rotation and position corrections
 - Proxy Skin: sphere per bone and cylinder per link, bound to the skeleton
 - Write FBX: binary FBX with skeleton, animation, mesh, skin and bind pose. Writes the current file or the whole folder, in the background
-- "Mocap split template": builds the whole graph for splitting a two-character take into animation and skinned T-pose files for Unreal
+- Templates menu with "Mocap split": builds the whole graph for splitting a two-character take into animation and skinned T-pose files for Unreal
 - File browser on every path field, reopening in the last folder visited
 - Graph open and save as JSON
+
+Interface
+- Animation and mocap nodes sit in their own "Animation & Mocap" sub-menu of the add-node menu
+- Panels keep the size they are dragged to, whatever they contain
 
 ## Not done yet
 
