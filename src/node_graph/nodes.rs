@@ -127,6 +127,12 @@ pub fn evaluate_node_type(
             anim_op(node_type, inputs, |a| a.with_proxy_skin(*thickness)),
 
         NodeType::WriteFbx { .. } => inputs.first().cloned(),
+
+        // ── Modelling ────────────────────────────────────────────────────────
+        NodeType::EditPoly { ops, .. } => inputs.first().map(|r| {
+            let mesh = crate::core::poly::PolyMesh::from_mesh(&r.as_mesh());
+            EvalResult::Single(crate::core::poly::apply_ops(&mesh, ops, ops.len()).to_mesh())
+        }),
     }
 }
 
@@ -154,24 +160,24 @@ fn anim_op(
 
 pub fn create_cube(size: f32) -> MeshData {
     let s = size / 2.0;
-    let mut m = MeshData::from_triangles(
+    // Six quads, counter-clockwise seen from outside.
+    MeshData::from_polys(
         vec![
             [-s,-s,-s],[s,-s,-s],[s,s,-s],[-s,s,-s],
             [-s,-s, s],[s,-s, s],[s,s, s],[-s,s, s],
         ],
         vec![
-            0,1,2,2,3,0,  4,6,5,6,4,7,
-            4,5,1,1,0,4,  3,2,6,6,7,3,
-            4,0,3,3,7,4,  1,5,6,6,2,1,
+            vec![0,3,2,1], vec![4,5,6,7],   // -Z, +Z
+            vec![0,1,5,4], vec![3,7,6,2],   // -Y, +Y
+            vec![0,4,7,3], vec![1,2,6,5],   // -X, +X
         ],
-    );
-    m.compute_normals();
-    m
+    )
 }
 
 pub fn create_sphere(radius: f32, segments: u32) -> MeshData {
     let mut verts = Vec::new();
     let mut idx   = Vec::new();
+    let mut quads = Vec::new();
     for lat in 0..=segments {
         let theta    = lat as f32 * std::f32::consts::PI / segments as f32;
         let (st, ct) = (theta.sin(), theta.cos());
@@ -185,16 +191,19 @@ pub fn create_sphere(radius: f32, segments: u32) -> MeshData {
             let f = lat*(segments+1)+lon;
             let s = f+segments+1;
             idx.extend_from_slice(&[f,s,f+1,s,s+1,f+1]);
+            quads.push(vec![f, s, s+1, f+1]);
         }
     }
     let mut m = MeshData::from_triangles(verts, idx);
+    m.face_count = quads.len();
+    m.polys = quads;
     m.compute_normals();
     m
 }
 
 pub fn create_grid(rows: u32, cols: u32, size: f32) -> MeshData {
     let mut verts = Vec::new();
-    let mut idx   = Vec::new();
+    let mut quads = Vec::new();
     let rc = rows + 1;
     let cc = cols + 1;
     let cw = size / cols as f32;
@@ -212,12 +221,10 @@ pub fn create_grid(rows: u32, cols: u32, size: f32) -> MeshData {
             let tr = tl + 1;
             let bl = tl + cc;
             let br = bl + 1;
-            idx.extend_from_slice(&[tl, bl, tr, tr, bl, br]);
+            quads.push(vec![tl, bl, br, tr]);
         }
     }
-    let mut m = MeshData::from_triangles(verts, idx);
-    m.compute_normals();
-    m
+    MeshData::from_polys(verts, quads)
 }
 
 // ── Operators ─────────────────────────────────────────────────────────────────
@@ -232,6 +239,8 @@ pub fn transform(mesh: &MeshData, t: Vec3, r: Vec3, s: Vec3) -> MeshData {
         points:   mesh.points.iter()
             .map(|p| (rot * (Vec3::from_array(*p) * s) + t).to_array())
             .collect(),
+        polys:      mesh.polys.clone(),
+        face_count: mesh.face_count,
         ..Default::default()
     };
     // Recompute normals after transform so they stay correct
@@ -249,13 +258,20 @@ pub fn merge(a: &MeshData, b: &MeshData) -> MeshData {
     idx.extend(b.indices.iter().map(|i| i + off));
     let mut pts = a.points.clone();
     pts.extend(&b.points);
+    // Polygons survive when either side has them.
+    let mut polys = vec![];
+    if !a.polys.is_empty() || !b.polys.is_empty() {
+        polys = a.polygons();
+        polys.extend(b.polygons().into_iter().map(|p| p.into_iter().map(|i| i + off).collect::<Vec<u32>>()));
+    }
     let mut m = MeshData {
         vertices:   verts,
         indices:    idx,
         points:     pts,
         ..Default::default()
     };
-    m.face_count = m.indices.len() / 3;
+    m.face_count = if polys.is_empty() { m.indices.len() / 3 } else { polys.len() };
+    m.polys = polys;
     m.compute_normals();
     m
 }
@@ -303,6 +319,7 @@ pub fn copy_to_points(template: &MeshData, point_cloud: &MeshData) -> MeshData {
     };
     let mut out_verts = Vec::new();
     let mut out_idx   = Vec::new();
+    let mut out_polys = Vec::new();
     for pt in pts {
         let offset = out_verts.len() as u32;
         let t = Vec3::from_array(*pt);
@@ -310,8 +327,13 @@ pub fn copy_to_points(template: &MeshData, point_cloud: &MeshData) -> MeshData {
             out_verts.push((Vec3::from_array(*v) + t).to_array());
         }
         out_idx.extend(template.indices.iter().map(|i| i + offset));
+        out_polys.extend(template.polys.iter().map(|p| p.iter().map(|i| i + offset).collect::<Vec<u32>>()));
     }
     let mut m = MeshData::from_triangles(out_verts, out_idx);
+    if !out_polys.is_empty() {
+        m.face_count = out_polys.len();
+        m.polys = out_polys;
+    }
     m.compute_normals();
     m
 }

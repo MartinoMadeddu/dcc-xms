@@ -150,6 +150,18 @@ mod tests {
             rotation: bevy::math::Vec3::ZERO, scale: bevy::math::Vec3::ONE,
         }, egui::pos2(5.0, 6.0));
         g.add_connection(cube, 0, xf, 0);
+        // An Edit Poly node with an operation, a rule-based and a picked selection.
+        use crate::core::poly::{ExtrudeMode, PolyOp, PolyOpKind, PolySelection, SelSource, SubLevel};
+        let ep = g.add_node("EditPoly".into(), NodeType::EditPoly {
+            ops: vec![PolyOp {
+                enabled: true,
+                selection: PolySelection { source: SelSource::ByNormal { dir: [0.0, 1.0, 0.0], angle: 5.0 }, grow: 1, ..Default::default() },
+                kind: PolyOpKind::Bevel { height: 0.5, outline: -0.1, mode: ExtrudeMode::LocalNormal },
+            }],
+            pending: PolySelection { level: SubLevel::Edge, edges: vec![[0, 1], [2, 3]], ..Default::default() },
+            edit: Some(0),
+        }, egui::pos2(9.0, 9.0));
+        g.add_connection(xf, 0, ep, 0);
         let json = to_json(&g);
 
         let mut h = NodeGraphState::default();

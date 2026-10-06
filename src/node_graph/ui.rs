@@ -534,6 +534,10 @@ fn add_node_menu(ui: &mut egui::Ui, graph: &mut NodeGraphState, cp: egui::Pos2) 
         graph.add_node("Transform".into(), NodeType::Transform {
             translation: Vec3::ZERO, rotation: Vec3::ZERO, scale: Vec3::ONE }, cp); added = true;
     }
+    if ui.button("🔨  Edit Poly").clicked() {
+        graph.add_node("EditPoly".into(), NodeType::EditPoly {
+            ops: vec![], pending: Default::default(), edit: None }, cp); added = true;
+    }
     if ui.button("⊕  Merge").clicked() {
         graph.add_node("Merge".into(), NodeType::Merge, cp); added = true;
     }

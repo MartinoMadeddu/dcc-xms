@@ -14,6 +14,7 @@ mod batch;
 mod graph_io;
 mod timeline;
 mod theme;
+mod modelling;
 
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts, EguiPlugin};
@@ -46,10 +47,11 @@ fn main() {
         .init_resource::<ViewportRect>()
         .init_resource::<PrimInspectorState>()
         .init_resource::<Playback>()
+        .init_gizmo_group::<modelling::PolyGizmos>()
         .init_resource::<FileBrowser>()
         .init_resource::<BatchState>()
         .init_resource::<GraphFile>()
-        .add_systems(Startup, (setup_scene, setup_egui_theme, setup_gizmos))
+        .add_systems(Startup, (setup_scene, setup_egui_theme, setup_gizmos, modelling::setup_gizmos))
         .add_systems(Update, (
             dcc_ui,
             update_operator_stack,
@@ -60,6 +62,8 @@ fn main() {
             focus_camera,
             draw_origin_label,
             draw_skeleton.after(dcc_ui),
+            modelling::pick_system.after(dcc_ui),
+            modelling::overlay_system.after(dcc_ui),
         ))
         .run();
 }
@@ -168,7 +172,15 @@ fn dcc_ui(
             // never shrinks keeps it at the size the user dragged it to:
             // text wraps, anything still too wide or tall scrolls.
             egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
-                let mut io = PanelIo { browser: &mut *browser, batch: &*batch, action: None };
+                let poly_input = graph.selected_node.and_then(|id| {
+                    let eval = |sid: SubnetId, mesh: &MeshData, template: Option<&MeshData>| -> MeshData {
+                        subnets.get(sid).map(|sg| sg.evaluate(mesh, template)).unwrap_or_else(|| mesh.clone())
+                    };
+                    let is_edit_poly = graph.nodes.iter()
+                        .any(|n| n.id == id && matches!(n.node_type, NodeType::EditPoly { .. }));
+                    if is_edit_poly { modelling::input_mesh(&graph, id, &eval) } else { None }
+                });
+                let mut io = PanelIo { browser: &mut *browser, batch: &*batch, action: None, poly_input };
                 draw_properties_panel(ui, &mut graph, &*stack, &mut subnets, &nav, &anim_ctx, &mut io);
                 if let Some(PanelAction::Write { targets, all_files }) = io.action {
                     batch::start(&batch, &graph, targets, all_files);
@@ -449,7 +461,31 @@ fn update_generated_meshes(
             .unwrap_or_else(|| mesh.clone())
     };
 
-    if let Some(md) = graph.evaluate_for_viewport(&eval_subnet) {
+    // A selected Edit Poly node takes over the viewport: it shows the mesh
+    // being edited, with the selected polygons tinted.
+    let stage = modelling::stage(&graph, &eval_subnet);
+    if let Some(hl) = stage.as_ref().and_then(modelling::highlight_mesh) {
+        commands.spawn((
+            PbrBundle {
+                mesh: meshes.add(mesh_data_to_bevy(&hl)),
+                material: mats.add(StandardMaterial {
+                    base_color: Color::srgba(1.0, 0.25, 0.15, 0.45),
+                    unlit: true,
+                    alpha_mode: AlphaMode::Blend,
+                    double_sided: true,
+                    cull_mode: None,
+                    ..default()
+                }),
+                ..default()
+            },
+            GeneratedMesh,
+        ));
+    }
+    let shown = match &stage {
+        Some(s) => Some(s.mesh.to_mesh()),
+        None    => graph.evaluate_for_viewport(&eval_subnet),
+    };
+    if let Some(md) = shown {
         if md.vertices.is_empty() { return; }
         commands.spawn((
             PbrBundle {
@@ -544,15 +580,11 @@ fn mesh_data_to_bevy(d: &MeshData) -> Mesh {
         bevy::render::mesh::PrimitiveTopology::TriangleList,
         bevy::render::render_asset::RenderAssetUsages::default(),
     );
-    m.insert_attribute(Mesh::ATTRIBUTE_POSITION, d.vertices.clone());
-    // Use computed normals if available, otherwise flat up-normals
-    let normals: Vec<[f32; 3]> = if d.normals.len() == d.vertices.len() {
-        d.normals.clone()
-    } else {
-        d.vertices.iter().map(|_| [0.0f32, 1.0, 0.0]).collect()
-    };
+    // Polygon meshes get hard edges where faces meet sharply; see `render_buffers`.
+    let (positions, normals, indices) = d.render_buffers();
+    m.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
     m.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
-    m.insert_indices(bevy::render::mesh::Indices::U32(d.indices.clone()));
+    m.insert_indices(bevy::render::mesh::Indices::U32(indices));
     m
 }
 

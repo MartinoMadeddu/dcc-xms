@@ -4,6 +4,7 @@
 //! All types here are pure data containers with no procedural logic.
 
 pub mod anim;
+pub mod poly;
 pub mod attribute;
 pub mod geometry;
 pub mod topology;

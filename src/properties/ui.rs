@@ -6,6 +6,7 @@ use crate::core::anim::{AnimData, FrameRate, PoseEdit, RATE_PRESETS};
 use crate::types::{NodeId, SplitPick};
 use crate::file_browser::{BrowseMode, BrowseTarget, FileBrowser};
 use crate::batch::{self, BatchState};
+use crate::core::poly::{apply_ops, ExtrudeMode, PolyMesh, PolyOp, PolyOpKind, PolySelection, SelSource, SubLevel};
 use crate::node_graph::NodeGraphState;
 use crate::scene_graph::SceneGraph;
 use crate::ice::{SubnetStore, GraphNavigation};
@@ -42,6 +43,8 @@ pub struct PanelIo<'a> {
     pub browser: &'a mut FileBrowser,
     pub batch:   &'a BatchState,
     pub action:  Option<PanelAction>,
+    /// Mesh entering the selected node, when it is an Edit Poly node.
+    pub poly_input: Option<crate::core::poly::PolyMesh>,
 }
 
 pub fn draw_properties_panel(
@@ -551,6 +554,121 @@ pub fn draw_properties(
                 });
                 batch_log(ui, io.batch);
             }
+
+            // ── Modelling ────────────────────────────────────────────────────
+            NodeType::EditPoly { ops, pending, edit } => {
+                if edit.map(|i| i >= ops.len()).unwrap_or(false) { *edit = None; }
+                let input = io.poly_input.clone();
+                // Mesh the selection under edit applies to, and the final mesh.
+                let stage = input.as_ref().map(|m| apply_ops(m, ops, edit.unwrap_or(ops.len())));
+                let end   = input.as_ref().map(|m| apply_ops(m, ops, ops.len()));
+
+                section_label(ui, "Selection");
+                section(ui, |ui| {
+                    match *edit {
+                        Some(i) => {
+                            ui.colored_label(xsi::HEADER_TEXT(), format!("Selection of #{} {}", i + 1, ops[i].kind.label()));
+                            ui.colored_label(xsi::DIM(), "The viewport shows the mesh before this operation.");
+                            if ui.button("Done").clicked() { *edit = None; }
+                        }
+                        None => { ui.colored_label(xsi::HEADER_TEXT(), "Selection for the next operation"); }
+                    }
+                    let sel = match *edit {
+                        Some(i) if i < ops.len() => &mut ops[i].selection,
+                        _ => &mut *pending,
+                    };
+                    selection_editor(ui, sel, stage.as_ref());
+                    if input.is_none() {
+                        ui.colored_label(xsi::DIM(), "No mesh connected.");
+                    }
+                });
+
+                ui.add_space(4.0);
+                section_label(ui, "Add operation (uses the selection above)");
+                section(ui, |ui| {
+                    let mut add: Option<PolyOpKind> = None;
+                    ui.horizontal(|ui| {
+                        if ui.button("Extrude").clicked() { add = Some(PolyOpKind::Extrude { height: 0.25, mode: ExtrudeMode::Group }); }
+                        if ui.button("Bevel").clicked()   { add = Some(PolyOpKind::Bevel { height: 0.25, outline: -0.1, mode: ExtrudeMode::Group }); }
+                        if ui.button("Inset").clicked()   { add = Some(PolyOpKind::Inset { amount: 0.1, by_polygon: false }); }
+                    });
+                    if let Some(kind) = add {
+                        // The new operation takes the pending selection. The same
+                        // polygons stay selected for the next one, as in Edit Poly.
+                        let selection = pending.clone();
+                        if let Some(m) = &end {
+                            let mask = selection.poly_mask(m);
+                            *pending = PolySelection::picked_polys((0..mask.len() as u32).filter(|p| mask[*p as usize]).collect());
+                        }
+                        ops.push(PolyOp { enabled: true, selection, kind });
+                        *edit = None;
+                    }
+                });
+
+                ui.add_space(4.0);
+                section_label(ui, "Operations");
+                if ops.is_empty() {
+                    section(ui, |ui| { ui.colored_label(xsi::DIM(), "None yet."); });
+                }
+                enum ListEdit { Up(usize), Down(usize), Delete(usize) }
+                let mut change = None;
+                let count = ops.len();
+                for (i, op) in ops.iter_mut().enumerate() {
+                    section(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.checkbox(&mut op.enabled, "");
+                            ui.colored_label(xsi::HEADER_TEXT(), format!("#{} {}", i + 1, op.kind.label()));
+                            if ui.selectable_label(*edit == Some(i), "🎯").on_hover_text("Edit this operation's selection").clicked() {
+                                *edit = if *edit == Some(i) { None } else { Some(i) };
+                            }
+                            if ui.add_enabled(i > 0, egui::Button::new("⏶").small()).clicked() { change = Some(ListEdit::Up(i)); }
+                            if ui.add_enabled(i + 1 < count, egui::Button::new("⏷").small()).clicked() { change = Some(ListEdit::Down(i)); }
+                            if ui.small_button("🗑").on_hover_text("Remove").clicked() { change = Some(ListEdit::Delete(i)); }
+                        });
+                        let drag = |ui: &mut egui::Ui, label: &str, v: &mut f32| {
+                            ui.horizontal(|ui| {
+                                ui.colored_label(xsi::LABEL(), label);
+                                ui.add(egui::DragValue::new(v).speed(0.005).max_decimals(3));
+                            });
+                        };
+                        let mode_combo = |ui: &mut egui::Ui, mode: &mut ExtrudeMode| {
+                            let name = |m: ExtrudeMode| match m {
+                                ExtrudeMode::Group => "Group", ExtrudeMode::LocalNormal => "Local normal", ExtrudeMode::ByPolygon => "By polygon",
+                            };
+                            egui::ComboBox::from_id_source(("poly_mode", i)).selected_text(name(*mode)).show_ui(ui, |ui| {
+                                for m in [ExtrudeMode::Group, ExtrudeMode::LocalNormal, ExtrudeMode::ByPolygon] {
+                                    ui.selectable_value(mode, m, name(m));
+                                }
+                            });
+                        };
+                        match &mut op.kind {
+                            PolyOpKind::Extrude { height, mode } => {
+                                drag(ui, "Height:", height);
+                                mode_combo(ui, mode);
+                            }
+                            PolyOpKind::Bevel { height, outline, mode } => {
+                                drag(ui, "Height:", height);
+                                drag(ui, "Outline:", outline);
+                                mode_combo(ui, mode);
+                            }
+                            PolyOpKind::Inset { amount, by_polygon } => {
+                                drag(ui, "Amount:", amount);
+                                ui.checkbox(by_polygon, "By polygon");
+                            }
+                        }
+                    });
+                    ui.add_space(2.0);
+                }
+                match change {
+                    Some(ListEdit::Up(i))     => { ops.swap(i, i - 1); *edit = None; }
+                    Some(ListEdit::Down(i))   => { ops.swap(i, i + 1); *edit = None; }
+                    Some(ListEdit::Delete(i)) => { ops.remove(i); *edit = None; }
+                    None => {}
+                }
+                if let Some(m) = &end {
+                    ui.colored_label(xsi::DIM(), format!("Result: {} vertices, {} polygons", m.verts.len(), m.polys.len()));
+                }
+            }
         }
     }
     if resync { graph.sync_sockets(sel_id); }
@@ -560,6 +678,93 @@ pub fn draw_properties(
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// Sub-object level, where the selection comes from, and its modifiers.
+fn selection_editor(ui: &mut egui::Ui, sel: &mut PolySelection, mesh: Option<&PolyMesh>) {
+    ui.horizontal(|ui| {
+        ui.selectable_value(&mut sel.level, SubLevel::Vertex,  "Vertex");
+        ui.selectable_value(&mut sel.level, SubLevel::Edge,    "Edge");
+        ui.selectable_value(&mut sel.level, SubLevel::Polygon, "Polygon");
+    });
+
+    let name = |s: &SelSource| match s {
+        SelSource::Picked          => "Picked in viewport",
+        SelSource::All             => "All",
+        SelSource::ByNormal { .. } => "By normal",
+        SelSource::InBox { .. }    => "In box",
+    };
+    egui::ComboBox::from_id_source("poly_sel_source").selected_text(name(&sel.source)).show_ui(ui, |ui| {
+        if ui.selectable_label(sel.source == SelSource::Picked, "Picked in viewport").clicked() { sel.source = SelSource::Picked; }
+        if ui.selectable_label(sel.source == SelSource::All, "All").clicked() { sel.source = SelSource::All; }
+        if ui.selectable_label(matches!(sel.source, SelSource::ByNormal { .. }), "By normal").clicked()
+            && !matches!(sel.source, SelSource::ByNormal { .. })
+        {
+            sel.source = SelSource::ByNormal { dir: [0.0, 1.0, 0.0], angle: 45.0 };
+        }
+        if ui.selectable_label(matches!(sel.source, SelSource::InBox { .. }), "In box").clicked()
+            && !matches!(sel.source, SelSource::InBox { .. })
+        {
+            // Start with a box around the whole mesh.
+            let (mut lo, mut hi) = ([-1.0f32; 3], [1.0f32; 3]);
+            if let Some(m) = mesh.filter(|m| !m.verts.is_empty()) {
+                lo = [f32::MAX; 3];
+                hi = [f32::MIN; 3];
+                for v in &m.verts { for a in 0..3 { lo[a] = lo[a].min(v[a]); hi[a] = hi[a].max(v[a]); } }
+            }
+            sel.source = SelSource::InBox { min: lo, max: hi };
+        }
+    });
+
+    match &mut sel.source {
+        SelSource::ByNormal { dir, angle } => {
+            ui.horizontal(|ui| {
+                for (label, d) in [("+X", [1.0, 0.0, 0.0]), ("-X", [-1.0, 0.0, 0.0]), ("+Y", [0.0, 1.0, 0.0]),
+                                   ("-Y", [0.0, -1.0, 0.0]), ("+Z", [0.0, 0.0, 1.0]), ("-Z", [0.0, 0.0, -1.0])] {
+                    if ui.selectable_label(*dir == d, label).clicked() { *dir = d; }
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.colored_label(xsi::LABEL(), "Within:");
+                ui.add(egui::DragValue::new(angle).speed(0.5).range(0.0..=180.0).suffix("°"));
+            });
+        }
+        SelSource::InBox { min, max } => {
+            for (label, v) in [("Min", min), ("Max", max)] {
+                ui.horizontal(|ui| {
+                    ui.colored_label(xsi::LABEL(), label);
+                    for a in v.iter_mut() { ui.add(egui::DragValue::new(a).speed(0.01).max_decimals(3)); }
+                });
+            }
+        }
+        SelSource::Picked => {
+            ui.colored_label(xsi::DIM(), egui::RichText::new(
+                "Click or drag a box in the viewport. Ctrl adds, Shift removes.").small());
+        }
+        SelSource::All => {}
+    }
+
+    ui.horizontal(|ui| {
+        if ui.button("Shrink").clicked() { sel.grow -= 1; }
+        ui.colored_label(xsi::LABEL(), format!("{:+}", sel.grow));
+        if ui.button("Grow").clicked() { sel.grow += 1; }
+        ui.checkbox(&mut sel.invert, "Invert");
+        if ui.button("Clear").clicked() {
+            let level = sel.level;
+            *sel = PolySelection { level, ..Default::default() };
+        }
+    });
+
+    if let Some(m) = mesh {
+        let what = match sel.level { SubLevel::Vertex => "vertices", SubLevel::Edge => "edges", SubLevel::Polygon => "polygons" };
+        let polys = sel.poly_mask(m).iter().filter(|s| **s).count();
+        let text = if sel.level == SubLevel::Polygon {
+            format!("{polys} polygons selected")
+        } else {
+            format!("{} {what} selected, covering {polys} polygons", sel.count(m))
+        };
+        ui.colored_label(xsi::LABEL(), text);
+    }
+}
 
 /// Text field for a path with a folder button that opens the file browser.
 fn path_row(

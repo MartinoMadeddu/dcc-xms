@@ -435,6 +435,8 @@ fn parse_mesh_prim(
         pts,
         tri_idx.into_iter().map(|i| i as u32).collect(),
     );
+    mesh.polys = polygons(&counts, &idxs);
+    mesh.face_count = mesh.polys.len();
 
     // Apply any xformOps baked directly on the Mesh prim itself
     let local = if let Some(m) = matrix {
@@ -530,6 +532,18 @@ fn skip_value(toks: &[Tok], pos: &mut usize) {
 }
 
 // ── Triangulation ─────────────────────────────────────────────────────────────
+
+/// Face-vertex counts and indices as one vertex loop per polygon.
+fn polygons(counts: &[usize], indices: &[usize]) -> Vec<Vec<u32>> {
+    let mut out = Vec::with_capacity(counts.len());
+    let mut at = 0;
+    for n in counts {
+        if at + n > indices.len() { break; }
+        if *n >= 3 { out.push(indices[at..at + n].iter().map(|i| *i as u32).collect()); }
+        at += n;
+    }
+    out
+}
 
 fn triangulate(counts: &[usize], indices: &[usize]) -> Vec<usize> {
     let mut out = Vec::new();
@@ -627,6 +641,8 @@ fn load_usdc_meshes(path: &Path) -> UsdResult<Vec<(String, MeshData)>> {
             points,
             tri_idx.into_iter().map(|i| i as u32).collect(),
         );
+        mesh.polys = polygons(&fv_counts, &fv_indices);
+        mesh.face_count = mesh.polys.len();
         apply_transform(&mut mesh, &world_xform);
         results.push((mesh_path.to_string(), mesh));
     }

@@ -133,6 +133,7 @@ impl NodeGraphState {
             | NodeType::ProxySkin { .. }
             | NodeType::WriteFbx { .. }     => (vec![i("Clip")], vec![o("Clip")]),
             NodeType::LoadFbxDir { .. }     => (vec![], vec![o("Clip")]),
+            NodeType::EditPoly { .. }       => (vec![i("Mesh")], vec![o("Mesh")]),
             NodeType::SplitSkeleton { picks } => (
                 vec![i("Clip")],
                 (0..picks.len()).map(|n| OutputSocket { name: format!("Char {}", n + 1) }).collect(),

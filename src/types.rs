@@ -92,6 +92,18 @@ pub enum NodeType {
     ProxySkin    { thickness: f32 },
     /// Passes the clip through. Writing happens from the properties panel.
     WriteFbx     { path: String },
+
+    // ── Modelling ────────────────────────────────────────────────────────────
+    /// Polygon modelling in one node: an ordered list of operations, each
+    /// with its own selection, like the history of an Edit Poly modifier.
+    EditPoly {
+        ops:     Vec<crate::core::poly::PolyOp>,
+        /// Selection being built for the next operation.
+        pending: crate::core::poly::PolySelection,
+        /// Operation whose selection is being edited in the viewport, which
+        /// then shows the mesh as it enters that operation. None: `pending`.
+        edit:    Option<usize>,
+    },
 }
 
 /// What one output of the Split node keeps.
@@ -152,6 +164,7 @@ pub fn node_type_icon(t: &NodeType) -> &'static str {
         NodeType::FixPose { .. }       => "🔧",
         NodeType::ProxySkin { .. }     => "⬟",
         NodeType::WriteFbx { .. }      => "💾",
+        NodeType::EditPoly { .. }      => "🔨",
     }
 }
 
@@ -179,6 +192,7 @@ pub fn node_type_label(t: &NodeType) -> &'static str {
         NodeType::FixPose { .. }       => "Fix Pose",
         NodeType::ProxySkin { .. }     => "Proxy Skin",
         NodeType::WriteFbx { .. }      => "Write FBX",
+        NodeType::EditPoly { .. }      => "Edit Poly",
     }
 }
 
@@ -276,12 +290,80 @@ pub struct MeshData {
     pub primvars:   Vec<PrimVar>,    // arbitrary extra channels
     /// Original face-vertex counts before triangulation (for face count display)
     pub face_count: usize,
+    /// Polygons as vertex loops, when the mesh has them. `indices` then holds
+    /// their triangulation. Empty for meshes that are only triangles.
+    pub polys:      Vec<Vec<u32>>,
 }
 
 impl MeshData {
     pub fn from_triangles(vertices: Vec<[f32; 3]>, indices: Vec<u32>) -> Self {
         let face_count = indices.len() / 3;
         Self { vertices, indices, face_count, ..Default::default() }
+    }
+
+    /// Mesh from polygons of any size. Triangulates them for drawing and
+    /// keeps the polygons for modelling.
+    pub fn from_polys(vertices: Vec<[f32; 3]>, polys: Vec<Vec<u32>>) -> Self {
+        let mut indices = Vec::new();
+        for poly in &polys {
+            for i in 1..poly.len().saturating_sub(1) {
+                indices.extend([poly[0], poly[i], poly[i + 1]]);
+            }
+        }
+        let mut m = Self { vertices, indices, face_count: polys.len(), polys, ..Default::default() };
+        m.compute_normals();
+        m
+    }
+
+    /// The mesh's polygons: the stored ones, or its triangles.
+    pub fn polygons(&self) -> Vec<Vec<u32>> {
+        if !self.polys.is_empty() { return self.polys.clone(); }
+        self.indices.chunks_exact(3).map(|t| t.to_vec()).collect()
+    }
+
+    /// Positions, normals and triangle indices for drawing. A mesh with
+    /// polygons is drawn with hard edges where neighbouring polygons meet at
+    /// more than 40 degrees and smooth shading elsewhere, so a box looks like
+    /// a box and a sphere like a sphere.
+    pub fn render_buffers(&self) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<u32>) {
+        use bevy::math::Vec3;
+        if self.polys.is_empty() {
+            let normals = if self.normals.len() == self.vertices.len() {
+                self.normals.clone()
+            } else {
+                self.vertices.iter().map(|_| [0.0f32, 1.0, 0.0]).collect()
+            };
+            return (self.vertices.clone(), normals, self.indices.clone());
+        }
+        let v = |i: u32| Vec3::from_array(self.vertices[i as usize]);
+        let face_n: Vec<Vec3> = self.polys.iter().map(|poly| {
+            let mut n = Vec3::ZERO;
+            for i in 0..poly.len() { n += v(poly[i]).cross(v(poly[(i + 1) % poly.len()])); }
+            n
+        }).collect();
+        let mut around: Vec<Vec<u32>> = vec![vec![]; self.vertices.len()];
+        for (p, poly) in self.polys.iter().enumerate() {
+            for i in poly { around[*i as usize].push(p as u32); }
+        }
+        let limit = 40f32.to_radians().cos();
+        let (mut pos, mut nrm, mut idx) = (vec![], vec![], vec![]);
+        for (p, poly) in self.polys.iter().enumerate() {
+            let own  = face_n[p].normalize_or_zero();
+            let base = pos.len() as u32;
+            for i in poly {
+                // Area-weighted average over the neighbours within the angle limit.
+                let n: Vec3 = around[*i as usize].iter()
+                    .map(|q| face_n[*q as usize])
+                    .filter(|q| q.normalize_or_zero().dot(own) >= limit)
+                    .sum();
+                pos.push(self.vertices[*i as usize]);
+                nrm.push(if n.length_squared() > 0.0 { n.normalize().to_array() } else { own.to_array() });
+            }
+            for i in 1..poly.len().saturating_sub(1) {
+                idx.extend([base, base + i as u32, base + i as u32 + 1]);
+            }
+        }
+        (pos, nrm, idx)
     }
 
     /// Compute flat (per-triangle) normals and store them as a Vertex primvar.
