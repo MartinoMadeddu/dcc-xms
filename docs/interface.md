@@ -10,14 +10,17 @@ Seven panes: Viewport, Node Graph, Scene Explorer, Operator Stack, Properties, P
 |---|---|
 | Move a pane | Drag its tab by the title. Drop it on one of the five squares that appear over the pane under the cursor: the middle one stacks it as a tab, the others split that pane on that side |
 | Float a pane | Drag its tab and drop it anywhere that is not one of the squares, or double-click the tab |
+| Dock along a whole side of the window | Drag the tab to within a few pixels of that side. Blue bars mark the four sides while a tab is dragged, and a blue strip shows where the pane will land. This is how the timeline goes back across the bottom |
 | Dock a floating pane | Drag its tab (the title inside the window, not the bar above it) onto one of the squares, or double-click the tab, or use "Dock floating panes" in the Panes menu |
 | Move a floating window | Drag the bar at its top |
-| Close a pane | The cross on its tab. The cross on a floating window closes every pane in it |
+| Close a pane | The cross on its tab, docked or floating |
 | Show a closed pane | Tick it in the Panes menu, top right. It comes back as a tab of the main area |
 | Resize | Drag the line between two panes, or the corner of a floating window |
 | Start over | "Reset layout" in the Panes menu |
 
 Right-clicking a tab offers the same close and float actions.
+
+![A tab dragged to the bottom edge: the strip shows where it will dock](xms_edge_dock.png)
 
 ### Lock
 

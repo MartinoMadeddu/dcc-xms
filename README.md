@@ -46,13 +46,13 @@ Viewport
 - Navigation follows the cursor position, so it works through remote desktops and mouse sharing tools
 
 Templates and examples
-- Templates menu with thirteen ready-made graphs in three groups: Basics, Modelling, Animation & Mocap
-- Example files in `examples/`: a walk cycle and three two-character takes as FBX, two USD scenes
+- Templates menu with fourteen ready-made graphs in three groups: Basics, Modelling, Animation & Mocap
+- Example files in `examples/`: a real two-character motion capture take as FBX, two USD scenes
 
-![The viewport of twelve templates](docs/xms_templates.png)
+![The viewport of twelve of the templates](docs/xms_templates.png)
 
 Interface
-- Every pane is a movable, dockable tab: drag to rearrange, stack, float or close. Closed panes come back from the Panes menu. The layout is kept between sessions
+- Every pane is a movable, dockable tab: drag to rearrange, stack, float or close. Dragging a tab to a side of the window docks it along that whole side. Closed panes come back from the Panes menu. The layout is kept between sessions
 - Padlock at the top right locks the layout: panes stay put, dividers still resize
 - The graph is cooked only when its content changes, not on every frame. The primitive inspector refreshes on graph changes only and draws just the rows in view
 - Light theme by default, dark mode on a button

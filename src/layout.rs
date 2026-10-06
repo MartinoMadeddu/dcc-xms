@@ -30,6 +30,38 @@ impl Pane {
     }
 }
 
+/// A side of the program window.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Edge { Left, Right, Top, Bottom }
+
+impl Edge {
+    /// The edge within `reach` of a point, if any. The nearest one wins.
+    pub fn near(screen: bevy_egui::egui::Rect, p: bevy_egui::egui::Pos2, reach: f32) -> Option<Edge> {
+        [
+            (Edge::Left, p.x - screen.left()), (Edge::Right, screen.right() - p.x),
+            (Edge::Top, p.y - screen.top()), (Edge::Bottom, screen.bottom() - p.y),
+        ].into_iter().filter(|(_, d)| *d <= reach).min_by(|a, b| a.1.total_cmp(&b.1)).map(|(e, _)| e)
+    }
+
+    /// Share of the window a pane docked on this edge starts with.
+    pub fn share(self) -> f32 {
+        match self { Edge::Left | Edge::Right => 0.22, Edge::Top | Edge::Bottom => 0.16 }
+    }
+
+    /// The strip of the window a pane docked on this edge will take.
+    pub fn strip(self, screen: bevy_egui::egui::Rect) -> bevy_egui::egui::Rect {
+        let (w, h) = (screen.width() * self.share(), screen.height() * self.share());
+        let mut r = screen;
+        match self {
+            Edge::Left   => r.set_right(screen.left() + w),
+            Edge::Right  => r.set_left(screen.right() - w),
+            Edge::Top    => r.set_bottom(screen.top() + h),
+            Edge::Bottom => r.set_top(screen.bottom() - h),
+        }
+        r
+    }
+}
+
 #[derive(Resource)]
 pub struct Layout {
     pub dock:   DockState<Pane>,
@@ -39,6 +71,8 @@ pub struct Layout {
     saved:      String,
     /// Floating windows that have been given their starting size.
     sized:      Vec<usize>,
+    /// Pane whose tab the mouse went down on, and whether it has moved since.
+    pub tab_drag: Option<(Pane, bool)>,
 }
 
 /// Viewport on the left with the inspector under it, then the node graph,
@@ -103,11 +137,11 @@ impl Default for Layout {
         let text = file().and_then(|f| std::fs::read_to_string(f).ok()).unwrap_or_default();
         match from_json(&text) {
             Some((dock, locked)) => {
-                let mut layout = Self { dock, locked, saved: text, sized: vec![] };
+                let mut layout = Self { dock, locked, saved: text, sized: vec![], tab_drag: None };
                 layout.restore_windows();
                 layout
             }
-            None                 => Self { dock: default_dock(), locked: false, saved: String::new(), sized: vec![] },
+            None                 => Self { dock: default_dock(), locked: false, saved: String::new(), sized: vec![], tab_drag: None },
         }
     }
 }
@@ -195,6 +229,26 @@ impl Layout {
         if self.is_floating(pane) { self.dock_pane(pane); } else { self.float_pane(pane); }
     }
 
+    /// Dock a pane along a whole side of the window, next to everything
+    /// else: the place the timeline has in the default layout.
+    pub fn dock_to_edge(&mut self, pane: Pane, edge: Edge) {
+        use egui_dock::{Node, Split};
+        self.hide(pane);
+        let tree = self.dock.main_surface_mut();
+        if tree.root_node().map(|n| n.is_empty()).unwrap_or(true) {
+            tree.push_to_first_leaf(pane);
+            return;
+        }
+        // The fraction is the share of the left or upper part.
+        let (split, fraction) = match edge {
+            Edge::Left   => (Split::Left,  edge.share()),
+            Edge::Top    => (Split::Above, edge.share()),
+            Edge::Right  => (Split::Right, 1.0 - edge.share()),
+            Edge::Bottom => (Split::Below, 1.0 - edge.share()),
+        };
+        tree.split(NodeIndex::root(), split, fraction, Node::leaf(pane));
+    }
+
     pub fn dock_all(&mut self) {
         for pane in Pane::ALL { self.dock_pane(pane); }
     }
@@ -215,7 +269,7 @@ impl Layout {
 mod tests {
     use super::*;
 
-    fn layout() -> Layout { Layout { dock: default_dock(), locked: false, saved: String::new(), sized: vec![] } }
+    fn layout() -> Layout { Layout { dock: default_dock(), locked: false, saved: String::new(), sized: vec![], tab_drag: None } }
     fn open(l: &Layout) -> usize { Pane::ALL.iter().filter(|p| l.is_open(**p)).count() }
 
     #[test]
@@ -244,7 +298,7 @@ mod tests {
         let (back, locked) = from_json(&json).expect("layout loads");
         assert!(locked);
         assert_eq!(to_json(&back, true).unwrap(), json);
-        let back = Layout { dock: back, locked, saved: json, sized: vec![] };
+        let back = Layout { dock: back, locked, saved: json, sized: vec![], tab_drag: None };
         let (_, a, _) = back.dock.find_tab(&Pane::Properties).unwrap();
         let (_, b, _) = back.dock.find_tab(&Pane::NodeGraph).unwrap();
         assert_eq!(a, b);
@@ -286,6 +340,38 @@ mod tests {
         assert!(l.is_open(Pane::NodeGraph) && !l.is_floating(Pane::NodeGraph));
         l.reset();
         assert_eq!(open(&l), 7);
+    }
+
+    #[test]
+    fn panes_dock_along_a_whole_edge() {
+        use bevy_egui::egui::{pos2, Rect};
+        let screen = Rect::from_min_max(pos2(0.0, 0.0), pos2(1000.0, 800.0));
+        assert_eq!(Edge::near(screen, pos2(500.0, 795.0), 30.0), Some(Edge::Bottom));
+        assert_eq!(Edge::near(screen, pos2(4.0, 400.0), 30.0), Some(Edge::Left));
+        assert_eq!(Edge::near(screen, pos2(990.0, 20.0), 30.0), Some(Edge::Right));
+        assert_eq!(Edge::near(screen, pos2(500.0, 400.0), 30.0), None);
+        assert_eq!(Edge::Bottom.strip(screen).top(), 800.0 - 800.0 * 0.16);
+
+        for edge in [Edge::Left, Edge::Right, Edge::Top, Edge::Bottom] {
+            let mut l = layout();
+            // Float the timeline, then put it back on an edge.
+            l.float_pane(Pane::Timeline);
+            l.dock_to_edge(Pane::Timeline, edge);
+            assert!(is_valid(&l.dock) && !l.is_floating(Pane::Timeline));
+            assert_eq!(open(&l), 7);
+            // It is a child of the root: it spans the whole side.
+            let (node, _) = l.dock.find_main_surface_tab(&Pane::Timeline).unwrap();
+            assert_eq!(node.parent(), Some(NodeIndex::root()), "{edge:?}");
+            let first = matches!(edge, Edge::Left | Edge::Top);
+            assert_eq!(node == NodeIndex::root().left(), first, "{edge:?}");
+            // And the file still loads.
+            assert!(from_json(&to_json(&l.dock, false).unwrap()).is_some());
+        }
+        // Onto an empty main area.
+        let mut l = layout();
+        for p in Pane::ALL { l.hide(p); }
+        l.dock_to_edge(Pane::Viewport, Edge::Left);
+        assert!(l.is_open(Pane::Viewport) && !l.is_floating(Pane::Viewport));
     }
 
     #[test]

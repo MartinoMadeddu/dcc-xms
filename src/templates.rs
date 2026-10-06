@@ -37,14 +37,16 @@ pub const TEMPLATES: &[Template] = &[
         hint: "Edge loops, transforms and subdivision, with the early operations collapsed" },
     Template { group: "Modelling", name: "Edit Poly: bridge", build: bridge,
         hint: "Two cubes joined with Bridge, the selection made by a box rule" },
+    Template { group: "Modelling", name: "Edit Poly: sea mine", build: sea_mine,
+        hint: "Eleven operations with three rounds of subdivision: about ten thousand polygons from one cube" },
     Template { group: "Animation & Mocap", name: "Clip basics", build: clip_basics,
         hint: "Test clip renamed, trimmed, retimed and given a start timecode. Select each node to see the timeline follow" },
     Template { group: "Animation & Mocap", name: "FBX import", build: fbx_import,
-        hint: "Example walk cycle loaded from FBX, with a proxy skin" },
+        hint: "A real two-character mocap take loaded from FBX" },
     Template { group: "Animation & Mocap", name: "T-pose and export", build: tpose,
         hint: "Auto T-pose, a manual fix, proxy skin and Write FBX" },
     Template { group: "Animation & Mocap", name: "Mocap split (example takes)", build: mocap_example,
-        hint: "The mocap split graph, pointed at the example folder of two-character takes" },
+        hint: "The mocap split graph, pointed at the example folder with a two-character take" },
     Template { group: "Animation & Mocap", name: "Mocap split", build: mocap_blank,
         hint: "Folder of takes, split per character, animation and skinned T-pose written per character" },
 ];
@@ -267,6 +269,38 @@ fn bridge(g: &mut NodeGraphState, _: &mut SubnetStore) -> String {
     "Edit Poly bridge: the selection is a box rule, so it still works when the Lift node turns the upper cube.".into()
 }
 
+fn sea_mine(g: &mut NodeGraphState, _: &mut SubnetStore) -> String {
+    crate::graph_io::clear(g);
+    let all = || PolySelection { source: SelSource::All, ..Default::default() };
+    // One round of subdivision turns the cube into 24 quads. They keep the
+    // indices 0 to 23 through every inset, extrude and bevel that follows.
+    let plates = || picked((0..24).collect());
+    let long   = || picked((0..24).filter(|q| q % 2 == 0).collect());
+    let short  = || picked((0..24).filter(|q| q % 2 == 1).collect());
+    let each = ExtrudeMode::ByPolygon;
+    // The hull, collapsed.
+    let mut ops = vec![
+        PolyOp::new(all(), PolyOpKind::Subdivide { iterations: 1 }),
+        PolyOp::new(all(), PolyOpKind::Transform { translate: [0.0, 1.2, 0.0], rotate: [0.0, 0.0, 0.0, 1.0], scale: [2.4, 2.4, 2.4] }),
+        PolyOp::new(plates(), PolyOpKind::Inset { amount: 0.06, by_polygon: true }),
+        PolyOp::new(plates(), PolyOpKind::Extrude { height: -0.05, mode: each }),
+        PolyOp::new(plates(), PolyOpKind::Inset { amount: 0.07, by_polygon: true }),
+    ];
+    crate::core::poly::collapse_all(&mut ops);
+    // Horns and ports, live.
+    ops.push(PolyOp::new(plates(), PolyOpKind::Bevel { height: 0.12, outline: -0.05, mode: each }));
+    ops.push(PolyOp::new(long(), PolyOpKind::Bevel { height: 0.55, outline: -0.07, mode: each }));
+    ops.push(PolyOp::new(long(), PolyOpKind::Bevel { height: 0.06, outline: 0.05, mode: each }));
+    ops.push(PolyOp::new(short(), PolyOpKind::Inset { amount: 0.04, by_polygon: true }));
+    ops.push(PolyOp::new(short(), PolyOpKind::Extrude { height: -0.12, mode: each }));
+    ops.push(PolyOp::new(all(), PolyOpKind::Subdivide { iterations: 2 }));
+    let cube = g.add_node("Cube".into(), NodeType::CreateCube { size: 1.0 }, p(180.0, 20.0));
+    let ep   = g.add_node("SeaMine".into(), edit_poly(ops, long()), p(180.0, 130.0));
+    g.add_connection(cube, 0, ep, 0);
+    finish(g, ep, ep, p(180.0, 260.0));
+    "Edit Poly sea mine: about ten thousand polygons. Change the height of the horns in operation 7, or lower the last Subdivide to see the cage.".into()
+}
+
 // ── Animation & mocap ────────────────────────────────────────────────────────
 
 fn clip_basics(g: &mut NodeGraphState, _: &mut SubnetStore) -> String {
@@ -290,11 +324,11 @@ fn clip_basics(g: &mut NodeGraphState, _: &mut SubnetStore) -> String {
 
 fn fbx_import(g: &mut NodeGraphState, _: &mut SubnetStore) -> String {
     crate::graph_io::clear(g);
-    let load = g.add_node("WalkCycle".into(), NodeType::LoadFbx { path: examples::path(examples::WALK_FBX), take: 0 }, p(180.0, 20.0));
-    let skin = g.add_node("ProxySkin".into(), NodeType::ProxySkin { thickness: 1.6 }, p(180.0, 120.0));
-    g.add_connection(load, 0, skin, 0);
-    view(g, skin, p(180.0, 240.0));
-    format!("FBX import: the example walk cycle with a proxy skin. Space plays.{}", missing_examples())
+    let load = g.add_node("Take".into(), NodeType::LoadFbx { path: examples::path(examples::TAKE_FBX), take: 0 }, p(180.0, 20.0));
+    let trim = g.add_node("Trim".into(), NodeType::TrimClip { head: 120, tail: 120 }, p(180.0, 120.0));
+    g.add_connection(load, 0, trim, 0);
+    view(g, trim, p(180.0, 240.0));
+    format!("FBX import: a motion capture take of two people, 120 fps, a second trimmed off each end. Space plays.{}", missing_examples())
 }
 
 fn tpose(g: &mut NodeGraphState, _: &mut SubnetStore) -> String {
@@ -323,7 +357,7 @@ fn mocap_example(g: &mut NodeGraphState, _: &mut SubnetStore) -> String {
     for n in &mut g.nodes {
         if let NodeType::LoadFbxDir { dir: d, .. } = &mut n.node_type { *d = dir.clone(); }
     }
-    format!("Mocap split on the example takes: three files, two characters each. Select Takes to pick a file.{}", missing_examples())
+    format!("Mocap split on the example take: two characters, split into one clip each.{}", missing_examples())
 }
 
 fn mocap_blank(g: &mut NodeGraphState, _: &mut SubnetStore) -> String {
@@ -338,11 +372,8 @@ mod tests {
 
     #[test]
     fn every_template_builds_something_to_look_at() {
-        // The file-based templates need the example files.
-        let dir = std::env::temp_dir().join("xms_template_examples").join("examples");
-        examples::write_all(&dir).unwrap();
-        std::env::set_var("XMS_EXAMPLES", &dir);
-        assert!(examples::dir().is_some());
+        // The file-based templates need the examples folder of the repository.
+        assert!(examples::dir().is_some(), "examples folder not found");
 
         for t in TEMPLATES {
             assert!(GROUPS.contains(&t.group), "{}", t.name);
@@ -377,7 +408,7 @@ mod tests {
 
     #[test]
     fn modelling_templates_give_valid_meshes() {
-        for (name, verts_at_least) in [("Edit Poly: tower", 30), ("Edit Poly: panels", 300), ("Edit Poly: goblet", 300), ("Edit Poly: bridge", 20)] {
+        for (name, verts_at_least) in [("Edit Poly: tower", 30), ("Edit Poly: panels", 300), ("Edit Poly: goblet", 300), ("Edit Poly: bridge", 20), ("Edit Poly: sea mine", 8000)] {
             let t = TEMPLATES.iter().find(|t| t.name == name).unwrap();
             let mut g = NodeGraphState::default();
             (t.build)(&mut g, &mut SubnetStore::default());

@@ -163,6 +163,7 @@ fn dcc_ui(
     vp_rect.0 = None;   // set again by the viewport pane if it is showing
     let locked = layout.locked;
     let mut toggle_float = None;
+    let mut tab_pressed = None;
     {
         let mut panes = Panes {
             graph: &mut graph, stack: &mut stack, hierarchy: &mut hierarchy, subnets: &mut subnets,
@@ -171,7 +172,7 @@ fn dcc_ui(
             batch: &batch, anim_ctx: &anim_ctx, timeline_state: &timeline_state,
             dt: time.delta_seconds_f64(), keys_free,
             space_plays: nav_settings.style != viewport::nav::NavStyle::Houdini,
-            revision: revision.0, locked, toggle_float: &mut toggle_float,
+            revision: revision.0, locked, toggle_float: &mut toggle_float, tab_pressed: &mut tab_pressed,
         };
         let mut style = egui_dock::Style::from_egui(ctx.style().as_ref());
         style.tab_bar.fill_tab_bar = true;
@@ -181,7 +182,8 @@ fn dcc_ui(
                 .style(style)
                 .draggable_tabs(!locked)
                 .show_close_buttons(!locked)
-                .show_window_close_buttons(!locked)
+                // A floating window is closed by the cross on its tab.
+                .show_window_close_buttons(false)
                 .show_window_collapse_buttons(false)
                 .tab_context_menus(!locked)
                 .show_inside(ui, &mut panes);
@@ -189,6 +191,43 @@ fn dcc_ui(
     }
 
     if let Some(pane) = toggle_float { layout.toggle_float(pane); }
+
+    // ── Docking along a whole edge of the window ─────────────────────────────
+    // The dock area only offers places beside single panes. While a tab is
+    // dragged, the four edges of the window are drop places too: the pane
+    // then spans that whole side, as the timeline does by default.
+    let (down, moving, let_go) = ctx.input(|i| (i.pointer.primary_down(), i.pointer.is_decidedly_dragging(), i.pointer.primary_released()));
+    if let Some(pane) = tab_pressed { if layout.tab_drag.is_none() { layout.tab_drag = Some((pane, false)); } }
+    if let Some((pane, moved)) = layout.tab_drag {
+        let released = let_go || !down;
+        if released { layout.tab_drag = None; } else if moving { layout.tab_drag = Some((pane, true)); }
+        let moved = moved || moving;
+        let screen = ctx.screen_rect();
+        let edge = ctx.input(|i| i.pointer.interact_pos()).and_then(|p| layout::Edge::near(screen, p, 26.0));
+        if !moved {
+            // A click on a tab, not a drag.
+        } else if released {
+            if let Some(edge) = edge { layout.dock_to_edge(pane, edge); }
+        } else {
+            let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("edge_dock")));
+            let tint = egui::Color32::from_rgb(120, 170, 255);
+            for e in [layout::Edge::Left, layout::Edge::Right, layout::Edge::Top, layout::Edge::Bottom] {
+                // A thin bar marks each edge; the one under the cursor shows where the pane will land.
+                let mut bar = screen;
+                match e {
+                    layout::Edge::Left   => bar.set_right(screen.left() + 5.0),
+                    layout::Edge::Right  => bar.set_left(screen.right() - 5.0),
+                    layout::Edge::Top    => bar.set_bottom(screen.top() + 5.0),
+                    layout::Edge::Bottom => bar.set_top(screen.bottom() - 5.0),
+                }
+                painter.rect_filled(bar, 0.0, tint.gamma_multiply(0.6));
+                if edge == Some(e) {
+                    painter.rect_filled(e.strip(screen), 0.0, tint.gamma_multiply(0.35));
+                    painter.rect_stroke(e.strip(screen).shrink(1.0), 0.0, egui::Stroke::new(2.0_f32, tint));
+                }
+            }
+        }
+    }
 
     // ── Panes menu and lock, top right ───────────────────────────────────────
     egui::Area::new("layout_controls".into())
@@ -342,6 +381,8 @@ struct Panes<'a> {
     locked:         bool,
     /// Pane whose tab was double-clicked this frame.
     toggle_float:   &'a mut Option<Pane>,
+    /// Pane whose tab the mouse button went down on this frame.
+    tab_pressed:    &'a mut Option<Pane>,
 }
 
 impl egui_dock::TabViewer for Panes<'_> {
@@ -352,7 +393,11 @@ impl egui_dock::TabViewer for Panes<'_> {
     fn closeable(&mut self, _tab: &mut Pane) -> bool { !self.locked }
     // Double-click a tab to float it, or to dock it back.
     fn on_tab_button(&mut self, tab: &mut Pane, response: &egui::Response) {
-        if !self.locked && response.double_clicked() { *self.toggle_float = Some(*tab); }
+        if self.locked { return; }
+        if response.double_clicked() { *self.toggle_float = Some(*tab); }
+        // The dock area takes over the tab while it is dragged, so only the
+        // press is seen here. The drag is followed from the pointer.
+        if response.is_pointer_button_down_on() { *self.tab_pressed = Some(*tab); }
     }
     // Panes scroll their own content where they need to.
     fn scroll_bars(&self, _tab: &Pane) -> [bool; 2] { [false, false] }
