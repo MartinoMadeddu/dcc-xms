@@ -61,6 +61,14 @@ Interface
 - ICE subnet contents in saved graphs
 - Import into Unreal has not been tested. Written files were checked by reading them back and against a reference script, on one OptiTrack Motive take
 
+## Documentation
+
+[docs/](docs/README.md): Edit Poly, viewport navigation, animation and mocap, builds and releases.
+
+## Download
+
+Binaries for Linux, macOS and Windows are built from every change to `main` and published on the [Releases page](https://github.com/srlegrand/dcc-xms/releases). See [docs/releases.md](docs/releases.md).
+
 ## Build
 
     cargo run --release
