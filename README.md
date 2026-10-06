@@ -1,4 +1,4 @@
-XMS | Imago
+XMS | Imago .
 Cross-data Manipulation System 
 
 WIP 3d application written in Rust as part of learning the language -
