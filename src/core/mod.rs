@@ -5,6 +5,8 @@
 
 pub mod anim;
 pub mod poly;
+pub mod poly_ops;
+pub mod manip;
 pub mod attribute;
 pub mod geometry;
 pub mod topology;

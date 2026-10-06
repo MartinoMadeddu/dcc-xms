@@ -51,6 +51,7 @@ fn main() {
         .init_resource::<FileBrowser>()
         .init_resource::<BatchState>()
         .init_resource::<GraphFile>()
+        .init_resource::<modelling::PolyTool>()
         .add_systems(Startup, (setup_scene, setup_egui_theme, setup_gizmos, modelling::setup_gizmos))
         .add_systems(Update, (
             dcc_ui,
@@ -87,6 +88,7 @@ fn dcc_ui(
     mut playback:   ResMut<Playback>,
     mut browser:    ResMut<FileBrowser>,
     mut graph_file: ResMut<GraphFile>,
+    mut poly_tool:  ResMut<modelling::PolyTool>,
     batch:          Res<BatchState>,
     time:           Res<Time>,
     windows:        Query<&Window>,
@@ -180,11 +182,13 @@ fn dcc_ui(
                         .any(|n| n.id == id && matches!(n.node_type, NodeType::EditPoly { .. }));
                     if is_edit_poly { modelling::input_mesh(&graph, id, &eval) } else { None }
                 });
-                let mut io = PanelIo { browser: &mut *browser, batch: &*batch, action: None, poly_input };
+                let mut tool = poly_tool.tool;
+                let mut io = PanelIo { browser: &mut *browser, batch: &*batch, action: None, poly_input, tool: &mut tool };
                 draw_properties_panel(ui, &mut graph, &*stack, &mut subnets, &nav, &anim_ctx, &mut io);
                 if let Some(PanelAction::Write { targets, all_files }) = io.action {
                     batch::start(&batch, &graph, targets, all_files);
                 }
+                if tool != poly_tool.tool { poly_tool.tool = tool; }
             });
         });
     used_right_pts += props_resp.response.rect.width();

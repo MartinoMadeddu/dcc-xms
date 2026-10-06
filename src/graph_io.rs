@@ -153,13 +153,21 @@ mod tests {
         // An Edit Poly node with an operation, a rule-based and a picked selection.
         use crate::core::poly::{ExtrudeMode, PolyOp, PolyOpKind, PolySelection, SelSource, SubLevel};
         let ep = g.add_node("EditPoly".into(), NodeType::EditPoly {
-            ops: vec![PolyOp {
-                enabled: true,
-                selection: PolySelection { source: SelSource::ByNormal { dir: [0.0, 1.0, 0.0], angle: 5.0 }, grow: 1, ..Default::default() },
-                kind: PolyOpKind::Bevel { height: 0.5, outline: -0.1, mode: ExtrudeMode::LocalNormal },
-            }],
+            ops: vec![
+                PolyOp {
+                    enabled: true,
+                    selection: PolySelection { source: SelSource::ByNormal { dir: [0.0, 1.0, 0.0], angle: 5.0 }, grow: 1, ..Default::default() },
+                    kind: PolyOpKind::Bevel { height: 0.5, outline: -0.1, mode: ExtrudeMode::LocalNormal },
+                    collapsed: true,
+                },
+                PolyOp::new(
+                    PolySelection { level: SubLevel::Border, ..Default::default() },
+                    PolyOpKind::Transform { translate: [0.5, 0.0, 0.25], rotate: [0.0, 0.0, 0.0, 1.0], scale: [1.0, 2.0, 1.0] }),
+                PolyOp::new(Default::default(), PolyOpKind::MakePlanar { axis: None }),
+            ],
             pending: PolySelection { level: SubLevel::Edge, edges: vec![[0, 1], [2, 3]], ..Default::default() },
             edit: Some(0),
+            auto_collapse: true,
         }, egui::pos2(9.0, 9.0));
         g.add_connection(xf, 0, ep, 0);
         let json = to_json(&g);

@@ -536,7 +536,7 @@ fn add_node_menu(ui: &mut egui::Ui, graph: &mut NodeGraphState, cp: egui::Pos2) 
     }
     if ui.button("🔨  Edit Poly").clicked() {
         graph.add_node("EditPoly".into(), NodeType::EditPoly {
-            ops: vec![], pending: Default::default(), edit: None }, cp); added = true;
+            ops: vec![], pending: Default::default(), edit: None, auto_collapse: false }, cp); added = true;
     }
     if ui.button("⊕  Merge").clicked() {
         graph.add_node("Merge".into(), NodeType::Merge, cp); added = true;

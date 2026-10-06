@@ -103,6 +103,9 @@ pub enum NodeType {
         /// Operation whose selection is being edited in the viewport, which
         /// then shows the mesh as it enters that operation. None: `pending`.
         edit:    Option<usize>,
+        /// Collapse every earlier operation when a new one is added.
+        #[serde(default)]
+        auto_collapse: bool,
     },
 }
 

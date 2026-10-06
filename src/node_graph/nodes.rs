@@ -131,7 +131,7 @@ pub fn evaluate_node_type(
         // ── Modelling ────────────────────────────────────────────────────────
         NodeType::EditPoly { ops, .. } => inputs.first().map(|r| {
             let mesh = crate::core::poly::PolyMesh::from_mesh(&r.as_mesh());
-            EvalResult::Single(crate::core::poly::apply_ops(&mesh, ops, ops.len()).to_mesh())
+            EvalResult::Single(crate::core::poly::eval_cached(&mesh, ops, ops.len()).to_mesh())
         }),
     }
 }

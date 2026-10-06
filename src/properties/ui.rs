@@ -6,7 +6,9 @@ use crate::core::anim::{AnimData, FrameRate, PoseEdit, RATE_PRESETS};
 use crate::types::{NodeId, SplitPick};
 use crate::file_browser::{BrowseMode, BrowseTarget, FileBrowser};
 use crate::batch::{self, BatchState};
-use crate::core::poly::{apply_ops, ExtrudeMode, PolyMesh, PolyOp, PolyOpKind, PolySelection, SelSource, SubLevel};
+use crate::core::manip::Tool;
+use crate::core::poly::{collapse_all, collapse_op, eval_cached, push_op, restore_run, ExtrudeMode, PolyMesh, PolyOp, PolyOpKind, PolySelection, SelSource, SubLevel};
+use bevy::math::{EulerRot, Quat};
 use crate::node_graph::NodeGraphState;
 use crate::scene_graph::SceneGraph;
 use crate::ice::{SubnetStore, GraphNavigation};
@@ -45,6 +47,8 @@ pub struct PanelIo<'a> {
     pub action:  Option<PanelAction>,
     /// Mesh entering the selected node, when it is an Edit Poly node.
     pub poly_input: Option<crate::core::poly::PolyMesh>,
+    /// Viewport tool of the Edit Poly node.
+    pub tool: &'a mut Tool,
 }
 
 pub fn draw_properties_panel(
@@ -556,12 +560,12 @@ pub fn draw_properties(
             }
 
             // ── Modelling ────────────────────────────────────────────────────
-            NodeType::EditPoly { ops, pending, edit } => {
-                if edit.map(|i| i >= ops.len()).unwrap_or(false) { *edit = None; }
+            NodeType::EditPoly { ops, pending, edit, auto_collapse } => {
+                if edit.map(|i| i >= ops.len() || ops[i].collapsed).unwrap_or(false) { *edit = None; }
                 let input = io.poly_input.clone();
                 // Mesh the selection under edit applies to, and the final mesh.
-                let stage = input.as_ref().map(|m| apply_ops(m, ops, edit.unwrap_or(ops.len())));
-                let end   = input.as_ref().map(|m| apply_ops(m, ops, ops.len()));
+                let stage = input.as_ref().map(|m| eval_cached(m, ops, edit.unwrap_or(ops.len())));
+                let end   = input.as_ref().map(|m| eval_cached(m, ops, ops.len()));
 
                 section_label(ui, "Selection");
                 section(ui, |ui| {
@@ -577,45 +581,139 @@ pub fn draw_properties(
                         Some(i) if i < ops.len() => &mut ops[i].selection,
                         _ => &mut *pending,
                     };
-                    selection_editor(ui, sel, stage.as_ref());
+                    selection_editor(ui, sel, stage.as_deref());
                     if input.is_none() {
                         ui.colored_label(xsi::DIM(), "No mesh connected.");
                     }
                 });
 
                 ui.add_space(4.0);
+                section_label(ui, "Viewport tool");
+                section(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        for (t, label, key) in [(Tool::Select, "Select", "Q"), (Tool::Move, "Move", "W"),
+                                                (Tool::Rotate, "Rotate", "E"), (Tool::Scale, "Scale", "R")] {
+                            if ui.selectable_label(*io.tool == t, label).on_hover_text(format!("Key: {key}")).clicked() { *io.tool = t; }
+                        }
+                    });
+                    ui.colored_label(xsi::DIM(), egui::RichText::new(
+                        "Drag a handle in the viewport. Each drag is stored as a Transform operation.").small());
+                });
+
+                ui.add_space(4.0);
                 section_label(ui, "Add operation (uses the selection above)");
                 section(ui, |ui| {
+                    let base = pending.level.base();
+                    let (v, e, p) = (base == SubLevel::Vertex, base == SubLevel::Edge, base == SubLevel::Polygon);
                     let mut add: Option<PolyOpKind> = None;
-                    ui.horizontal(|ui| {
-                        if ui.button("Extrude").clicked() { add = Some(PolyOpKind::Extrude { height: 0.25, mode: ExtrudeMode::Group }); }
-                        if ui.button("Bevel").clicked()   { add = Some(PolyOpKind::Bevel { height: 0.25, outline: -0.1, mode: ExtrudeMode::Group }); }
-                        if ui.button("Inset").clicked()   { add = Some(PolyOpKind::Inset { amount: 0.1, by_polygon: false }); }
-                    });
+                    let mut row = |ui: &mut egui::Ui, title: &str, items: &[(&str, bool, PolyOpKind)]| {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.colored_label(xsi::LABEL(), title);
+                            for (label, on, kind) in items {
+                                if ui.add_enabled(*on, egui::Button::new(*label)).clicked() { add = Some(kind.clone()); }
+                            }
+                        });
+                    };
+                    row(ui, "Polygon:", &[
+                        ("Extrude", true, PolyOpKind::Extrude { height: 0.25, mode: ExtrudeMode::Group }),
+                        ("Bevel",   true, PolyOpKind::Bevel { height: 0.25, outline: -0.1, mode: ExtrudeMode::Group }),
+                        ("Inset",   true, PolyOpKind::Inset { amount: 0.1, by_polygon: false }),
+                        ("Bridge",  p || e, PolyOpKind::Bridge),
+                        ("Flip",    true, PolyOpKind::Flip),
+                        ("Detach",  true, PolyOpKind::Detach),
+                        ("Tessellate", true, PolyOpKind::Tessellate),
+                    ]);
+                    row(ui, "Edge:", &[
+                        ("Connect", e || v, PolyOpKind::Connect { segments: 1 }),
+                        ("Remove",  e || v, PolyOpKind::Remove { clean: true }),
+                        ("Cap",     true, PolyOpKind::Cap),
+                    ]);
+                    row(ui, "Vertex:", &[
+                        ("Weld",     true, PolyOpKind::Weld { threshold: 0.01 }),
+                        ("Collapse", true, PolyOpKind::Collapse),
+                        ("Break",    true, PolyOpKind::Break),
+                    ]);
+                    row(ui, "Any:", &[
+                        ("Delete",      true, PolyOpKind::Delete),
+                        ("Transform",   true, PolyOpKind::identity_transform()),
+                        ("Make planar", true, PolyOpKind::MakePlanar { axis: None }),
+                        ("Relax",       true, PolyOpKind::Relax { amount: 0.5, iterations: 1, hold_border: true }),
+                    ]);
+                    row(ui, "Whole mesh:", &[
+                        ("Subdivide", true, PolyOpKind::Subdivide { iterations: 1 }),
+                    ]);
                     if let Some(kind) = add {
-                        // The new operation takes the pending selection. The same
-                        // polygons stay selected for the next one, as in Edit Poly.
                         let selection = pending.clone();
+                        let level = pending.level;
                         if let Some(m) = &end {
-                            let mask = selection.poly_mask(m);
-                            *pending = PolySelection::picked_polys((0..mask.len() as u32).filter(|p| mask[*p as usize]).collect());
+                            let before = m.polys.len();
+                            let op = PolyOp::new(selection.clone(), kind.clone());
+                            *pending = match &kind {
+                                // The same polygons stay selected, as in Edit Poly.
+                                PolyOpKind::Extrude { .. } | PolyOpKind::Bevel { .. } | PolyOpKind::Inset { .. } => {
+                                    let mask = selection.poly_mask(m);
+                                    PolySelection { level, ..PolySelection::picked_polys((0..mask.len() as u32).filter(|p| mask[*p as usize]).collect()) }
+                                }
+                                k if k.keeps_indices() => selection.clone(),
+                                // The new caps.
+                                PolyOpKind::Cap => {
+                                    let mut after = (**m).clone();
+                                    op.apply(&mut after);
+                                    PolySelection::picked_polys((before as u32..after.polys.len() as u32).collect())
+                                }
+                                _ => PolySelection { level, ..Default::default() },
+                            };
                         }
-                        ops.push(PolyOp { enabled: true, selection, kind });
+                        push_op(ops, *auto_collapse, PolyOp::new(selection, kind));
                         *edit = None;
                     }
                 });
 
                 ui.add_space(4.0);
                 section_label(ui, "Operations");
-                if ops.is_empty() {
-                    section(ui, |ui| { ui.colored_label(xsi::DIM(), "None yet."); });
-                }
-                enum ListEdit { Up(usize), Down(usize), Delete(usize) }
+                section(ui, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.radio_value(auto_collapse, false, "Keep live")
+                            .on_hover_text("Operations stay editable until you collapse them.");
+                        ui.radio_value(auto_collapse, true, "Auto-collapse")
+                            .on_hover_text("Adding an operation collapses the ones before it.");
+                    });
+                    let live = ops.iter().filter(|op| !op.collapsed).count();
+                    ui.horizontal(|ui| {
+                        if ui.add_enabled(live > 0, egui::Button::new("Collapse all")).clicked() {
+                            collapse_all(ops);
+                            *edit = None;
+                        }
+                        ui.colored_label(xsi::DIM(), format!("{} live, {} collapsed", live, ops.len() - live));
+                    });
+                });
+                ui.add_space(2.0);
+                enum ListEdit { Up(usize), Down(usize), Delete(usize), Collapse(usize), Restore(usize) }
                 let mut change = None;
                 let count = ops.len();
-                for (i, op) in ops.iter_mut().enumerate() {
+                let mut i = 0;
+                while i < count {
+                    if ops[i].collapsed {
+                        let mut j = i;
+                        while j + 1 < count && ops[j + 1].collapsed { j += 1; }
+                        section(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                let n = j - i + 1;
+                                ui.colored_label(xsi::DIM(), if n == 1 {
+                                    format!("#{} {} (collapsed)", i + 1, ops[i].kind.label())
+                                } else {
+                                    format!("#{}-{}: {n} collapsed operations", i + 1, j + 1)
+                                }).on_hover_text(ops[i..=j].iter().map(|o| o.kind.label()).collect::<Vec<_>>().join(", "));
+                                if ui.small_button("Restore").on_hover_text("Make editable again").clicked() { change = Some(ListEdit::Restore(i)); }
+                            });
+                        });
+                        ui.add_space(2.0);
+                        i = j + 1;
+                        continue;
+                    }
+                    let op = &mut ops[i];
                     section(ui, |ui| {
-                        ui.horizontal(|ui| {
+                        ui.horizontal_wrapped(|ui| {
                             ui.checkbox(&mut op.enabled, "");
                             ui.colored_label(xsi::HEADER_TEXT(), format!("#{} {}", i + 1, op.kind.label()));
                             if ui.selectable_label(*edit == Some(i), "🎯").on_hover_text("Edit this operation's selection").clicked() {
@@ -623,12 +721,19 @@ pub fn draw_properties(
                             }
                             if ui.add_enabled(i > 0, egui::Button::new("⏶").small()).clicked() { change = Some(ListEdit::Up(i)); }
                             if ui.add_enabled(i + 1 < count, egui::Button::new("⏷").small()).clicked() { change = Some(ListEdit::Down(i)); }
+                            if ui.small_button("✔").on_hover_text("Collapse").clicked() { change = Some(ListEdit::Collapse(i)); }
                             if ui.small_button("🗑").on_hover_text("Remove").clicked() { change = Some(ListEdit::Delete(i)); }
                         });
                         let drag = |ui: &mut egui::Ui, label: &str, v: &mut f32| {
                             ui.horizontal(|ui| {
                                 ui.colored_label(xsi::LABEL(), label);
                                 ui.add(egui::DragValue::new(v).speed(0.005).max_decimals(3));
+                            });
+                        };
+                        let whole = |ui: &mut egui::Ui, label: &str, v: &mut u32, max: u32| {
+                            ui.horizontal(|ui| {
+                                ui.colored_label(xsi::LABEL(), label);
+                                ui.add(egui::DragValue::new(v).speed(0.05).range(1..=max));
                             });
                         };
                         let mode_combo = |ui: &mut egui::Ui, mode: &mut ExtrudeMode| {
@@ -655,14 +760,62 @@ pub fn draw_properties(
                                 drag(ui, "Amount:", amount);
                                 ui.checkbox(by_polygon, "By polygon");
                             }
+                            PolyOpKind::Transform { translate, rotate, scale } => {
+                                ui.horizontal(|ui| {
+                                    ui.colored_label(xsi::LABEL(), "Move:");
+                                    for a in translate.iter_mut() { ui.add(egui::DragValue::new(a).speed(0.01).max_decimals(3)); }
+                                });
+                                // Shown and edited as XYZ angles in degrees.
+                                let q = Quat::from_array(*rotate).normalize();
+                                let (x, y, z) = q.to_euler(EulerRot::XYZ);
+                                let mut deg = [x.to_degrees(), y.to_degrees(), z.to_degrees()];
+                                let mut turned = false;
+                                ui.horizontal(|ui| {
+                                    ui.colored_label(xsi::LABEL(), "Rotate:");
+                                    for a in deg.iter_mut() {
+                                        turned |= ui.add(egui::DragValue::new(a).speed(0.5).max_decimals(2).suffix("°")).changed();
+                                    }
+                                });
+                                if turned {
+                                    *rotate = Quat::from_euler(EulerRot::XYZ, deg[0].to_radians(), deg[1].to_radians(), deg[2].to_radians()).to_array();
+                                }
+                                ui.horizontal(|ui| {
+                                    ui.colored_label(xsi::LABEL(), "Scale:");
+                                    for a in scale.iter_mut() { ui.add(egui::DragValue::new(a).speed(0.01).max_decimals(3)); }
+                                });
+                            }
+                            PolyOpKind::Remove { clean } => {
+                                ui.checkbox(clean, "Also remove leftover vertices");
+                            }
+                            PolyOpKind::Weld { threshold } => drag(ui, "Threshold:", threshold),
+                            PolyOpKind::Connect { segments } => whole(ui, "Segments:", segments, 64),
+                            PolyOpKind::MakePlanar { axis } => {
+                                ui.horizontal(|ui| {
+                                    ui.selectable_value(axis, None, "Best fit");
+                                    ui.selectable_value(axis, Some(0), "X");
+                                    ui.selectable_value(axis, Some(1), "Y");
+                                    ui.selectable_value(axis, Some(2), "Z");
+                                });
+                            }
+                            PolyOpKind::Relax { amount, iterations, hold_border } => {
+                                drag(ui, "Amount:", amount);
+                                whole(ui, "Iterations:", iterations, 200);
+                                ui.checkbox(hold_border, "Hold open borders");
+                            }
+                            PolyOpKind::Subdivide { iterations } => whole(ui, "Iterations:", iterations, 4),
+                            PolyOpKind::Delete | PolyOpKind::Collapse | PolyOpKind::Cap | PolyOpKind::Bridge
+                            | PolyOpKind::Detach | PolyOpKind::Break | PolyOpKind::Flip | PolyOpKind::Tessellate => {}
                         }
                     });
                     ui.add_space(2.0);
+                    i += 1;
                 }
                 match change {
-                    Some(ListEdit::Up(i))     => { ops.swap(i, i - 1); *edit = None; }
-                    Some(ListEdit::Down(i))   => { ops.swap(i, i + 1); *edit = None; }
-                    Some(ListEdit::Delete(i)) => { ops.remove(i); *edit = None; }
+                    Some(ListEdit::Up(i))       => { ops.swap(i, i - 1); *edit = None; }
+                    Some(ListEdit::Down(i))     => { ops.swap(i, i + 1); *edit = None; }
+                    Some(ListEdit::Delete(i))   => { ops.remove(i); *edit = None; }
+                    Some(ListEdit::Collapse(i)) => { collapse_op(ops, i); *edit = None; }
+                    Some(ListEdit::Restore(i))  => { restore_run(ops, i); }
                     None => {}
                 }
                 if let Some(m) = &end {
@@ -681,10 +834,12 @@ pub fn draw_properties(
 
 /// Sub-object level, where the selection comes from, and its modifiers.
 fn selection_editor(ui: &mut egui::Ui, sel: &mut PolySelection, mesh: Option<&PolyMesh>) {
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.selectable_value(&mut sel.level, SubLevel::Vertex,  "Vertex");
         ui.selectable_value(&mut sel.level, SubLevel::Edge,    "Edge");
+        ui.selectable_value(&mut sel.level, SubLevel::Border,  "Border");
         ui.selectable_value(&mut sel.level, SubLevel::Polygon, "Polygon");
+        ui.selectable_value(&mut sel.level, SubLevel::Element, "Element");
     });
 
     let name = |s: &SelSource| match s {
@@ -754,10 +909,17 @@ fn selection_editor(ui: &mut egui::Ui, sel: &mut PolySelection, mesh: Option<&Po
         }
     });
 
+    if let (Some(m), SubLevel::Edge) = (mesh, sel.level) {
+        ui.horizontal(|ui| {
+            if ui.button("Loop").on_hover_text("Extend the selected edges along their loops").clicked() { sel.expand_edges(m, false); }
+            if ui.button("Ring").on_hover_text("Extend the selected edges across their rings").clicked() { sel.expand_edges(m, true); }
+        });
+    }
+
     if let Some(m) = mesh {
-        let what = match sel.level { SubLevel::Vertex => "vertices", SubLevel::Edge => "edges", SubLevel::Polygon => "polygons" };
+        let what = match sel.level.base() { SubLevel::Vertex => "vertices", SubLevel::Polygon => "polygons", _ => "edges" };
         let polys = sel.poly_mask(m).iter().filter(|s| **s).count();
-        let text = if sel.level == SubLevel::Polygon {
+        let text = if sel.level.base() == SubLevel::Polygon {
             format!("{polys} polygons selected")
         } else {
             format!("{} {what} selected, covering {polys} polygons", sel.count(m))
