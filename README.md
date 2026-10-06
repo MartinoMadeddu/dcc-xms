@@ -46,9 +46,13 @@ Viewport
 - Navigation follows the cursor position, so it works through remote desktops and mouse sharing tools
 
 Interface
+- Every pane is a movable, dockable tab: drag to rearrange, stack or float. The layout is kept between sessions
+- The graph is cooked only when its content changes, not on every frame. The primitive inspector refreshes on graph changes only and draws just the rows in view
 - Light theme by default, dark mode on a button
 - Animation and mocap nodes sit in their own "Animation & Mocap" sub-menu of the add-node menu
 - Panels keep the size they are dragged to, whatever they contain
+
+![Default layout of the dockable panes](docs/xms_layout.png)
 
 ## Not done yet
 
@@ -63,7 +67,7 @@ Interface
 
 ## Documentation
 
-[docs/](docs/README.md): Edit Poly, viewport navigation, animation and mocap, builds and releases.
+[docs/](docs/README.md): interface, Edit Poly, viewport navigation, animation and mocap, builds and releases.
 
 ## Download
 

@@ -60,16 +60,12 @@ pub fn camera_controller(
         if keyboard.just_released(KeyCode::Space) && !drag.space_used { playback.playing = !playback.playing; }
     }
 
-    let in_viewport = windows.get_single().ok()
-        .and_then(|w| w.cursor_position())
-        .zip(vp_rect.0)
-        .map(|(c, r)| r.contains(bevy_egui::egui::pos2(c.x, c.y)))
-        .unwrap_or(false)
-        && !ctx.is_pointer_over_area();
+    let cursor = windows.get_single().ok().and_then(|w| w.cursor_position());
+    let in_viewport = super::pointer_in_viewport(ctx, vp_rect.0, cursor);
 
     // A drag belongs to the camera only if it began in the viewport.
     if mouse_btn.get_just_pressed().next().is_some() && !(h.lmb && h.mmb && drag.active) {
-        drag.active = in_viewport && !ctx.wants_pointer_input();
+        drag.active = in_viewport;
     }
     if !(h.lmb || h.mmb || h.rmb) { drag.active = false; }
 
@@ -125,7 +121,7 @@ pub fn focus_camera(
     mut contexts: EguiContexts,
 ) {
     if !keyboard.just_pressed(KeyCode::KeyF) { return; }
-    if contexts.ctx_mut().is_pointer_over_area() { return; }
+    if contexts.ctx_mut().wants_keyboard_input() { return; }
     if let Ok(mt) = mesh_q.get_single() {
         for mut ct in cam_q.iter_mut() {
             let dir = (ct.translation - mt.translation).normalize();
@@ -138,9 +134,13 @@ pub fn focus_camera(
 pub fn draw_origin_label(
     mut contexts: EguiContexts,
     cam_q:        Query<(&Camera, &GlobalTransform), With<MainCamera>>,
+    vp_rect:      Res<ViewportRect>,
 ) {
     let Ok((cam, ct)) = cam_q.get_single() else { return; };
-    if let Some(sp) = cam.world_to_viewport(ct, Vec3::ZERO) {
+    // Only while the viewport pane is showing, and inside it.
+    let Some(rect) = vp_rect.0 else { return };
+    if let Some(sp) = cam.world_to_viewport(ct, Vec3::ZERO).map(|p| p + Vec2::new(rect.min.x, rect.min.y)) {
+        if !rect.shrink(12.0).contains(bevy_egui::egui::pos2(sp.x, sp.y)) { return; }
         let ctx = contexts.ctx_mut();
         bevy_egui::egui::Area::new("origin_label".into())
             .fixed_pos(bevy_egui::egui::pos2(sp.x, sp.y))

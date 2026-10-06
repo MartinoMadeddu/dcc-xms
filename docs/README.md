@@ -1,5 +1,6 @@
 # XMS documentation
 
+- [Interface](interface.md): dockable panes, saved layout, theme, primitive inspector
 - [Edit Poly](edit-poly.md): polygon modelling in one node
 - [Viewport navigation](navigation.md): the seven navigation styles
 - [Animation and mocap](mocap.md): clips, the timeline, batch export to FBX

@@ -27,31 +27,21 @@ mod xsi {
 }
 
 pub fn draw_prim_inspector(
-    ui:      &mut egui::Ui,
-    graph:   &NodeGraphState,
-    state:   &mut PrimInspectorState,
+    ui:       &mut egui::Ui,
+    graph:    &NodeGraphState,
+    state:    &mut PrimInspectorState,
+    // Graph revision: the table is rebuilt only when this or the selected
+    // node changes, not on every frame.
+    revision: u64,
     get_mesh: &dyn Fn(&NodeGraphState) -> Option<MeshData>,
 ) {
     egui::Frame::none()
         .fill(xsi::BG())
         .show(ui, |ui| {
-            // CRITICAL FIX: Only call get_mesh if cache is invalid!
             let selected_node = graph.selected_node;
-            let graph_version = graph.graph_version;
-            
-            // Clone the mesh so we don't hold a reference to state
-            let mesh = if state.is_cache_valid(selected_node, graph_version) {
-                // ✅ Cache hit - clone cached mesh (cheap compared to cooking!)
-                state.get_cached_mesh().cloned()
-            } else {
-                // ✅ Cache miss - cook and cache
-                if let Some(fresh_mesh) = get_mesh(graph) {
-                    state.update_cache(selected_node, fresh_mesh.clone(), graph_version);
-                    Some(fresh_mesh)
-                } else {
-                    None
-                }
-            };
+            if !state.is_cache_valid(selected_node, revision) {
+                state.update_cache(selected_node, get_mesh(graph), revision);
+            }
 
             // ── Path breadcrumb ───────────────────────────────────────────────
             let path_str = if let Some(id) = selected_node {
@@ -76,7 +66,7 @@ pub fn draw_prim_inspector(
                     );
                 });
 
-            let Some(mesh) = mesh else {
+            let Some(mesh) = state.cached_mesh() else {
                 ui.add_space(12.0);
                 ui.centered_and_justified(|ui| {
                     ui.label(egui::RichText::new("No mesh data for selected node.")
@@ -86,18 +76,11 @@ pub fn draw_prim_inspector(
             };
 
             // ── Tabs ─────────────────────────────────────────────────────────
-            let vertex_vars: Vec<_> = mesh.primvars.iter()
-                .filter(|p| p.interp == PrimVarInterp::Vertex).collect();
-            let uniform_vars: Vec<_> = mesh.primvars.iter()
-                .filter(|p| p.interp == PrimVarInterp::Uniform).collect();
-            let fv_vars: Vec<_> = mesh.primvars.iter()
-                .filter(|p| p.interp == PrimVarInterp::FaceVarying).collect();
-            let const_vars: Vec<_> = mesh.primvars.iter()
-                .filter(|p| p.interp == PrimVarInterp::Constant).collect();
-
+            let count = |interp: PrimVarInterp| mesh.primvars.iter().filter(|p| p.interp == interp).count();
             let vertex_count = mesh.vertices.len();
             let face_count   = mesh.num_faces();
             let fv_count     = mesh.num_face_varying();
+            let const_count  = count(PrimVarInterp::Constant);
 
             egui::Frame::none()
                 .fill(xsi::TAB_BG())
@@ -111,82 +94,70 @@ pub fn draw_prim_inspector(
                         tab_btn(ui, state, PrimInspectorTab::FaceVarying,
                             &format!("FaceVarying ({})", fv_count));
                         tab_btn(ui, state, PrimInspectorTab::Constant,
-                            &format!("Constant ({})", const_vars.len()));
+                            &format!("Constant ({})", const_count));
                     });
                 });
 
             ui.separator();
 
-            // ── Spreadsheet (rest unchanged) ──────────────────────────────────
-            match state.active_tab {
-                // ... rest of your existing code ...
-                PrimInspectorTab::Vertex => {
-                    let mut cols: Vec<(&str, Vec<Vec<f32>>)> = vec![
-                        ("P", mesh.vertices.iter()
-                            .map(|v| vec![v[0], v[1], v[2]]).collect()),
-                    ];
-                    for pv in &vertex_vars {
-                        if pv.name != "N" {
-                            cols.push((&pv.name, pv.values.clone()));
-                        }
-                    }
-                    if !mesh.normals.is_empty() {
-                        cols.insert(1, ("N", mesh.normals.iter()
-                            .map(|n| vec![n[0], n[1], n[2]]).collect()));
-                    }
-                    draw_spreadsheet(ui, state, vertex_count, &cols);
-                }
-                PrimInspectorTab::Uniform => {
-                    let face_rows: Vec<Vec<f32>> = (0..face_count)
-                        .map(|f| {
-                            let base = f * 3;
-                            if base + 2 < mesh.indices.len() {
-                                vec![
-                                    mesh.indices[base]   as f32,
-                                    mesh.indices[base+1] as f32,
-                                    mesh.indices[base+2] as f32,
-                                ]
-                            } else { vec![] }
-                        })
-                        .collect();
-                    let mut cols: Vec<(&str, Vec<Vec<f32>>)> = vec![
-                        ("vtx[0]", face_rows.iter().map(|r| vec![*r.get(0).unwrap_or(&0.0)]).collect()),
-                        ("vtx[1]", face_rows.iter().map(|r| vec![*r.get(1).unwrap_or(&0.0)]).collect()),
-                        ("vtx[2]", face_rows.iter().map(|r| vec![*r.get(2).unwrap_or(&0.0)]).collect()),
-                    ];
-                    for pv in &uniform_vars {
-                        cols.push((&pv.name, pv.values.clone()));
-                    }
-                    draw_spreadsheet(ui, state, face_count, &cols);
-                }
-                PrimInspectorTab::FaceVarying => {
-                    let mut cols: Vec<(&str, Vec<Vec<f32>>)> = Vec::new();
-                    for pv in &fv_vars {
-                        cols.push((&pv.name, pv.values.clone()));
-                    }
-                    if cols.is_empty() {
-                        ui.add_space(12.0);
-                        ui.label(egui::RichText::new("No FaceVarying primvars.")
-                            .color(xsi::TEXT_DIM()));
-                    } else {
-                        draw_spreadsheet(ui, state, fv_count, &cols);
-                    }
-                }
-                PrimInspectorTab::Constant => {
-                    let mut cols: Vec<(&str, Vec<Vec<f32>>)> = Vec::new();
-                    for pv in &const_vars {
-                        cols.push((&pv.name, pv.values.clone()));
-                    }
-                    if cols.is_empty() {
-                        ui.add_space(12.0);
-                        ui.label(egui::RichText::new("No Constant primvars.")
-                            .color(xsi::TEXT_DIM()));
-                    } else {
-                        draw_spreadsheet(ui, state, const_vars.len(), &cols);
-                    }
-                }
+            // ── Spreadsheet ───────────────────────────────────────────────────
+            // The columns of the open tab are built once and kept until the
+            // mesh or the tab changes. Each frame only draws the visible rows.
+            let tab = state.active_tab.clone();
+            if !state.table_is_for(&tab) {
+                let (rows, cols) = build_table(&mesh, &tab);
+                state.set_table(tab.clone(), rows, cols);
             }
+            let (rows, cols) = state.take_table();
+            if cols.is_empty() {
+                ui.add_space(12.0);
+                let what = match tab {
+                    PrimInspectorTab::FaceVarying => "No FaceVarying primvars.",
+                    PrimInspectorTab::Constant    => "No Constant primvars.",
+                    _                             => "No data.",
+                };
+                ui.label(egui::RichText::new(what).color(xsi::TEXT_DIM()));
+            } else {
+                draw_spreadsheet(ui, state, rows, &cols);
+            }
+            state.put_table(rows, cols);
         });
+}
+
+/// Row count and columns of one tab.
+fn build_table(mesh: &MeshData, tab: &PrimInspectorTab) -> (usize, Vec<(String, Vec<Vec<f32>>)>) {
+    let vars = |interp: PrimVarInterp| mesh.primvars.iter().filter(move |p| p.interp == interp);
+    match tab {
+        PrimInspectorTab::Vertex => {
+            let mut cols: Vec<(String, Vec<Vec<f32>>)> = vec![
+                ("P".into(), mesh.vertices.iter().map(|v| vec![v[0], v[1], v[2]]).collect()),
+            ];
+            if !mesh.normals.is_empty() {
+                cols.push(("N".into(), mesh.normals.iter().map(|n| vec![n[0], n[1], n[2]]).collect()));
+            }
+            for pv in vars(PrimVarInterp::Vertex) {
+                if pv.name != "N" { cols.push((pv.name.clone(), pv.values.clone())); }
+            }
+            (mesh.vertices.len(), cols)
+        }
+        PrimInspectorTab::Uniform => {
+            let face_count = mesh.num_faces();
+            let corner = |k: usize| -> Vec<Vec<f32>> {
+                (0..face_count).map(|f| vec![mesh.indices.get(f * 3 + k).copied().unwrap_or(0) as f32]).collect()
+            };
+            let mut cols = vec![("vtx[0]".to_string(), corner(0)), ("vtx[1]".to_string(), corner(1)), ("vtx[2]".to_string(), corner(2))];
+            for pv in vars(PrimVarInterp::Uniform) { cols.push((pv.name.clone(), pv.values.clone())); }
+            (face_count, cols)
+        }
+        PrimInspectorTab::FaceVarying => (
+            mesh.num_face_varying(),
+            vars(PrimVarInterp::FaceVarying).map(|pv| (pv.name.clone(), pv.values.clone())).collect(),
+        ),
+        PrimInspectorTab::Constant => {
+            let cols: Vec<_> = vars(PrimVarInterp::Constant).map(|pv| (pv.name.clone(), pv.values.clone())).collect();
+            (cols.len(), cols)
+        }
+    }
 }
 
 // ── Tab button ────────────────────────────────────────────────────────────────
@@ -217,7 +188,7 @@ fn draw_spreadsheet(
     ui:        &mut egui::Ui,
     state:     &mut PrimInspectorState,
     row_count: usize,
-    cols:      &[(&str, Vec<Vec<f32>>)],
+    cols:      &[(String, Vec<Vec<f32>>)],
 ) {
     if row_count == 0 || cols.is_empty() {
         ui.label(egui::RichText::new("No data.").color(xsi::TEXT_DIM()));

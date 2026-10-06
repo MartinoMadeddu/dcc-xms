@@ -15,6 +15,7 @@ mod graph_io;
 mod timeline;
 mod theme;
 mod modelling;
+mod layout;
 
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts, EguiPlugin};
@@ -33,6 +34,7 @@ use timeline::{Playback, TimelineState, resolve_source, ui::draw_timeline};
 use properties::ui::{AnimContext, PanelAction, PanelIo};
 use file_browser::{BrowseMode, BrowseTarget, FileBrowser};
 use batch::BatchState;
+use layout::{Layout, Pane};
 
 fn main() {
     App::new()
@@ -52,14 +54,17 @@ fn main() {
         .init_resource::<BatchState>()
         .init_resource::<GraphFile>()
         .init_resource::<modelling::PolyTool>()
+        .init_resource::<Layout>()
+        .init_resource::<node_graph::GraphRevision>()
         .init_resource::<viewport::nav::NavSettings>()
         .add_systems(Startup, (setup_scene, setup_egui_theme, setup_gizmos, modelling::setup_gizmos))
         .add_systems(Update, (
             dcc_ui,
-            update_operator_stack,
-            update_scene_hierarchy,
-            update_generated_meshes,
-            apply_viewport_rect,
+            track_revision.after(dcc_ui).after(modelling::pick_system),
+            update_operator_stack.after(track_revision),
+            update_scene_hierarchy.after(track_revision),
+            update_generated_meshes.after(track_revision),
+            apply_viewport_rect.after(dcc_ui),
             camera_controller,
             focus_camera,
             draw_origin_label,
@@ -91,9 +96,9 @@ fn dcc_ui(
     mut graph_file: ResMut<GraphFile>,
     mut poly_tool:  ResMut<modelling::PolyTool>,
     mut nav_settings: ResMut<viewport::nav::NavSettings>,
+    (mut layout, revision): (ResMut<Layout>, Res<node_graph::GraphRevision>),
     batch:          Res<BatchState>,
     time:           Res<Time>,
-    windows:        Query<&Window>,
 ) {
     let ctx = contexts.ctx_mut();
 
@@ -131,18 +136,9 @@ fn dcc_ui(
         }
     }
 
-    // ── Timeline (full width, bottom) ────────────────────────────────────────
     // Range, rate and timecode come from the clip of the selected node.
     let timeline_state = resolve_source(&graph);
     let keys_free      = !ctx.wants_keyboard_input() && !browser.is_open();
-    let timeline_resp  = egui::TopBottomPanel::bottom("timeline_panel")
-        .resizable(false)
-        .frame(egui::Frame::none())
-        .show(ctx, |ui| {
-            draw_timeline(ui, &mut playback, &timeline_state, time.delta_seconds_f64(), keys_free,
-                nav_settings.style != viewport::nav::NavStyle::Houdini);
-        });
-    let timeline_h_pts = timeline_resp.response.rect.height();
 
     // Clips around the selected node, for the properties panel.
     let selected_input = graph.selected_node
@@ -159,206 +155,46 @@ fn dcc_ui(
         input:  selected_input,
     };
 
-    let (win_w, win_h) = windows.get_single()
-        .map(|w| (w.physical_width() as f32, w.physical_height() as f32))
-        .unwrap_or((800.0, 600.0));
-    let scale          = ctx.pixels_per_point();
-    let win_w_pts      = win_w / scale;
-    let win_h_pts      = win_h / scale;
-    let mut used_right_pts = 0.0f32;
-
-    // ── Properties panel ─────────────────────────────────────────────────────
-    let props_resp = egui::SidePanel::right("properties_panel")
-        .resizable(true)
-        .default_width(260.0)
-        .min_width(180.0)
-        .show(ctx, |ui| {
-            // A panel takes the size of what is inside it. A scroll area that
-            // never shrinks keeps it at the size the user dragged it to:
-            // text wraps, anything still too wide or tall scrolls.
-            egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
-                let poly_input = graph.selected_node.and_then(|id| {
-                    let eval = |sid: SubnetId, mesh: &MeshData, template: Option<&MeshData>| -> MeshData {
-                        subnets.get(sid).map(|sg| sg.evaluate(mesh, template)).unwrap_or_else(|| mesh.clone())
-                    };
-                    let is_edit_poly = graph.nodes.iter()
-                        .any(|n| n.id == id && matches!(n.node_type, NodeType::EditPoly { .. }));
-                    if is_edit_poly { modelling::input_mesh(&graph, id, &eval) } else { None }
-                });
-                let mut tool = poly_tool.tool;
-                let mut io = PanelIo { browser: &mut *browser, batch: &*batch, action: None, poly_input, tool: &mut tool };
-                draw_properties_panel(ui, &mut graph, &*stack, &mut subnets, &nav, &anim_ctx, &mut io);
-                if let Some(PanelAction::Write { targets, all_files }) = io.action {
-                    batch::start(&batch, &graph, targets, all_files);
-                }
-                if tool != poly_tool.tool { poly_tool.tool = tool; }
-            });
+    // ── Panes ────────────────────────────────────────────────────────────────
+    // Every pane is a tab of one dock area: drag a tab to move it, stack it
+    // with another, or pull it out as a window.
+    vp_rect.0 = None;   // set again by the viewport pane if it is showing
+    let mut reset_layout = false;
+    {
+        let mut panes = Panes {
+            graph: &mut graph, stack: &mut stack, hierarchy: &mut hierarchy, subnets: &mut subnets,
+            nav: &mut nav, vp_rect: &mut vp_rect, prim_state: &mut prim_state, playback: &mut playback,
+            browser: &mut browser, graph_file: &mut graph_file, poly_tool: &mut poly_tool,
+            batch: &batch, anim_ctx: &anim_ctx, timeline_state: &timeline_state,
+            dt: time.delta_seconds_f64(), keys_free,
+            space_plays: nav_settings.style != viewport::nav::NavStyle::Houdini,
+            revision: revision.0, reset_layout: &mut reset_layout,
+        };
+        let mut style = egui_dock::Style::from_egui(ctx.style().as_ref());
+        style.tab_bar.fill_tab_bar = true;
+        egui::CentralPanel::default().frame(egui::Frame::none()).show(ctx, |ui| {
+            egui_dock::DockArea::new(&mut layout.dock)
+                .style(style)
+                .show_close_buttons(false)
+                .show_inside(ui, &mut panes);
         });
-    used_right_pts += props_resp.response.rect.width();
-
-    // ── Scene explorer + operator stack ──────────────────────────────────────
-    let scene_resp = egui::SidePanel::right("scene_panels")
-        .resizable(true)
-        .default_width(260.0)
-        .min_width(180.0)
-        .show(ctx, |ui| {
-            let total_height = ui.available_height();
-            let half = total_height / 2.0;
-            let width = ui.available_width();
-
-            let top_rect = egui::Rect::from_min_size(ui.cursor().min, egui::vec2(width, half));
-            ui.allocate_rect(top_rect, egui::Sense::hover());
-            let mut top_ui = ui.child_ui(top_rect, *ui.layout(), None);
-            draw_scene_explorer(&mut top_ui, &mut hierarchy, &mut graph);
-
-            ui.separator();
-
-            let bot_rect = egui::Rect::from_min_size(ui.cursor().min, egui::vec2(width, half));
-            ui.allocate_rect(bot_rect, egui::Sense::hover());
-            let mut bot_ui = ui.child_ui(bot_rect, *ui.layout(), None);
-            draw_operator_stack(&mut bot_ui, &mut stack, &mut graph);
-        });
-    used_right_pts += scene_resp.response.rect.width();
-
-    // ── Node graph (full height) ──────────────────────────────────────────────
-    let graph_resp = egui::SidePanel::right("node_graph_panel")
-        .resizable(true)
-        .default_width(680.0)
-        .min_width(400.0)
-        .show(ctx, |ui| {
-            match nav.current_subnet {
-                Some(sid) => {
-                    if let Some(sg) = subnets.get_mut(sid) {
-                        let subnet_name = sg.name.clone();
-                        ui.heading("Node Graph");
-                        if draw_breadcrumb(ui, &subnet_name) {
-                            nav.current_subnet = None;
-                        } else {
-                            ui.label("Right-click: add  |  Shift+drag: pan  |  Esc: cancel wire");
-                            ui.separator();
-                            // Canvas in its own child Ui: see the note below.
-                            let rect = ui.available_rect_before_wrap();
-                            let mut canvas = ui.child_ui(rect, *ui.layout(), None);
-                            draw_subnet_graph(&mut canvas, sg);
-                            ui.allocate_rect(rect, egui::Sense::hover());
-                        }
-                    } else {
-                        nav.current_subnet = None;
-                    }
-                }
-                None => {
-                    // Wraps when the panel is narrow, so the buttons never
-                    // push the panel wider than the user made it.
-                    ui.horizontal_wrapped(|ui| {
-                        ui.heading("Node Graph");
-                        ui.separator();
-                        if ui.button("📂 Open").on_hover_text("Load a saved graph").clicked() {
-                            browser.open(BrowseTarget::OpenGraph, BrowseMode::File, "Open graph", &["json"], "");
-                        }
-                        if ui.button("💾 Save").on_hover_text("Save this graph").clicked() {
-                            browser.open(BrowseTarget::SaveGraph, BrowseMode::Save, "Save graph", &["json"], "graph.json");
-                        }
-                        let label = if theme::is_dark() { "Light mode" } else { "Dark mode" };
-                        if ui.button(label).on_hover_text("Switch colour theme").clicked() {
-                            theme::set_dark(ui.ctx(), !theme::is_dark());
-                        }
-                        // Ready-made graphs. Picking one replaces the current graph.
-                        ui.menu_button("Templates", |ui| {
-                            if ui.button("Mocap split")
-                                .on_hover_text("Folder of takes, split per character, animation and skinned T-pose written per character")
-                                .clicked()
-                            {
-                                graph_io::mocap_split_template(&mut graph);
-                                graph_file.message = "Template loaded. Select the Takes node and choose a folder.".into();
-                                ui.close_menu();
-                            }
-                        });
-                    });
-                    if !graph_file.message.is_empty() {
-                        ui.label(egui::RichText::new(&graph_file.message).small());
-                    }
-                    ui.label("Right-click/Tab: add  |  Shift+drag: pan  |  Esc: cancel wire  |  Double-click subnet: dive in");
-                    ui.separator();
-
-                    // The canvas gets its own child Ui. Nodes are widgets placed
-                    // at arbitrary positions; drawn straight into the panel, a
-                    // node dragged or panned past the panel edge would stretch
-                    // the panel to contain it.
-                    let rect = ui.available_rect_before_wrap();
-                    let mut canvas = ui.child_ui(rect, *ui.layout(), None);
-                    let dive = draw_node_graph(&mut canvas, &mut graph);
-                    ui.allocate_rect(rect, egui::Sense::hover());
-
-                    for node in graph.nodes.iter_mut() {
-                        if let NodeType::Subnet { id, name } = &mut node.node_type {
-                            if *id == SubnetId(usize::MAX) {
-                                let new_id = subnets.create_subnet(name.clone());
-                                *id = new_id;
-                            }
-                        }
-                    }
-                    if let Some(sid) = dive {
-                        if sid != SubnetId(usize::MAX) {
-                            nav.current_subnet = Some(sid);
-                        }
-                    }
-                }
-            }
-        });
-    used_right_pts += graph_resp.response.rect.width();
-
-    // ── Primitive Inspector (bottom of viewport area) ─────────────────────────
-    // Must be added BEFORE the viewport rect is finalised so egui accounts for
-    // its height when we compute the remaining space.
-    let insp_resp = egui::TopBottomPanel::bottom("prim_inspector_panel")
-        .resizable(true)
-        .default_height(220.0)
-        .min_height(120.0)
-        // Constrain to the viewport column only (left of all right panels)
-        .show(ctx, |ui| {
-            // Same as the properties panel: keep the height the user set,
-            // whatever the amount of data shown.
-            egui::ScrollArea::both()
-                .id_source("prim_inspector_scroll")
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("Primitive Inspector")
-                    .strong()
-                    .color(egui::Color32::from_rgb(220, 220, 220)));
-            });
-            ui.separator();
-
-            let get_mesh = |g: &NodeGraphState| -> Option<MeshData> {
-                let id = g.selected_node?;
-                let mut cache = std::collections::HashMap::new();
-                let eval_subnet = |_sid: SubnetId, mesh: &MeshData, _template: Option<&MeshData>| mesh.clone();
-                g.eval_node(id, &mut cache, &eval_subnet)
-                 .map(|r| r.into_mesh())
-            };
-
-            draw_prim_inspector(ui, &graph, &mut prim_state, &get_mesh);
-                });
-        });
-    let insp_h_pts = insp_resp.response.rect.height();
-
-    // ── Viewport rect (remaining space after all panels) ──────────────────────
-    vp_rect.0 = Some(egui::Rect::from_min_max(
-        egui::pos2(0.0, 0.0),
-        egui::pos2(win_w_pts - used_right_pts, win_h_pts - insp_h_pts - timeline_h_pts),
-    ));
+    }
+    if reset_layout { layout.reset(); }
+    // Not while a button is down: a drag changes the layout on every frame.
+    if !ctx.input(|i| i.pointer.any_down()) { layout.save_if_changed(); }
 
     // ── File browser (on top of everything) ───────────────────────────────────
     browser.show(ctx);
 
     // ── Viewport navigation menu and help ─────────────────────────────────────
+    let Some(vp) = vp_rect.0 else { return };
     let before = *nav_settings;
     let mut chosen = before;
     // The key list is hidden until the question mark is clicked.
     let help_id = egui::Id::new("viewport_nav_help");
     let mut nav_help = ctx.data(|d| d.get_temp::<bool>(help_id)).unwrap_or(false);
     egui::Area::new("viewport_nav_menu".into())
-        .fixed_pos(egui::pos2(10.0, 8.0))
+        .fixed_pos(vp.min + egui::vec2(10.0, 8.0))
         .show(ctx, |ui| {
             egui::Frame::none()
                 .fill(theme::c(90, 90, 90).gamma_multiply(0.92))
@@ -388,7 +224,7 @@ fn dcc_ui(
     ctx.data_mut(|d| d.insert_temp(help_id, nav_help));
     if nav_help {
     egui::Area::new("viewport_label".into())
-        .fixed_pos(egui::pos2(10.0, 40.0))
+        .fixed_pos(vp.min + egui::vec2(10.0, 40.0))
         .interactable(false)
         .show(ctx, |ui| {
             egui::Frame::none()
@@ -408,6 +244,196 @@ fn dcc_ui(
     }
 }
 
+/// Everything the panes draw from, borrowed for one frame.
+struct Panes<'a> {
+    graph:          &'a mut NodeGraphState,
+    stack:          &'a mut OperatorStack,
+    hierarchy:      &'a mut SceneHierarchy,
+    subnets:        &'a mut SubnetStore,
+    nav:            &'a mut GraphNavigation,
+    vp_rect:        &'a mut ViewportRect,
+    prim_state:     &'a mut PrimInspectorState,
+    playback:       &'a mut Playback,
+    browser:        &'a mut FileBrowser,
+    graph_file:     &'a mut GraphFile,
+    poly_tool:      &'a mut modelling::PolyTool,
+    batch:          &'a BatchState,
+    anim_ctx:       &'a AnimContext,
+    timeline_state: &'a TimelineState,
+    dt:             f64,
+    keys_free:      bool,
+    space_plays:    bool,
+    revision:       u64,
+    reset_layout:   &'a mut bool,
+}
+
+impl egui_dock::TabViewer for Panes<'_> {
+    type Tab = Pane;
+
+    fn title(&mut self, tab: &mut Pane) -> egui::WidgetText { tab.title().into() }
+    fn closeable(&mut self, _tab: &mut Pane) -> bool { false }
+    // Panes scroll their own content where they need to.
+    fn scroll_bars(&self, _tab: &Pane) -> [bool; 2] { [false, false] }
+    // The 3D view is drawn by the camera behind the interface.
+    fn clear_background(&self, tab: &Pane) -> bool { *tab != Pane::Viewport }
+
+    fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Pane) {
+        match tab {
+            Pane::Viewport => {
+                self.vp_rect.0 = Some(ui.max_rect());
+            }
+
+            Pane::Timeline => {
+                draw_timeline(ui, self.playback, self.timeline_state, self.dt, self.keys_free, self.space_plays);
+            }
+
+            Pane::Properties => {
+                // A scroll area that never shrinks keeps the pane at the size
+                // it was given: text wraps, anything still too big scrolls.
+                egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
+                    let poly_input = self.graph.selected_node.and_then(|id| {
+                        let subnets = &*self.subnets;
+                        let eval = |sid: SubnetId, mesh: &MeshData, template: Option<&MeshData>| -> MeshData {
+                            subnets.get(sid).map(|sg| sg.evaluate(mesh, template)).unwrap_or_else(|| mesh.clone())
+                        };
+                        let is_edit_poly = self.graph.nodes.iter()
+                            .any(|n| n.id == id && matches!(n.node_type, NodeType::EditPoly { .. }));
+                        if is_edit_poly { modelling::input_mesh(self.graph, id, &eval) } else { None }
+                    });
+                    let mut tool = self.poly_tool.tool;
+                    let mut io = PanelIo { browser: self.browser, batch: self.batch, action: None, poly_input, tool: &mut tool };
+                    draw_properties_panel(ui, self.graph, &*self.stack, self.subnets, self.nav, self.anim_ctx, &mut io);
+                    if let Some(PanelAction::Write { targets, all_files }) = io.action {
+                        batch::start(self.batch, self.graph, targets, all_files);
+                    }
+                    if tool != self.poly_tool.tool { self.poly_tool.tool = tool; }
+                });
+            }
+
+            Pane::SceneExplorer => {
+                egui::ScrollArea::both().id_source("scene_explorer_scroll").auto_shrink([false, false])
+                    .show(ui, |ui| draw_scene_explorer(ui, self.hierarchy, self.graph));
+            }
+
+            Pane::OperatorStack => {
+                egui::ScrollArea::both().id_source("operator_stack_scroll").auto_shrink([false, false])
+                    .show(ui, |ui| draw_operator_stack(ui, self.stack, self.graph));
+            }
+
+            Pane::PrimInspector => {
+                let get_mesh = |g: &NodeGraphState| -> Option<MeshData> {
+                    let id = g.selected_node?;
+                    let mut cache = std::collections::HashMap::new();
+                    let eval_subnet = |_sid: SubnetId, mesh: &MeshData, _template: Option<&MeshData>| mesh.clone();
+                    g.eval_node(id, &mut cache, &eval_subnet).map(|r| r.into_mesh())
+                };
+                draw_prim_inspector(ui, self.graph, self.prim_state, self.revision, &get_mesh);
+            }
+
+            Pane::NodeGraph => match self.nav.current_subnet {
+                Some(sid) => {
+                    if let Some(sg) = self.subnets.get_mut(sid) {
+                        let subnet_name = sg.name.clone();
+                        if draw_breadcrumb(ui, &subnet_name) {
+                            self.nav.current_subnet = None;
+                        } else {
+                            ui.label("Right-click: add  |  Shift+drag: pan  |  Esc: cancel wire");
+                            ui.separator();
+                            // Canvas in its own child Ui: see the note below.
+                            let rect = ui.available_rect_before_wrap();
+                            let mut canvas = ui.child_ui(rect, *ui.layout(), None);
+                            canvas.set_clip_rect(rect.intersect(ui.clip_rect()));
+                            draw_subnet_graph(&mut canvas, sg);
+                            ui.allocate_rect(rect, egui::Sense::hover());
+                        }
+                    } else {
+                        self.nav.current_subnet = None;
+                    }
+                }
+                None => {
+                    // Wraps when the pane is narrow.
+                    ui.horizontal_wrapped(|ui| {
+                        if ui.button("📂 Open").on_hover_text("Load a saved graph").clicked() {
+                            self.browser.open(BrowseTarget::OpenGraph, BrowseMode::File, "Open graph", &["json"], "");
+                        }
+                        if ui.button("💾 Save").on_hover_text("Save this graph").clicked() {
+                            self.browser.open(BrowseTarget::SaveGraph, BrowseMode::Save, "Save graph", &["json"], "graph.json");
+                        }
+                        let label = if theme::is_dark() { "Light mode" } else { "Dark mode" };
+                        if ui.button(label).on_hover_text("Switch colour theme").clicked() {
+                            theme::set_dark(ui.ctx(), !theme::is_dark());
+                        }
+                        if ui.button("Reset layout").on_hover_text("Put every pane back where it started").clicked() {
+                            *self.reset_layout = true;
+                        }
+                        // Ready-made graphs. Picking one replaces the current graph.
+                        ui.menu_button("Templates", |ui| {
+                            if ui.button("Mocap split")
+                                .on_hover_text("Folder of takes, split per character, animation and skinned T-pose written per character")
+                                .clicked()
+                            {
+                                graph_io::mocap_split_template(self.graph);
+                                self.graph_file.message = "Template loaded. Select the Takes node and choose a folder.".into();
+                                ui.close_menu();
+                            }
+                        });
+                    });
+                    if !self.graph_file.message.is_empty() {
+                        ui.label(egui::RichText::new(&self.graph_file.message).small());
+                    }
+                    ui.label("Right-click/Tab: add  |  Shift+drag: pan  |  Esc: cancel wire  |  Double-click subnet: dive in");
+                    ui.separator();
+
+                    // The canvas gets its own child Ui. Nodes are widgets placed
+                    // at arbitrary positions; drawn straight into the pane, a
+                    // node dragged or panned past the edge would stretch it.
+                    let rect = ui.available_rect_before_wrap();
+                    let mut canvas = ui.child_ui(rect, *ui.layout(), None);
+                    canvas.set_clip_rect(rect.intersect(ui.clip_rect()));
+                    let dive = draw_node_graph(&mut canvas, self.graph);
+                    ui.allocate_rect(rect, egui::Sense::hover());
+
+                    for node in self.graph.nodes.iter_mut() {
+                        if let NodeType::Subnet { id, name } = &mut node.node_type {
+                            if *id == SubnetId(usize::MAX) {
+                                let new_id = self.subnets.create_subnet(name.clone());
+                                *id = new_id;
+                            }
+                        }
+                    }
+                    if let Some(sid) = dive {
+                        if sid != SubnetId(usize::MAX) {
+                            self.nav.current_subnet = Some(sid);
+                        }
+                    }
+                }
+            },
+        }
+    }
+}
+
+/// Bump the graph revision when the graph's content changed this frame.
+/// Cooking systems run after this and only when the revision moved.
+fn track_revision(
+    graph:        Res<NodeGraphState>,
+    nav:          Res<GraphNavigation>,
+    mouse:        Res<ButtonInput<MouseButton>>,
+    keys:         Res<ButtonInput<KeyCode>>,
+    mut revision: ResMut<node_graph::GraphRevision>,
+    mut last:     Local<Option<u64>>,
+) {
+    let hash = graph.content_hash();
+    // Subnet contents are not part of the hash. While one is open, any
+    // click or key press counts as a change.
+    let in_subnet = nav.current_subnet.is_some()
+        && (mouse.get_pressed().next().is_some() || mouse.get_just_released().next().is_some()
+            || keys.get_just_pressed().next().is_some());
+    if *last != Some(hash) || in_subnet {
+        *last = Some(hash);
+        revision.0 = revision.0.wrapping_add(1);
+    }
+}
+
 /// Feedback line for graph open / save.
 #[derive(Resource, Default)]
 struct GraphFile {
@@ -418,9 +444,10 @@ struct GraphFile {
 
 fn update_operator_stack(
     graph:     Res<NodeGraphState>,
+    revision:  Res<node_graph::GraphRevision>,
     mut stack: ResMut<OperatorStack>,
 ) {
-    if graph.is_changed() {
+    if revision.is_changed() {
         stack.rebuild(&graph.nodes, &graph.connections);
         if let Some(sel) = graph.selected_node {
             stack.selected_entry = Some(sel);
@@ -431,9 +458,10 @@ fn update_operator_stack(
 fn update_scene_hierarchy(
     graph:         Res<NodeGraphState>,
     subnets:       Res<SubnetStore>,
+    revision:      Res<node_graph::GraphRevision>,
     mut hierarchy: ResMut<SceneHierarchy>,
 ) {
-    if !graph.is_changed() && !subnets.is_changed() { return; }
+    if !revision.is_changed() { return; }
 
     // Update the closure to accept template parameter
     let eval_subnet = |sid: SubnetId, mesh: &MeshData, template: Option<&MeshData>| -> MeshData {
@@ -455,8 +483,14 @@ fn update_generated_meshes(
     mut meshes:   ResMut<Assets<Mesh>>,
     mut mats:     ResMut<Assets<StandardMaterial>>,
     query:        Query<Entity, With<GeneratedMesh>>,
+    revision:     Res<node_graph::GraphRevision>,
+    mut shown:    Local<Option<(f64, bool)>>,
 ) {
-    if !graph.is_changed() && !subnets.is_changed() && !playback.is_changed() { return; }
+    // Cook again when the graph changed, the playhead moved or the theme
+    // switched; not when the camera moves.
+    let now = (playback.time, theme::is_dark());
+    if !revision.is_changed() && *shown == Some(now) { return; }
+    *shown = Some(now);
     for e in query.iter() { commands.entity(e).despawn(); }
 
     // Meshes bound to a skeleton, posed at the playhead.
@@ -592,15 +626,23 @@ fn apply_viewport_rect(
     windows:   Query<&Window>,
     mut cam_q: Query<&mut Camera, With<MainCamera>>,
 ) {
-    let Some(rect) = vp_rect.0 else { return };
+    let Ok(mut cam) = cam_q.get_single_mut() else { return };
+    // The viewport pane is hidden behind another tab: draw nothing.
+    let Some(rect) = vp_rect.0 else {
+        if cam.is_active { cam.is_active = false; }
+        return;
+    };
     let Ok(window) = windows.get_single() else { return };
     let scale = window.scale_factor();
-    let Ok(mut cam) = cam_q.get_single_mut() else { return };
+    let (win_w, win_h) = (window.physical_width(), window.physical_height());
+    if win_w < 2 || win_h < 2 { return; }
+    if !cam.is_active { cam.is_active = true; }
 
-    let x      = (rect.min.x * scale) as u32;
-    let y      = (rect.min.y * scale) as u32;
-    let width  = ((rect.width()  * scale) as u32).max(1);
-    let height = ((rect.height() * scale) as u32).max(1);
+    // Kept inside the window: a viewport that sticks out is an error for the renderer.
+    let x      = ((rect.min.x * scale).max(0.0) as u32).min(win_w - 1);
+    let y      = ((rect.min.y * scale).max(0.0) as u32).min(win_h - 1);
+    let width  = ((rect.width()  * scale) as u32).clamp(1, win_w - x);
+    let height = ((rect.height() * scale) as u32).clamp(1, win_h - y);
 
     cam.viewport = Some(bevy::render::camera::Viewport {
         physical_position: UVec2::new(x, y),

@@ -468,29 +468,48 @@ pub enum PrimInspectorTab {
 pub struct PrimInspectorState {
     pub active_tab:   PrimInspectorTab,
     pub row_offset:   usize,
-    
-    // ✅ NEW - Caching system
-    cached_mesh: Option<MeshData>,
+
+    // Mesh of the selected node, cooked once per graph revision.
+    cached_mesh:    Option<std::sync::Arc<MeshData>>,
     cached_node_id: Option<NodeId>,
-    graph_version: u64,  // Increments when graph changes
+    cached_rev:     Option<u64>,
+    // Columns of the open tab, built once per cached mesh.
+    table_tab:  Option<PrimInspectorTab>,
+    table_rows: usize,
+    table_cols: Vec<(String, Vec<Vec<f32>>)>,
 }
 
 impl PrimInspectorState {
-    /// Check if cache is valid for this node
-    pub fn is_cache_valid(&self, node_id: Option<NodeId>, graph_version: u64) -> bool {
-        self.cached_node_id == node_id && self.graph_version == graph_version
+    pub fn is_cache_valid(&self, node_id: Option<NodeId>, revision: u64) -> bool {
+        self.cached_node_id == node_id && self.cached_rev == Some(revision)
     }
 
-    /// Update cache
-    pub fn update_cache(&mut self, node_id: Option<NodeId>, mesh: MeshData, graph_version: u64) {
-        self.cached_mesh = Some(mesh);
+    pub fn update_cache(&mut self, node_id: Option<NodeId>, mesh: Option<MeshData>, revision: u64) {
+        self.cached_mesh    = mesh.map(std::sync::Arc::new);
         self.cached_node_id = node_id;
-        self.graph_version = graph_version;
+        self.cached_rev     = Some(revision);
+        self.table_tab      = None;
+        self.table_cols.clear();
     }
 
-    /// Get cached mesh if valid
-    pub fn get_cached_mesh(&self) -> Option<&MeshData> {
-        self.cached_mesh.as_ref()
+    pub fn cached_mesh(&self) -> Option<std::sync::Arc<MeshData>> { self.cached_mesh.clone() }
+
+    pub fn table_is_for(&self, tab: &PrimInspectorTab) -> bool { self.table_tab.as_ref() == Some(tab) }
+
+    pub fn set_table(&mut self, tab: PrimInspectorTab, rows: usize, cols: Vec<(String, Vec<Vec<f32>>)>) {
+        self.table_tab  = Some(tab);
+        self.table_rows = rows;
+        self.table_cols = cols;
+    }
+
+    /// Lend the table out for drawing; hand it back with `put_table`.
+    pub fn take_table(&mut self) -> (usize, Vec<(String, Vec<Vec<f32>>)>) {
+        (self.table_rows, std::mem::take(&mut self.table_cols))
+    }
+
+    pub fn put_table(&mut self, rows: usize, cols: Vec<(String, Vec<Vec<f32>>)>) {
+        self.table_rows = rows;
+        self.table_cols = cols;
     }
 
     /// Clear cache when tab changes

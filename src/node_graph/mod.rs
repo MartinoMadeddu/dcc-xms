@@ -93,7 +93,37 @@ impl Default for NodeGraphState {
     }
 }
 
+/// Counts changes to what the graph evaluates to or shows. Systems that
+/// cook the graph run when this changes, not on every frame.
+#[derive(bevy::prelude::Resource, Default)]
+pub struct GraphRevision(pub u64);
+
 impl NodeGraphState {
+    /// Hash of everything evaluation and display depend on: nodes with their
+    /// parameters, wires, the view flag and the selection. Node positions,
+    /// panning and drags in progress are left out.
+    pub fn content_hash(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        struct W(std::collections::hash_map::DefaultHasher);
+        impl std::io::Write for W {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> { self.0.write(buf); Ok(buf.len()) }
+            fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+        }
+        let mut w = W(Default::default());
+        for n in &self.nodes {
+            n.id.0.hash(&mut w.0);
+            n.name.hash(&mut w.0);
+            let _ = serde_json::to_writer(&mut w, &n.node_type);
+            for i in &n.inputs { i.connected_output.map(|(id, out)| (id.0, out)).hash(&mut w.0); }
+            n.outputs.len().hash(&mut w.0);
+        }
+        for c in &self.connections { (c.from_node.0, c.from_output, c.to_node.0, c.to_input).hash(&mut w.0); }
+        self.view_flag.map(|n| n.0).hash(&mut w.0);
+        self.selected_node.map(|n| n.0).hash(&mut w.0);
+        for n in &self.selected_nodes { n.0.hash(&mut w.0); }
+        w.0.finish()
+    }
+
     // ✅ Increment version whenever graph changes
     fn mark_dirty(&mut self) {
         self.graph_version = self.graph_version.wrapping_add(1);

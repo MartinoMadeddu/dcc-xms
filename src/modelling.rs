@@ -161,6 +161,7 @@ pub fn pick_system(
     keys:         Res<ButtonInput<KeyCode>>,
     mut contexts: EguiContexts,
     nav:          Res<crate::viewport::nav::NavSettings>,
+    vp_rect:      Res<crate::types::ViewportRect>,
     mut tool:     ResMut<PolyTool>,
     mut drag:     Local<Drag>,
 ) {
@@ -174,7 +175,7 @@ pub fn pick_system(
     let alt = nav.style.claims_left_button(crate::viewport::camera::held(&keys, &mouse));
     let ctrl = keys.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
     let free = cursor.map(|c| rect.contains(c)).unwrap_or(false)
-        && !alt && !ctx.is_pointer_over_area() && !ctx.wants_pointer_input();
+        && !alt && crate::viewport::pointer_in_viewport(ctx, vp_rect.0, cursor);
     let typing = ctx.wants_keyboard_input();
 
     if !typing && !ctrl && !alt {
