@@ -51,6 +51,32 @@ pub enum NodeType {
     CopyToPoints,
     Subnet       { id: SubnetId, name: String },
     Output,
+
+    // ── Animation ────────────────────────────────────────────────────────────
+    // Each of these outputs a whole clip. Time is not a parameter: the
+    // timeline samples the clip of the selected node.
+    LoadFbx      { path: String, take: u32 },
+    TestClip     { seconds: f32, fps_num: u32, fps_den: u32 },
+    RenameJoints { find: String, replace: String, strip_namespace: bool, prefix: String },
+    /// Frames removed from the head and the tail of the incoming clip.
+    TrimClip     { head: u32, tail: u32 },
+    Retime       { fps_num: u32, fps_den: u32, mode: RetimeMode },
+    SetTimecode  { hours: u32, minutes: u32, seconds: u32, frames: u32, drop_frame: bool },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RetimeMode {
+    /// Keep duration, interpolate new samples.
+    Resample,
+    /// Keep samples, relabel the rate (changes speed).
+    Reinterpret,
+}
+
+impl NodeType {
+    /// Nodes that create animation data with no input.
+    pub fn is_anim_generator(&self) -> bool {
+        matches!(self, NodeType::LoadFbx { .. } | NodeType::TestClip { .. })
+    }
 }
 
 pub fn node_type_icon(t: &NodeType) -> &'static str {
@@ -65,6 +91,12 @@ pub fn node_type_icon(t: &NodeType) -> &'static str {
         NodeType::CopyToPoints         => "❇",
         NodeType::Subnet { .. }        => "▣",
         NodeType::Output               => "▶",
+        NodeType::LoadFbx { .. }       => "🎬",
+        NodeType::TestClip { .. }      => "🚶",
+        NodeType::RenameJoints { .. }  => "✏",
+        NodeType::TrimClip { .. }      => "✂",
+        NodeType::Retime { .. }        => "⏱",
+        NodeType::SetTimecode { .. }   => "🕐",
     }
 }
 
@@ -80,6 +112,12 @@ pub fn node_type_label(t: &NodeType) -> &'static str {
         NodeType::CopyToPoints         => "Copy to Points",
         NodeType::Subnet { .. }        => "Subnet",
         NodeType::Output               => "Output",
+        NodeType::LoadFbx { .. }       => "Load FBX",
+        NodeType::TestClip { .. }      => "Test Clip",
+        NodeType::RenameJoints { .. }  => "Rename Joints",
+        NodeType::TrimClip { .. }      => "Trim Clip",
+        NodeType::Retime { .. }        => "Retime",
+        NodeType::SetTimecode { .. }   => "Set Timecode",
     }
 }
 
@@ -242,6 +280,8 @@ pub struct NamedMesh {
 pub enum EvalResult {
     Single(MeshData),
     Named(Vec<NamedMesh>),
+    /// Skeleton + clip. Shared, so passing it along the graph is cheap.
+    Anim(std::sync::Arc<crate::core::anim::AnimData>),
 }
 
 impl EvalResult {
@@ -252,7 +292,12 @@ impl EvalResult {
                 MeshData::default(),
                 |acc, m| crate::node_graph::nodes::merge(&acc, &m),
             ),
+            EvalResult::Anim(_) => MeshData::default(),
         }
+    }
+
+    pub fn as_anim(&self) -> Option<&std::sync::Arc<crate::core::anim::AnimData>> {
+        if let EvalResult::Anim(a) = self { Some(a) } else { None }
     }
 
     pub fn as_mesh(&self) -> MeshData {
@@ -390,6 +435,49 @@ pub fn rebuild(&mut self, entries: Vec<(NodeId, String, EvalResult)>) {
                         node_id,
                         prim_path:    None,
                     });
+                }
+
+                EvalResult::Anim(anim) => {
+                    // Skeleton: one row per joint, indented by hierarchy depth.
+                    let expanded = *expansions.get(&node_name).unwrap_or(&true);
+                    let id = self.next_id();
+                    self.objects.push(SceneObject {
+                        id,
+                        name:         node_name.clone(),
+                        icon:         "🎬",
+                        depth:        0,
+                        has_children: !anim.joints.is_empty(),
+                        expanded,
+                        node_id,
+                        prim_path:    None,
+                    });
+                    let depths = anim.joint_depths();
+                    let mut is_parent = vec![false; anim.joints.len()];
+                    for j in &anim.joints {
+                        if let Some(p) = j.parent { is_parent[p] = true; }
+                    }
+                    // Depth-first order so children sit under their parent.
+                    let mut kids: Vec<Vec<usize>> = vec![vec![]; anim.joints.len()];
+                    let mut todo: Vec<usize> = vec![];
+                    for (i, j) in anim.joints.iter().enumerate().rev() {
+                        match j.parent { Some(p) => kids[p].push(i), None => todo.push(i) }
+                    }
+                    while let Some(i) = todo.pop() {
+                        let name = anim.joints[i].name.clone();
+                        let exp  = *expansions.get(&name).unwrap_or(&true);
+                        let id   = self.next_id();
+                        self.objects.push(SceneObject {
+                            id,
+                            name,
+                            icon:         if is_parent[i] { "●" } else { "○" },
+                            depth:        depths[i] + 1,
+                            has_children: is_parent[i],
+                            expanded:     exp,
+                            node_id,
+                            prim_path:    None,
+                        });
+                        todo.extend(kids[i].iter().copied());
+                    }
                 }
 
                 EvalResult::Named(prims) => {

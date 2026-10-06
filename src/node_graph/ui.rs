@@ -1,6 +1,6 @@
 use bevy::prelude::Vec3;
 use bevy_egui::egui;
-use crate::types::{ConnectionId, NodeId, NodeType, SubnetId, node_type_icon};
+use crate::types::{ConnectionId, NodeId, NodeType, RetimeMode, SubnetId, node_type_icon};
 use super::{GraphNode, NodeGraphState};
 
 pub const NODE_WIDTH:  f32 = 180.0;
@@ -292,6 +292,7 @@ fn node_type_label(t: &NodeType) -> &'static str {
         NodeType::CopyToPoints         => "Copy to Points",
         NodeType::Subnet { .. }        => "Integrated Creation Engine",
         NodeType::Output               => "Output",
+        other                          => crate::types::node_type_label(other),
     }
 }
 
@@ -547,6 +548,31 @@ fn add_node_menu(ui: &mut egui::Ui, graph: &mut NodeGraphState, cp: egui::Pos2) 
     if ui.button("▣  ICE").clicked() {
         graph.add_node("ICE".into(), NodeType::Subnet {
             id: SubnetId(usize::MAX), name: "ICE".into() }, cp); added = true;
+    }
+    ui.separator();
+    ui.label(egui::RichText::new("Animation").strong());
+    if ui.button("🎬  Load FBX").clicked() {
+        graph.add_node("LoadFBX".into(), NodeType::LoadFbx { path: String::new(), take: 0 }, cp); added = true;
+    }
+    if ui.button("🚶  Test Clip").clicked() {
+        graph.add_node("TestClip".into(), NodeType::TestClip {
+            seconds: 4.0, fps_num: 30, fps_den: 1 }, cp); added = true;
+    }
+    if ui.button("✏  Rename Joints").clicked() {
+        graph.add_node("Rename".into(), NodeType::RenameJoints {
+            find: String::new(), replace: String::new(),
+            strip_namespace: true, prefix: String::new() }, cp); added = true;
+    }
+    if ui.button("✂  Trim Clip").clicked() {
+        graph.add_node("Trim".into(), NodeType::TrimClip { head: 0, tail: 0 }, cp); added = true;
+    }
+    if ui.button("⏱  Retime").clicked() {
+        graph.add_node("Retime".into(), NodeType::Retime {
+            fps_num: 30, fps_den: 1, mode: RetimeMode::Resample }, cp); added = true;
+    }
+    if ui.button("🕐  Set Timecode").clicked() {
+        graph.add_node("SetTimecode".into(), NodeType::SetTimecode {
+            hours: 1, minutes: 0, seconds: 0, frames: 0, drop_frame: false }, cp); added = true;
     }
     if added { ui.close_menu(); }
     added

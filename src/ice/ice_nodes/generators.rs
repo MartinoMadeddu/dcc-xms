@@ -236,7 +236,7 @@ impl LcgRng {
 }
 
 #[cfg(test)]
-mod tests {
+mod scatter_tests {
     use super::*;
     use crate::core::Geometry;
 

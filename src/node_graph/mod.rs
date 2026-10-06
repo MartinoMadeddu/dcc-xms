@@ -119,6 +119,12 @@ impl NodeGraphState {
             NodeType::CopyToPoints          => (vec![i("Template"), i("Points")], vec![o("Geo")]),
             NodeType::Output                => (vec![i("Scene")], vec![]),
             NodeType::Subnet { .. }         => (vec![i("Geometry"), i("Template")], vec![o("Out")]),
+            NodeType::LoadFbx { .. }
+            | NodeType::TestClip { .. }     => (vec![], vec![o("Clip")]),
+            NodeType::RenameJoints { .. }
+            | NodeType::TrimClip { .. }
+            | NodeType::Retime { .. }
+            | NodeType::SetTimecode { .. }  => (vec![i("Clip")], vec![o("Clip")]),
         }
     }
 
@@ -254,6 +260,50 @@ impl NodeGraphState {
             .map(|r| r.into_mesh())
     }
 
+    /// The node the viewport displays, resolved through Output to its source.
+    pub fn display_source(&self) -> Option<NodeId> {
+        let id   = self.get_viewport_node()?;
+        let node = self.nodes.iter().find(|n| n.id == id)?;
+        if matches!(node.node_type, NodeType::Output) {
+            node.inputs.first()?.connected_output.map(|(src, _)| src)
+        } else {
+            Some(id)
+        }
+    }
+
+    /// Clip produced by one node, if it produces animation. Clip operators
+    /// never go through subnets, so no subnet evaluator is needed.
+    pub fn eval_anim(&self, id: NodeId) -> Option<std::sync::Arc<crate::core::anim::AnimData>> {
+        let passthrough = |_: SubnetId, mesh: &MeshData, _: Option<&MeshData>| mesh.clone();
+        let mut cache = HashMap::new();
+        match self.eval_anim_node(id, &mut cache, &passthrough)? {
+            EvalResult::Anim(a) => Some(a),
+            _ => None,
+        }
+    }
+
+    /// Like `eval_node`, but stops as soon as a branch is known not to be
+    /// animation, so asking a mesh node for its clip does not cook the mesh.
+    fn eval_anim_node(
+        &self,
+        id:          NodeId,
+        cache:       &mut HashMap<NodeId, Option<EvalResult>>,
+        eval_subnet: &impl Fn(SubnetId, &MeshData, Option<&MeshData>) -> MeshData,
+    ) -> Option<EvalResult> {
+        let node = self.nodes.iter().find(|n| n.id == id)?;
+        match &node.node_type {
+            NodeType::LoadFbx { .. } | NodeType::TestClip { .. }
+            | NodeType::RenameJoints { .. } | NodeType::TrimClip { .. }
+            | NodeType::Retime { .. } | NodeType::SetTimecode { .. } =>
+                self.eval_node(id, cache, eval_subnet),
+            NodeType::Output => {
+                let (src, _) = node.inputs.first()?.connected_output?;
+                self.eval_anim_node(src, cache, eval_subnet)
+            }
+            _ => None,
+        }
+    }
+
     // Recursive bottom-up evaluator — follows the full chain.
     pub fn eval_node(
         &self,
@@ -293,6 +343,21 @@ impl NodeGraphState {
             if let Some(inp) = root.inputs.first() {
                 if let Some((src, _)) = inp.connected_output {
                     self.walk_for_scene(src, &mut cache, eval_subnet, &mut out, &mut visited);
+                }
+            }
+        }
+
+        // Animation: show the skeleton that reaches Output, after every
+        // operator, so renames are visible in the explorer.
+        if let Some(src) = self.nodes.iter()
+            .find(|n| matches!(n.node_type, NodeType::Output))
+            .and_then(|n| n.inputs.first())
+            .and_then(|i| i.connected_output)
+            .map(|(src, _)| src)
+        {
+            if let Some(Some(r @ EvalResult::Anim(_))) = cache.get(&src) {
+                if let Some(n) = self.nodes.iter().find(|n| n.id == src) {
+                    out.push((n.id, n.name.clone(), r.clone()));
                 }
             }
         }
