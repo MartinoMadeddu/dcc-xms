@@ -52,6 +52,7 @@ fn main() {
         .init_resource::<BatchState>()
         .init_resource::<GraphFile>()
         .init_resource::<modelling::PolyTool>()
+        .init_resource::<viewport::nav::NavSettings>()
         .add_systems(Startup, (setup_scene, setup_egui_theme, setup_gizmos, modelling::setup_gizmos))
         .add_systems(Update, (
             dcc_ui,
@@ -89,6 +90,7 @@ fn dcc_ui(
     mut browser:    ResMut<FileBrowser>,
     mut graph_file: ResMut<GraphFile>,
     mut poly_tool:  ResMut<modelling::PolyTool>,
+    mut nav_settings: ResMut<viewport::nav::NavSettings>,
     batch:          Res<BatchState>,
     time:           Res<Time>,
     windows:        Query<&Window>,
@@ -137,7 +139,8 @@ fn dcc_ui(
         .resizable(false)
         .frame(egui::Frame::none())
         .show(ctx, |ui| {
-            draw_timeline(ui, &mut playback, &timeline_state, time.delta_seconds_f64(), keys_free);
+            draw_timeline(ui, &mut playback, &timeline_state, time.delta_seconds_f64(), keys_free,
+                nav_settings.style != viewport::nav::NavStyle::Houdini);
         });
     let timeline_h_pts = timeline_resp.response.rect.height();
 
@@ -348,9 +351,34 @@ fn dcc_ui(
     // ── File browser (on top of everything) ───────────────────────────────────
     browser.show(ctx);
 
-    // ── Viewport overlay label ────────────────────────────────────────────────
+    // ── Viewport navigation menu and help ─────────────────────────────────────
+    let before = *nav_settings;
+    let mut chosen = before;
+    egui::Area::new("viewport_nav_menu".into())
+        .fixed_pos(egui::pos2(10.0, 8.0))
+        .show(ctx, |ui| {
+            egui::Frame::none()
+                .fill(theme::c(90, 90, 90).gamma_multiply(0.92))
+                .stroke(egui::Stroke::new(1.0_f32, theme::c(70, 70, 70)))
+                .rounding(4.0)
+                .inner_margin(3.0)
+                .show(ui, |ui| {
+                    ui.menu_button(format!("Navigation: {} ⏷", chosen.style.label()), |ui| {
+                        for style in viewport::nav::NavStyle::ALL {
+                            if ui.radio_value(&mut chosen.style, style, style.label()).clicked() { ui.close_menu(); }
+                        }
+                        ui.separator();
+                        ui.checkbox(&mut chosen.invert_zoom, "Invert zoom drag");
+                    });
+                });
+        });
+    if chosen != before {
+        *nav_settings = chosen;
+        chosen.save();
+    }
+
     egui::Area::new("viewport_label".into())
-        .fixed_pos(egui::pos2(10.0, 10.0))
+        .fixed_pos(egui::pos2(10.0, 40.0))
         .interactable(false)
         .show(ctx, |ui| {
             egui::Frame::none()
@@ -359,18 +387,9 @@ fn dcc_ui(
                 .rounding(6.0)
                 .inner_margin(8.0)
                 .show(ui, |ui| {
-                    ui.label(egui::RichText::new("🎥 VIEWPORT")
-                        .strong()
-                        .color(egui::Color32::from_rgb(220, 220, 220)));
-                    ui.separator();
-                    for line in &[
-                        "Alt/Cmd + LMB: orbit",
-                        "Alt/Cmd + MMB: pan",
-                        "Alt/Cmd + RMB: zoom",
-                        "Scroll: zoom",
-                        "F: focus",
-                        "Space: play  |  Left/Right: step",
-                    ] {
+                    let play = if chosen.style == viewport::nav::NavStyle::Houdini { "Tap Space: play  |  Left/Right: step" } else { "Space: play  |  Left/Right: step" };
+                    let nav_lines = chosen.style.help();
+                    for line in nav_lines.iter().chain(["Scroll: zoom", "F: focus", play].iter()) {
                         ui.label(egui::RichText::new(*line)
                             .color(egui::Color32::from_rgb(190, 190, 190)));
                     }

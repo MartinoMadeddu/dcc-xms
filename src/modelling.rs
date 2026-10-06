@@ -160,6 +160,7 @@ pub fn pick_system(
     mouse:        Res<ButtonInput<MouseButton>>,
     keys:         Res<ButtonInput<KeyCode>>,
     mut contexts: EguiContexts,
+    nav:          Res<crate::viewport::nav::NavSettings>,
     mut tool:     ResMut<PolyTool>,
     mut drag:     Local<Drag>,
 ) {
@@ -169,7 +170,8 @@ pub fn pick_system(
     let cursor = window.cursor_position();
     let ctx = contexts.ctx_mut();
 
-    let alt = keys.any_pressed([KeyCode::AltLeft, KeyCode::AltRight, KeyCode::SuperLeft, KeyCode::SuperRight]);
+    // Keys that hand the left button to the camera in the current navigation style.
+    let alt = nav.style.claims_left_button(crate::viewport::camera::held(&keys, &mouse));
     let ctrl = keys.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
     let free = cursor.map(|c| rect.contains(c)).unwrap_or(false)
         && !alt && !ctx.is_pointer_over_area() && !ctx.wants_pointer_input();

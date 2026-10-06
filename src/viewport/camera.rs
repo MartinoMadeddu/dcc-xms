@@ -1,58 +1,110 @@
 use bevy::prelude::*;
 use bevy_egui::EguiContexts;
-use crate::types::{MainCamera, GeneratedMesh};
+use crate::types::{MainCamera, GeneratedMesh, ViewportRect};
+use super::nav::{Held, NavAction, NavSettings, NavStyle};
 
 #[derive(Resource, Default)]
 pub struct CameraOrbitState {
     pub target: Vec3,
 }
 
+/// Keys and buttons as the navigation styles see them.
+pub fn held(keys: &ButtonInput<KeyCode>, mouse: &ButtonInput<MouseButton>) -> Held {
+    Held {
+        alt:   keys.any_pressed([KeyCode::AltLeft, KeyCode::AltRight, KeyCode::SuperLeft, KeyCode::SuperRight]),
+        shift: keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]),
+        ctrl:  keys.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]),
+        space: keys.pressed(KeyCode::Space),
+        s:     keys.pressed(KeyCode::KeyS),
+        lmb:   mouse.pressed(MouseButton::Left),
+        mmb:   mouse.pressed(MouseButton::Middle),
+        rmb:   mouse.pressed(MouseButton::Right),
+    }
+}
+
+/// State of the camera drag between frames.
+#[derive(Default)]
+pub struct NavDrag {
+    /// The drag began inside the viewport.
+    active:     bool,
+    /// Space was used to navigate since it went down (Houdini style).
+    space_used: bool,
+}
+
+/// Orbit, pan and zoom, with the keys of the chosen navigation style.
 pub fn camera_controller(
     mouse_btn:        Res<ButtonInput<MouseButton>>,
     mut mouse_motion: EventReader<bevy::input::mouse::MouseMotion>,
     mut mouse_wheel:  EventReader<bevy::input::mouse::MouseWheel>,
     keyboard:         Res<ButtonInput<KeyCode>>,
+    nav:              Res<NavSettings>,
+    vp_rect:          Res<ViewportRect>,
+    windows:          Query<&Window>,
     mut cam_q:        Query<&mut Transform, With<MainCamera>>,
     mut orbit:        ResMut<CameraOrbitState>,
+    mut playback:     ResMut<crate::timeline::Playback>,
     mut contexts:     EguiContexts,
+    mut drag:         Local<NavDrag>,
 ) {
-    if contexts.ctx_mut().wants_pointer_input() {
-        mouse_motion.clear(); mouse_wheel.clear(); return;
+    let ctx = contexts.ctx_mut();
+    let typing = ctx.wants_keyboard_input();
+    let mut h = held(&keyboard, &mouse_btn);
+    if typing { h.space = false; h.s = false; }
+
+    // Houdini style: Space navigates while held, and plays on a tap.
+    if nav.style == NavStyle::Houdini && !typing {
+        if keyboard.just_pressed(KeyCode::Space) { drag.space_used = false; }
+        if h.space && (h.lmb || h.mmb || h.rmb) { drag.space_used = true; }
+        if keyboard.just_released(KeyCode::Space) && !drag.space_used { playback.playing = !playback.playing; }
     }
-    let alt = keyboard.pressed(KeyCode::AltLeft)   || keyboard.pressed(KeyCode::AltRight)
-           || keyboard.pressed(KeyCode::SuperLeft)  || keyboard.pressed(KeyCode::SuperRight);
-    if !alt { mouse_motion.clear(); mouse_wheel.clear(); return; }
+
+    let in_viewport = windows.get_single().ok()
+        .and_then(|w| w.cursor_position())
+        .zip(vp_rect.0)
+        .map(|(c, r)| r.contains(bevy_egui::egui::pos2(c.x, c.y)))
+        .unwrap_or(false)
+        && !ctx.is_pointer_over_area();
+
+    // A drag belongs to the camera only if it began in the viewport.
+    if mouse_btn.get_just_pressed().next().is_some() && !(h.lmb && h.mmb && drag.active) {
+        drag.active = in_viewport && !ctx.wants_pointer_input();
+    }
+    if !(h.lmb || h.mmb || h.rmb) { drag.active = false; }
+
+    let action = if drag.active { nav.style.action(h) } else { None };
+    let delta: Vec2 = mouse_motion.read().map(|ev| ev.delta).sum();
+    let wheel: f32 = mouse_wheel.read().map(|ev| ev.y).sum();
 
     for mut t in cam_q.iter_mut() {
-        if mouse_btn.pressed(MouseButton::Left) {
-            for ev in mouse_motion.read() {
+        match action {
+            Some(NavAction::Orbit) => {
                 let off   = t.translation - orbit.target;
-                let yaw   = Quat::from_rotation_y(-ev.delta.x * 0.01);
+                let yaw   = Quat::from_rotation_y(-delta.x * 0.01);
                 let right = *t.right();
-                let pitch = Quat::from_axis_angle(right, -ev.delta.y * 0.01);
+                let pitch = Quat::from_axis_angle(right, -delta.y * 0.01);
                 t.translation = orbit.target + pitch * (yaw * off);
                 t.look_at(orbit.target, Vec3::Y);
             }
-        }
-        if mouse_btn.pressed(MouseButton::Middle) {
-            for ev in mouse_motion.read() {
-                let d = *t.right() * -ev.delta.x * 0.01
-                      + *t.up()    *  ev.delta.y * 0.01;
+            Some(NavAction::Pan) => {
+                // Speed follows the distance, so the scene tracks the cursor.
+                let k = (t.translation.distance(orbit.target) * 0.0015).max(0.0005) * nav.style.pan_sign();
+                let d = *t.right() * -delta.x * k + *t.up() * delta.y * k;
                 t.translation += d;
                 orbit.target  += d;
             }
+            Some(NavAction::Zoom) => zoom(&mut t, orbit.target, nav.zoom(delta) * 0.01),
+            None => {}
         }
-        if mouse_btn.pressed(MouseButton::Right) {
-            for ev in mouse_motion.read() {
-                let fwd = *t.forward();
-                t.translation += fwd * ev.delta.y * 0.02;
-            }
-        }
-        for ev in mouse_wheel.read() {
-            let dir = (orbit.target - t.translation).normalize();
-            t.translation += dir * ev.y * 0.5;
-        }
+        if wheel != 0.0 && in_viewport { zoom(&mut t, orbit.target, wheel * 0.12); }
     }
+}
+
+/// Move towards the orbit target by a fraction of the distance to it, so
+/// zooming slows down close up and never passes through the target.
+fn zoom(t: &mut Transform, target: Vec3, amount: f32) {
+    let off = t.translation - target;
+    let dist = (off.length() * (-amount).exp()).clamp(0.02, 1.0e5);
+    t.translation = target + off.normalize_or_zero() * dist;
 }
 
 pub fn focus_camera(

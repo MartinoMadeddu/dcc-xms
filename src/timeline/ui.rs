@@ -38,10 +38,12 @@ pub fn draw_timeline(
     state: &TimelineState,
     dt:    f64,
     keys:  bool,
+    // False when the navigation style uses Space itself.
+    space_plays: bool,
 ) {
     egui::Frame::none().fill(xsi::PANEL_BG()).inner_margin(6.0).show(ui, |ui| {
         match state {
-            TimelineState::Source(src) => draw_source(ui, pb, src, dt, keys),
+            TimelineState::Source(src) => draw_source(ui, pb, src, dt, keys, space_plays),
             TimelineState::NoTimeData { node_name } => {
                 pb.playing = false;
                 draw_empty(ui, &format!("\"{node_name}\" has no time data. Select a node that outputs a clip."));
@@ -65,7 +67,7 @@ fn draw_empty(ui: &mut egui::Ui, msg: &str) {
     ui.painter().rect_filled(rect, 3.0, xsi::TRACK_BG());
 }
 
-fn draw_source(ui: &mut egui::Ui, pb: &mut Playback, src: &TimelineSource, dt: f64, keys: bool) {
+fn draw_source(ui: &mut egui::Ui, pb: &mut Playback, src: &TimelineSource, dt: f64, keys: bool, space_plays: bool) {
     let clip = &src.clip;
     let fps  = clip.rate.fps();
 
@@ -116,7 +118,7 @@ fn draw_source(ui: &mut egui::Ui, pb: &mut Playback, src: &TimelineSource, dt: f
     // ── Keys ─────────────────────────────────────────────────────────────────
     if keys {
         let (space, left, right, home, end) = ui.input(|i| (
-            i.key_pressed(egui::Key::Space),
+            space_plays && i.key_pressed(egui::Key::Space),
             i.key_pressed(egui::Key::ArrowLeft),
             i.key_pressed(egui::Key::ArrowRight),
             i.key_pressed(egui::Key::Home),
