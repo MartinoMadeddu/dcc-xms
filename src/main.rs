@@ -354,6 +354,9 @@ fn dcc_ui(
     // ── Viewport navigation menu and help ─────────────────────────────────────
     let before = *nav_settings;
     let mut chosen = before;
+    // The key list is hidden until the question mark is clicked.
+    let help_id = egui::Id::new("viewport_nav_help");
+    let mut nav_help = ctx.data(|d| d.get_temp::<bool>(help_id)).unwrap_or(false);
     egui::Area::new("viewport_nav_menu".into())
         .fixed_pos(egui::pos2(10.0, 8.0))
         .show(ctx, |ui| {
@@ -363,12 +366,17 @@ fn dcc_ui(
                 .rounding(4.0)
                 .inner_margin(3.0)
                 .show(ui, |ui| {
-                    ui.menu_button(format!("Navigation: {} ⏷", chosen.style.label()), |ui| {
-                        for style in viewport::nav::NavStyle::ALL {
-                            if ui.radio_value(&mut chosen.style, style, style.label()).clicked() { ui.close_menu(); }
+                    ui.horizontal(|ui| {
+                        ui.menu_button(format!("Navigation: {} ⏷", chosen.style.label()), |ui| {
+                            for style in viewport::nav::NavStyle::ALL {
+                                if ui.radio_value(&mut chosen.style, style, style.label()).clicked() { ui.close_menu(); }
+                            }
+                            ui.separator();
+                            ui.checkbox(&mut chosen.invert_zoom, "Invert zoom drag");
+                        });
+                        if ui.selectable_label(nav_help, "?").on_hover_text("Show the navigation keys").clicked() {
+                            nav_help = !nav_help;
                         }
-                        ui.separator();
-                        ui.checkbox(&mut chosen.invert_zoom, "Invert zoom drag");
                     });
                 });
         });
@@ -377,6 +385,8 @@ fn dcc_ui(
         chosen.save();
     }
 
+    ctx.data_mut(|d| d.insert_temp(help_id, nav_help));
+    if nav_help {
     egui::Area::new("viewport_label".into())
         .fixed_pos(egui::pos2(10.0, 40.0))
         .interactable(false)
@@ -395,6 +405,7 @@ fn dcc_ui(
                     }
                 });
         });
+    }
 }
 
 /// Feedback line for graph open / save.

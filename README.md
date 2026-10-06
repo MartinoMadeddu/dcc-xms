@@ -42,11 +42,11 @@ Modelling
 ![Edit Poly node: collapsed and live operations, move manipulator on the selected polygons](docs/xms_edit_poly.png)
 
 Viewport
-- Navigation menu at the top of the viewport with seven styles: Maya (default), Houdini, XSI, Blender, Max, Modo, Unreal. The choice is kept between sessions
+- Navigation menu at the top of the viewport with seven styles: Maya (default), Houdini, XSI, Blender, Max, Modo, Unreal. The choice is kept between sessions. The question mark next to it lists the keys
 - Navigation follows the cursor position, so it works through remote desktops and mouse sharing tools
 
 Interface
-- Dark mode
+- Light theme by default, dark mode on a button
 - Animation and mocap nodes sit in their own "Animation & Mocap" sub-menu of the add-node menu
 - Panels keep the size they are dragged to, whatever they contain
 

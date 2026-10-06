@@ -1,6 +1,6 @@
 # Viewport navigation
 
-The menu at the top left of the viewport chooses the navigation style. The choice is kept between sessions. The box under the menu lists the keys of the current style.
+The menu at the top left of the viewport chooses the navigation style. The choice is kept between sessions. The question mark next to the menu shows or hides the keys of the current style.
 
 | Style | Orbit | Pan | Zoom drag | Zoom in |
 |---|---|---|---|---|
