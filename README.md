@@ -1,10 +1,10 @@
-# dcc-xms, mocap fork
+# dcc-xms, mocap and modelling fork
 
 Fork of [MartinoMadeddu/dcc-xms](https://github.com/MartinoMadeddu/dcc-xms).
 
 ## Why this fork
 
-To extend XMS into a mocap ingestion and cleanup tool: FBX import, a viewport, frame rate and timecode handling, renaming and trimming.
+To extend XMS into a mocap ingestion and cleanup tool: FBX import, a viewport, frame rate and timecode handling, renaming and trimming. Polygon modelling is being added alongside it.
 
 Animation is added as nodes, following the node design of the original project. The timeline has no range of its own: it adapts to the data in the selected node.
 
@@ -32,13 +32,29 @@ Batch and export
 - File browser on every path field, reopening in the last folder visited
 - Graph open and save as JSON
 
+Modelling
+- Edit Poly: one node holding an ordered list of polygon operations, each with its own selection, modelled on the Edit Poly modifier of 3ds Max
+- Selection levels: vertex, edge, border, polygon, element. Picked in the viewport (click, box, Ctrl adds, Shift removes) or by rule (all, by normal, in box), with grow, shrink, invert, loop and ring
+- Operations: extrude, bevel, inset, bridge, flip, detach, tessellate, connect, remove, cap, weld, collapse, break, delete, transform, make planar, relax, subdivide
+- Move, rotate and scale manipulators in the viewport (Q, W, E, R). Each drag is stored as a Transform operation
+- Collapsing: operations stay live until collapsed one by one or all at once, or auto-collapse freezes earlier operations whenever one is added. Collapsed operations still replay when the incoming mesh changes
+
+![Edit Poly node: collapsed and live operations, move manipulator on the selected polygons](docs/xms_edit_poly.png)
+
+Viewport
+- Navigation menu at the top of the viewport with seven styles: Maya (default), Houdini, XSI, Blender, Max, Modo, Unreal. The choice is kept between sessions
+- Navigation follows the cursor position, so it works through remote desktops and mouse sharing tools
+
 Interface
+- Dark mode
 - Animation and mocap nodes sit in their own "Animation & Mocap" sub-menu of the add-node menu
 - Panels keep the size they are dragged to, whatever they contain
 
 ## Not done yet
 
 - Undo
+- Edit Poly: chamfer, cut and slice, hinge, soft selection, smoothing groups, material IDs, attach
+- Navigation styles and Edit Poly viewport interaction have not been tested by hand with a mouse
 - Meshes and skinning read from FBX
 - Timeline zoom and pan
 - Curve cleanup
