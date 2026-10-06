@@ -29,12 +29,14 @@ pub struct NavDrag {
     active:     bool,
     /// Space was used to navigate since it went down (Houdini style).
     space_used: bool,
+    /// Cursor position at the end of the last frame, in window pixels.
+    last:       Option<Vec2>,
 }
 
 /// Orbit, pan and zoom, with the keys of the chosen navigation style.
 pub fn camera_controller(
     mouse_btn:        Res<ButtonInput<MouseButton>>,
-    mut mouse_motion: EventReader<bevy::input::mouse::MouseMotion>,
+    mut cursor_moved: EventReader<CursorMoved>,
     mut mouse_wheel:  EventReader<bevy::input::mouse::MouseWheel>,
     keyboard:         Res<ButtonInput<KeyCode>>,
     nav:              Res<NavSettings>,
@@ -72,7 +74,16 @@ pub fn camera_controller(
     if !(h.lmb || h.mmb || h.rmb) { drag.active = false; }
 
     let action = if drag.active { nav.style.action(h) } else { None };
-    let delta: Vec2 = mouse_motion.read().map(|ev| ev.delta).sum();
+    // Movement is measured from the cursor position, not from raw device
+    // motion: remote desktops and mouse sharing tools move the cursor
+    // without sending usable device motion.
+    let mut delta = Vec2::ZERO;
+    for ev in cursor_moved.read() {
+        if let Some(last) = drag.last { delta += ev.position - last; }
+        drag.last = Some(ev.position);
+    }
+    // A jump of this size is the cursor being placed, not dragged.
+    if delta.length() > 400.0 { delta = Vec2::ZERO; }
     let wheel: f32 = mouse_wheel.read().map(|ev| ev.y).sum();
 
     for mut t in cam_q.iter_mut() {
