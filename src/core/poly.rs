@@ -1026,6 +1026,30 @@ mod tests {
     fn area(m: &PolyMesh, p: usize) -> f32 { m.area_normal(p).length() * 0.5 }
 
     #[test]
+    fn primitives_face_outwards() {
+        // Sphere: every polygon and every drawn triangle points away from the centre.
+        let md = crate::node_graph::nodes::create_sphere(1.0, 16);
+        let s = PolyMesh::from_mesh(&md);
+        assert!(s.volume() > 3.9 && s.volume() < 4.19, "{}", s.volume());
+        for p in 0..s.polys.len() {
+            if s.area_normal(p).length() < 1e-6 { continue; }
+            assert!(s.normal(p).dot(s.centroid(p)) > 0.0, "polygon {p}");
+        }
+        for t in md.indices.chunks_exact(3) {
+            let [a, b, c] = [0, 1, 2].map(|k| Vec3::from_array(md.vertices[t[k] as usize]));
+            let n = (b - a).cross(c - a);
+            if n.length() < 1e-7 { continue; }
+            assert!(n.dot(a + b + c) > 0.0);
+        }
+        for (v, n) in md.vertices.iter().zip(&md.normals) {
+            assert!(Vec3::from_array(*n).dot(Vec3::from_array(*v)) > 0.99, "{n:?} at {v:?}");
+        }
+        // Grid: faces up.
+        let g = grid(3);
+        for p in 0..g.polys.len() { assert!(g.normal(p).y > 0.99); }
+    }
+
+    #[test]
     fn cube_is_six_outward_quads() {
         let c = cube();
         assert_eq!((c.verts.len(), c.polys.len()), (8, 6));

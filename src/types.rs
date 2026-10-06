@@ -391,7 +391,8 @@ impl MeshData {
         }
 
         self.normals = normals.iter().zip(&counts).map(|(n, &c)| {
-            if c > 0 { n.normalize().to_array() } else { [0.0, 1.0, 0.0] }
+            // A vertex used only by triangles with no area has no direction of its own.
+            if c > 0 && n.length_squared() > 0.0 { n.normalize().to_array() } else { [0.0, 1.0, 0.0] }
         }).collect();
 
         // Also store as a primvar so the inspector can show it

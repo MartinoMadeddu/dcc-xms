@@ -190,14 +190,17 @@ pub fn create_sphere(radius: f32, segments: u32) -> MeshData {
         for lon in 0..segments {
             let f = lat*(segments+1)+lon;
             let s = f+segments+1;
-            idx.extend_from_slice(&[f,s,f+1,s,s+1,f+1]);
-            quads.push(vec![f, s, s+1, f+1]);
+            // Counter-clockwise seen from outside, like the cube and the grid.
+            idx.extend_from_slice(&[f,f+1,s,s,f+1,s+1]);
+            quads.push(vec![f, f+1, s+1, s]);
         }
     }
     let mut m = MeshData::from_triangles(verts, idx);
     m.face_count = quads.len();
     m.polys = quads;
-    m.compute_normals();
+    // On a sphere the normal is the direction from the centre. This also
+    // covers the poles, where the triangles have no area.
+    m.normals = m.vertices.iter().map(|v| Vec3::from_array(*v).normalize_or(Vec3::Y).to_array()).collect();
     m
 }
 
