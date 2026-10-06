@@ -1,93 +1,97 @@
-# dcc-xms, mocap and modelling fork
+# XMS DCC
 
-Fork of [MartinoMadeddu/dcc-xms](https://github.com/MartinoMadeddu/dcc-xms).
+**A node-based 3D application written in Rust.** Model, import, animate and export, with every step a node you can go back and change.
 
-## Why this fork
+This is Simon Legrand's fork of [MartinoMadeddu/xms-imago](https://github.com/MartinoMadeddu/xms-imago), the project Martino Madeddu started. It adds polygon modelling, motion capture tools and a dockable interface on top of his node graph.
 
-To extend XMS into a mocap ingestion and cleanup tool: FBX import, a viewport, frame rate and timecode handling, renaming and trimming. Polygon modelling is being added alongside it.
+![The sea mine template: eleven Edit Poly operations on one cube, about 9,600 polygons](docs/xms_sea_mine.png)
 
-Animation is added as nodes, following the node design of the original project. The timeline has no range of its own: it adapts to the data in the selected node.
+**[Download a build](https://github.com/srlegrand/dcc-xms/releases)** for Linux, macOS or Windows, pick a template, and start changing numbers.
 
-The work is proposed upstream in [pull request #3](https://github.com/MartinoMadeddu/dcc-xms/pull/3).
+## Everything stays live
 
-![Trim node selected, timeline showing the trimmed range over the incoming clip](docs/xms_anim_timeline.png)
+Nothing is baked. A mesh is a cube node followed by the operations that shaped it. A mocap clip is a file node followed by the trims, renames and retimes applied to it. Change any value upstream and everything after it follows.
 
-## What is added
+![Twelve of the built-in templates](docs/xms_templates.png)
 
-Animation
-- Clip data type: skeleton, per-frame transforms, rational frame rate, timecode including drop-frame
-- FBX import through ufbx: hierarchy and one take, baked per frame, converted to Y-up metres
-- Nodes: Load FBX, Test Clip, Rename Joints, Trim Clip, Retime, Set Timecode
-- Timeline panel that takes range, rate and timecode from the selected node
-- Skeleton drawn in the viewport for the viewed node
+Fourteen templates ship with the program, one for each area of it. Each loads a working graph and tells you what to try.
 
-Batch and export
-- Load FBX Folder: one file out of a folder, picked by index or from a dropdown of file names
-- Split Characters: one output per character, by position or by root joint, any number of outputs
-- Auto T-Pose: rotations zeroed, root at the origin, optional hip height
-- Fix Pose: manual per-joint rotation and position corrections
-- Proxy Skin: sphere per bone and cylinder per link, bound to the skeleton
-- Write FBX: binary FBX with skeleton, animation, mesh, skin and bind pose. Writes the current file or the whole folder, in the background
-- "Mocap split" template: builds the whole graph for splitting a two-character take into animation and skinned T-pose files for Unreal
-- File browser on every path field, reopening in the last folder visited
-- Graph open and save as JSON
+## Polygon modelling in a single node
 
-Modelling
-- Edit Poly: one node holding an ordered list of polygon operations, each with its own selection, modelled on the Edit Poly modifier of 3ds Max
-- Selection levels: vertex, edge, border, polygon, element. Picked in the viewport (click, box, Ctrl adds, Shift removes) or by rule (all, by normal, in box), with grow, shrink, invert, loop and ring
-- Operations: extrude, bevel, inset, bridge, flip, detach, tessellate, connect, remove, cap, weld, collapse, break, delete, transform, make planar, relax, subdivide
-- Move, rotate and scale manipulators in the viewport (Q, W, E, R). Each drag is stored as a Transform operation
-- Collapsing: operations stay live until collapsed one by one or all at once, or auto-collapse freezes earlier operations whenever one is added. Collapsed operations still replay when the incoming mesh changes
+Edit Poly keeps a whole modelling session in one node, modelled on the Edit Poly modifier of 3ds Max.
 
-![Edit Poly node: collapsed and live operations, move manipulator on the selected polygons](docs/xms_edit_poly.png)
+- **Five selection levels:** vertex, edge, border, polygon, element. Pick in the viewport, or select by rule so the selection adapts when the mesh changes
+- **Eighteen operations:** extrude, bevel, inset, bridge, connect, weld, collapse, cap, detach, tessellate, relax, subdivide and more
+- **Manipulators:** move, rotate and scale in the viewport on Q, W, E, R. Each drag becomes an operation you can edit afterwards
+- **Collapse when you are done:** freeze operations one by one or all at once, or let the node collapse them as you go. Collapsed operations still follow the mesh coming in
 
-Viewport
-- Navigation menu at the top of the viewport with seven styles: Maya (default), Houdini, XSI, Blender, Max, Modo, Unreal. The choice is kept between sessions. The question mark next to it lists the keys
-- Navigation follows the cursor position, so it works through remote desktops and mouse sharing tools
+![Edit Poly: collapsed and live operations, with the move manipulator on the selection](docs/xms_edit_poly.png)
 
-Templates and examples
-- Templates menu with fourteen ready-made graphs in three groups: Basics, Modelling, Animation & Mocap
-- Example files in `examples/`: a real two-character motion capture take as FBX, two USD scenes
+## Motion capture, from take to engine
 
-![The viewport of twelve of the templates](docs/xms_templates.png)
+Load a folder of FBX takes, split the characters, fix the pose, skin a proxy and write the files your engine wants, in one graph that runs over the whole folder.
 
-Interface
-- Every pane is a movable, dockable tab: drag to rearrange, stack, float or close. Dragging a tab to a side of the window docks it along that whole side. Closed panes come back from the Panes menu. The layout is kept between sessions
-- Fixed top bar with the logo, the Panes menu and the layout padlock
-- The padlock locks the layout: panes stay put, dividers still resize
-- The graph is cooked only when its content changes, not on every frame. The primitive inspector refreshes on graph changes only and draws just the rows in view
-- Light theme by default, dark mode on a button
-- Animation and mocap nodes sit in their own "Animation & Mocap" sub-menu of the add-node menu
-- Panels keep the size they are dragged to, whatever they contain
+- **Real frame rates and timecode:** rational rates, drop-frame, and a timeline that takes its range from whichever node is selected
+- **Clip nodes:** rename joints, trim, retime, set timecode
+- **Batch nodes:** split characters, auto T-pose, fix pose, proxy skin, write FBX
+- **Write FBX:** skeleton, animation, mesh, skin and bind pose, for one file or the whole folder, in the background
 
-![Default layout with the top bar](docs/xms_layout.png)
+![A two-character motion capture take, loaded from FBX](docs/xms_mocap.png)
 
-## Not done yet
+![The timeline follows the selected node: here a trimmed range over the incoming clip](docs/xms_anim_timeline.png)
 
-- Undo
-- Edit Poly: chamfer, cut and slice, hinge, soft selection, smoothing groups, material IDs, attach
-- Navigation styles and Edit Poly viewport interaction have not been tested by hand with a mouse
-- Meshes and skinning read from FBX
-- Timeline zoom and pan
-- Curve cleanup
-- ICE subnet contents in saved graphs
-- Import into Unreal has not been tested. Written files were checked by reading them back and against a reference script, on one OptiTrack Motive take
+## An interface that gets out of the way
 
-## Documentation
+- **Dock anything anywhere:** every pane is a tab. Drag it beside another pane, stack it, float it, or drop it on a side of the window to span that whole side
+- **Lock it:** one padlock freezes the layout once you are happy. Dividers still resize
+- **Your navigation:** Maya, Houdini, XSI, Blender, Max, Modo or Unreal viewport controls, from a menu
+- **Remembered:** layout, floating windows, theme and navigation style come back at the next start
+- **Fast:** the graph is cooked when its content changes, not on every frame
+- **Light and dark themes**
 
-[docs/](docs/README.md): interface, templates, Edit Poly, viewport navigation, animation and mocap, builds and releases.
+![The default layout, with the top bar](docs/xms_layout.png)
 
-## Download
+![Docking a pane along a whole side of the window](docs/xms_edge_dock.png)
 
-Binaries for Linux, macOS and Windows are built from every change to `main` and published on the [Releases page](https://github.com/srlegrand/dcc-xms/releases). See [docs/releases.md](docs/releases.md).
+## Also in the box
 
-## Build
+- Cube, sphere and grid primitives, Transform, Merge
+- Scatter Points and Copy To Points
+- ICE-style subnets: graphs inside a node
+- USD import (`.usda`, `.usdc`, `.usdz`)
+- Primitive Inspector: a spreadsheet of the mesh of the selected node
+- Graphs saved and loaded as JSON
+
+## Get it
+
+**Download:** binaries for Linux, macOS and Windows are built from every change to `main` and published on the [Releases page](https://github.com/srlegrand/dcc-xms/releases). See [docs/releases.md](docs/releases.md).
+
+**Build from source:**
 
     cargo run --release
 
 On Ubuntu or Debian, first:
 
     sudo apt install build-essential pkg-config libasound2-dev libudev-dev libx11-dev libxkbcommon-x11-0
+
+## Documentation
+
+[docs/](docs/README.md): interface, templates, Edit Poly, viewport navigation, animation and mocap, builds and releases.
+
+## Not done yet
+
+- Undo
+- Edit Poly: chamfer, cut and slice, hinge, soft selection, smoothing groups, material IDs, attach
+- Meshes and skinning read from FBX
+- Timeline zoom and pan
+- Curve cleanup
+- ICE subnet contents in saved graphs
+- Viewport interaction has been tested with simulated input, not yet thoroughly by hand
+- Import into Unreal has not been tested. Written files were checked by reading them back and against a reference script, on one OptiTrack Motive take
+
+## Credit
+
+XMS was created by [Martino Madeddu](https://github.com/MartinoMadeddu). The node graph, the viewport, the ICE subnets, the USD loader and the look of the interface are his. The first animation work from this fork was merged upstream in [pull request #3](https://github.com/MartinoMadeddu/xms-imago/pull/3); the rest is proposed in [pull request #4](https://github.com/MartinoMadeddu/xms-imago/pull/4).
 
 ---
 
