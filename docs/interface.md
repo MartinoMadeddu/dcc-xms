@@ -1,6 +1,10 @@
 # Interface
 
-![Default layout with the Panes menu open and the padlock at the top right](xms_layout.png)
+![Default layout: the top bar, and the seven panes under it](xms_layout.png)
+
+## Top bar
+
+A fixed line across the top of the window, for things that belong to the whole program. It holds the logo and the name on the left, the Panes menu and the layout padlock on the right. It is not a pane: it cannot be moved, floated or closed.
 
 ## Panes
 
@@ -14,7 +18,7 @@ Seven panes: Viewport, Node Graph, Scene Explorer, Operator Stack, Properties, P
 | Dock a floating pane | Drag its tab (the title inside the window, not the bar above it) onto one of the squares, or double-click the tab, or use "Dock floating panes" in the Panes menu |
 | Move a floating window | Drag the bar at its top |
 | Close a pane | The cross on its tab, docked or floating |
-| Show a closed pane | Tick it in the Panes menu, top right. It comes back as a tab of the main area |
+| Show a closed pane | Tick it in the Panes menu, in the top bar. It comes back as a tab of the main area |
 | Resize | Drag the line between two panes, or the corner of a floating window |
 | Start over | "Reset layout" in the Panes menu |
 
@@ -24,7 +28,7 @@ Right-clicking a tab offers the same close and float actions.
 
 ### Lock
 
-The padlock at the top right locks the layout. While it is locked, tabs cannot be moved, floated or closed, and the Panes menu is greyed out. The lines between panes still resize. Click the padlock again to unlock.
+The padlock at the right of the top bar locks the layout. While it is locked, tabs cannot be moved, floated or closed, and the Panes menu is greyed out. The lines between panes still resize. Click the padlock again to unlock.
 
 ### Saved layout
 

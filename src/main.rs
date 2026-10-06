@@ -162,7 +162,52 @@ fn dcc_ui(
     // with another, or pull it out as a window.
     vp_rect.0 = None;   // set again by the viewport pane if it is showing
     let locked = layout.locked;
+    // ── Top bar ──────────────────────────────────────────────────────────────
+    // Fixed line above the panes, for things that belong to the whole
+    // program. It is not a pane: it cannot be moved, floated or closed.
+    egui::TopBottomPanel::top("top_bar")
+        .exact_height(26.0)
+        .resizable(false)
+        .frame(egui::Frame::none().fill(theme::c(58, 58, 58)).inner_margin(egui::Margin::symmetric(8.0, 3.0)))
+        .show(ctx, |ui| {
+            ui.horizontal_centered(|ui| {
+                draw_logo(ui);
+                ui.label(egui::RichText::new("XMS DCC").strong().color(theme::c(225, 225, 225)));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    // Right to left: the lock sits at the far right, the menu before it.
+                    {
+                        let tip = if locked {
+                            "Layout locked: panes cannot be moved, floated or closed. Dividers still resize. Click to unlock"
+                        } else {
+                            "Lock the layout"
+                        };
+                        if lock_button(ui, locked).on_hover_text(tip).clicked() { layout.locked = !locked; }
+                    }
+                        ui.menu_button("Panes ⏷", |ui| {
+                            for pane in Pane::ALL {
+                                let mut open = layout.is_open(pane);
+                                let label = if layout.is_floating(pane) { format!("{} (floating)", pane.title()) } else { pane.title().to_string() };
+                                if ui.add_enabled(!locked, egui::Checkbox::new(&mut open, label)).changed() {
+                                    if open { layout.show(pane); } else { layout.hide(pane); }
+                                }
+                            }
+                            ui.separator();
+                            if ui.add_enabled(!locked && layout.any_floating(), egui::Button::new("Dock floating panes")).clicked() {
+                                layout.dock_all();
+                                ui.close_menu();
+                            }
+                            if ui.add_enabled(!locked, egui::Button::new("Reset layout")).clicked() {
+                                layout.reset();
+                                ui.close_menu();
+                            }
+                            if locked { ui.label(egui::RichText::new("Unlock the layout to change it.").small()); }
+                        });
+                });
+            });
+        });
+
     let mut toggle_float = None;
+    let mut dock_rect = ctx.screen_rect();
     let mut tab_pressed = None;
     {
         let mut panes = Panes {
@@ -176,10 +221,15 @@ fn dcc_ui(
         };
         let mut style = egui_dock::Style::from_egui(ctx.style().as_ref());
         style.tab_bar.fill_tab_bar = true;
+        layout.size_new_windows();
+        // What is left under the top bar.
+        let screen = ctx.available_rect();
+        dock_rect = screen;
         egui::CentralPanel::default().frame(egui::Frame::none()).show(ctx, |ui| {
             // Locked: tabs stay where they are. Dividers resize either way.
             egui_dock::DockArea::new(&mut layout.dock)
                 .style(style)
+                .window_bounds(screen)
                 .draggable_tabs(!locked)
                 .show_close_buttons(!locked)
                 // A floating window is closed by the cross on its tab.
@@ -202,7 +252,7 @@ fn dcc_ui(
         let released = let_go || !down;
         if released { layout.tab_drag = None; } else if moving { layout.tab_drag = Some((pane, true)); }
         let moved = moved || moving;
-        let screen = ctx.screen_rect();
+        let screen = dock_rect;
         let edge = ctx.input(|i| i.pointer.interact_pos()).and_then(|p| layout::Edge::near(screen, p, 26.0));
         if !moved {
             // A click on a tab, not a drag.
@@ -229,45 +279,6 @@ fn dcc_ui(
         }
     }
 
-    // ── Panes menu and lock, top right ───────────────────────────────────────
-    egui::Area::new("layout_controls".into())
-        .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-4.0, 1.0))
-        .order(egui::Order::Foreground)
-        .show(ctx, |ui| {
-            egui::Frame::none()
-                .fill(theme::c(90, 90, 90))
-                .rounding(3.0)
-                .inner_margin(egui::Margin::symmetric(3.0, 0.0))
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.menu_button("Panes ⏷", |ui| {
-                            for pane in Pane::ALL {
-                                let mut open = layout.is_open(pane);
-                                let label = if layout.is_floating(pane) { format!("{} (floating)", pane.title()) } else { pane.title().to_string() };
-                                if ui.add_enabled(!locked, egui::Checkbox::new(&mut open, label)).changed() {
-                                    if open { layout.show(pane); } else { layout.hide(pane); }
-                                }
-                            }
-                            ui.separator();
-                            if ui.add_enabled(!locked && layout.any_floating(), egui::Button::new("Dock floating panes")).clicked() {
-                                layout.dock_all();
-                                ui.close_menu();
-                            }
-                            if ui.add_enabled(!locked, egui::Button::new("Reset layout")).clicked() {
-                                layout.reset();
-                                ui.close_menu();
-                            }
-                            if locked { ui.label(egui::RichText::new("Unlock the layout to change it.").small()); }
-                        });
-                        let tip = if locked {
-                            "Layout locked: panes cannot be moved, floated or closed. Dividers still resize. Click to unlock"
-                        } else {
-                            "Lock the layout"
-                        };
-                        if lock_button(ui, locked).on_hover_text(tip).clicked() { layout.locked = !locked; }
-                    });
-                });
-        });
     // Not while a button is down: a drag changes the layout on every frame.
     if !ctx.input(|i| i.pointer.any_down()) { layout.save_if_changed(); }
 
@@ -281,7 +292,9 @@ fn dcc_ui(
     // The key list is hidden until the question mark is clicked.
     let help_id = egui::Id::new("viewport_nav_help");
     let mut nav_help = ctx.data(|d| d.get_temp::<bool>(help_id)).unwrap_or(false);
+    // Background order: floating panes go over the menu, not under it.
     egui::Area::new("viewport_nav_menu".into())
+        .order(egui::Order::Background)
         .fixed_pos(vp.min + egui::vec2(10.0, 8.0))
         .show(ctx, |ui| {
             egui::Frame::none()
@@ -312,6 +325,7 @@ fn dcc_ui(
     ctx.data_mut(|d| d.insert_temp(help_id, nav_help));
     if nav_help {
     egui::Area::new("viewport_label".into())
+        .order(egui::Order::Background)
         .fixed_pos(vp.min + egui::vec2(10.0, 40.0))
         .interactable(false)
         .show(ctx, |ui| {
@@ -330,6 +344,22 @@ fn dcc_ui(
                 });
         });
     }
+}
+
+/// The program's mark: two crossing wires with a node at each end, for the X
+/// of XMS and the node graph it is built on.
+fn draw_logo(ui: &mut egui::Ui) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::hover());
+    let painter = ui.painter();
+    painter.rect_filled(rect, 4.0, egui::Color32::from_rgb(34, 38, 46));
+    let r = rect.shrink(4.5);
+    let (blue, orange) = (egui::Color32::from_rgb(110, 170, 255), egui::Color32::from_rgb(255, 150, 70));
+    painter.line_segment([r.left_top(), r.right_bottom()], egui::Stroke::new(2.2_f32, blue));
+    painter.line_segment([r.left_bottom(), r.right_top()], egui::Stroke::new(2.2_f32, orange));
+    for (p, c) in [(r.left_top(), blue), (r.right_bottom(), blue), (r.left_bottom(), orange), (r.right_top(), orange)] {
+        painter.circle_filled(p, 2.3, c);
+    }
+    response
 }
 
 /// Padlock button, drawn by hand: closed when locked, shackle swung open

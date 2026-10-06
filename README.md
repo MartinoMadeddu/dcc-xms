@@ -53,13 +53,14 @@ Templates and examples
 
 Interface
 - Every pane is a movable, dockable tab: drag to rearrange, stack, float or close. Dragging a tab to a side of the window docks it along that whole side. Closed panes come back from the Panes menu. The layout is kept between sessions
-- Padlock at the top right locks the layout: panes stay put, dividers still resize
+- Fixed top bar with the logo, the Panes menu and the layout padlock
+- The padlock locks the layout: panes stay put, dividers still resize
 - The graph is cooked only when its content changes, not on every frame. The primitive inspector refreshes on graph changes only and draws just the rows in view
 - Light theme by default, dark mode on a button
 - Animation and mocap nodes sit in their own "Animation & Mocap" sub-menu of the add-node menu
 - Panels keep the size they are dragged to, whatever they contain
 
-![Default layout with the Panes menu open](docs/xms_layout.png)
+![Default layout with the top bar](docs/xms_layout.png)
 
 ## Not done yet
 
