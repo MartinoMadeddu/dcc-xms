@@ -28,7 +28,7 @@ Batch and export
 - Fix Pose: manual per-joint rotation and position corrections
 - Proxy Skin: sphere per bone and cylinder per link, bound to the skeleton
 - Write FBX: binary FBX with skeleton, animation, mesh, skin and bind pose. Writes the current file or the whole folder, in the background
-- Templates menu with "Mocap split": builds the whole graph for splitting a two-character take into animation and skinned T-pose files for Unreal
+- "Mocap split" template: builds the whole graph for splitting a two-character take into animation and skinned T-pose files for Unreal
 - File browser on every path field, reopening in the last folder visited
 - Graph open and save as JSON
 
@@ -45,14 +45,21 @@ Viewport
 - Navigation menu at the top of the viewport with seven styles: Maya (default), Houdini, XSI, Blender, Max, Modo, Unreal. The choice is kept between sessions. The question mark next to it lists the keys
 - Navigation follows the cursor position, so it works through remote desktops and mouse sharing tools
 
+Templates and examples
+- Templates menu with thirteen ready-made graphs in three groups: Basics, Modelling, Animation & Mocap
+- Example files in `examples/`: a walk cycle and three two-character takes as FBX, two USD scenes
+
+![The viewport of twelve templates](docs/xms_templates.png)
+
 Interface
-- Every pane is a movable, dockable tab: drag to rearrange, stack or float. The layout is kept between sessions
+- Every pane is a movable, dockable tab: drag to rearrange, stack, float or close. Closed panes come back from the Panes menu. The layout is kept between sessions
+- Padlock at the top right locks the layout: panes stay put, dividers still resize
 - The graph is cooked only when its content changes, not on every frame. The primitive inspector refreshes on graph changes only and draws just the rows in view
 - Light theme by default, dark mode on a button
 - Animation and mocap nodes sit in their own "Animation & Mocap" sub-menu of the add-node menu
 - Panels keep the size they are dragged to, whatever they contain
 
-![Default layout of the dockable panes](docs/xms_layout.png)
+![Default layout with the Panes menu open](docs/xms_layout.png)
 
 ## Not done yet
 
@@ -67,7 +74,7 @@ Interface
 
 ## Documentation
 
-[docs/](docs/README.md): interface, Edit Poly, viewport navigation, animation and mocap, builds and releases.
+[docs/](docs/README.md): interface, templates, Edit Poly, viewport navigation, animation and mocap, builds and releases.
 
 ## Download
 

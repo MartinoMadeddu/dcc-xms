@@ -1,19 +1,33 @@
 # Interface
 
-![Default layout: viewport, primitive inspector, node graph, scene explorer, operator stack, properties, timeline](xms_layout.png)
+![Default layout with the Panes menu open and the padlock at the top right](xms_layout.png)
 
 ## Panes
 
 Seven panes: Viewport, Node Graph, Scene Explorer, Operator Stack, Properties, Primitive Inspector, Timeline. Each one is a tab.
 
-- Drag a tab by its title to move it. Drop it on the edge of another pane to split that pane, or on its centre to stack the two as tabs.
-- Drag a tab out to make it a floating window. Drag it back onto a pane to dock it again.
-- Drag the line between two panes to resize them.
-- Panes cannot be closed.
+| To | Do this |
+|---|---|
+| Move a pane | Drag its tab by the title. Drop it on one of the five squares that appear over the pane under the cursor: the middle one stacks it as a tab, the others split that pane on that side |
+| Float a pane | Drag its tab and drop it anywhere that is not one of the squares, or double-click the tab |
+| Dock a floating pane | Drag its tab (the title inside the window, not the bar above it) onto one of the squares, or double-click the tab, or use "Dock floating panes" in the Panes menu |
+| Move a floating window | Drag the bar at its top |
+| Close a pane | The cross on its tab. The cross on a floating window closes every pane in it |
+| Show a closed pane | Tick it in the Panes menu, top right. It comes back as a tab of the main area |
+| Resize | Drag the line between two panes, or the corner of a floating window |
+| Start over | "Reset layout" in the Panes menu |
 
-The layout is saved when it changes and restored at the next start. It is kept in `layout.json` in the config folder (`~/.config/xms` on Linux, `%APPDATA%\xms` on Windows). "Reset layout" in the node graph header puts every pane back.
+Right-clicking a tab offers the same close and float actions.
 
-When the Viewport tab is hidden behind another tab, the 3D view is not drawn.
+### Lock
+
+The padlock at the top right locks the layout. While it is locked, tabs cannot be moved, floated or closed, and the Panes menu is greyed out. The lines between panes still resize. Click the padlock again to unlock.
+
+### Saved layout
+
+The layout, the lock and the place of every floating window are saved when they change and restored at the next start. They are kept in `layout.json` in the config folder (`~/.config/xms` on Linux, `%APPDATA%\xms` on Windows). A file that cannot be read is ignored and the default layout is used.
+
+When the Viewport pane is closed or hidden behind another tab, the 3D view is not drawn.
 
 ## Theme
 

@@ -143,6 +143,7 @@ pub fn draw_origin_label(
         if !rect.shrink(12.0).contains(bevy_egui::egui::pos2(sp.x, sp.y)) { return; }
         let ctx = contexts.ctx_mut();
         bevy_egui::egui::Area::new("origin_label".into())
+            .order(bevy_egui::egui::Order::Background)
             .fixed_pos(bevy_egui::egui::pos2(sp.x, sp.y))
             .interactable(false)
             .show(ctx, |ui| {

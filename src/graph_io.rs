@@ -81,7 +81,7 @@ pub fn load(graph: &mut NodeGraphState, path: &Path) -> Result<(), String> {
 }
 
 /// Remove everything except the Output node.
-fn clear(graph: &mut NodeGraphState) {
+pub(crate) fn clear(graph: &mut NodeGraphState) {
     graph.connections.clear();
     graph.nodes.retain(|n| matches!(n.node_type, NodeType::Output));
     for n in &mut graph.nodes {

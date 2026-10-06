@@ -16,6 +16,8 @@ mod timeline;
 mod theme;
 mod modelling;
 mod layout;
+mod examples;
+mod templates;
 
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts, EguiPlugin};
@@ -159,7 +161,8 @@ fn dcc_ui(
     // Every pane is a tab of one dock area: drag a tab to move it, stack it
     // with another, or pull it out as a window.
     vp_rect.0 = None;   // set again by the viewport pane if it is showing
-    let mut reset_layout = false;
+    let locked = layout.locked;
+    let mut toggle_float = None;
     {
         let mut panes = Panes {
             graph: &mut graph, stack: &mut stack, hierarchy: &mut hierarchy, subnets: &mut subnets,
@@ -168,18 +171,64 @@ fn dcc_ui(
             batch: &batch, anim_ctx: &anim_ctx, timeline_state: &timeline_state,
             dt: time.delta_seconds_f64(), keys_free,
             space_plays: nav_settings.style != viewport::nav::NavStyle::Houdini,
-            revision: revision.0, reset_layout: &mut reset_layout,
+            revision: revision.0, locked, toggle_float: &mut toggle_float,
         };
         let mut style = egui_dock::Style::from_egui(ctx.style().as_ref());
         style.tab_bar.fill_tab_bar = true;
         egui::CentralPanel::default().frame(egui::Frame::none()).show(ctx, |ui| {
+            // Locked: tabs stay where they are. Dividers resize either way.
             egui_dock::DockArea::new(&mut layout.dock)
                 .style(style)
-                .show_close_buttons(false)
+                .draggable_tabs(!locked)
+                .show_close_buttons(!locked)
+                .show_window_close_buttons(!locked)
+                .show_window_collapse_buttons(false)
+                .tab_context_menus(!locked)
                 .show_inside(ui, &mut panes);
         });
     }
-    if reset_layout { layout.reset(); }
+
+    if let Some(pane) = toggle_float { layout.toggle_float(pane); }
+
+    // ── Panes menu and lock, top right ───────────────────────────────────────
+    egui::Area::new("layout_controls".into())
+        .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-4.0, 1.0))
+        .order(egui::Order::Foreground)
+        .show(ctx, |ui| {
+            egui::Frame::none()
+                .fill(theme::c(90, 90, 90))
+                .rounding(3.0)
+                .inner_margin(egui::Margin::symmetric(3.0, 0.0))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.menu_button("Panes ⏷", |ui| {
+                            for pane in Pane::ALL {
+                                let mut open = layout.is_open(pane);
+                                let label = if layout.is_floating(pane) { format!("{} (floating)", pane.title()) } else { pane.title().to_string() };
+                                if ui.add_enabled(!locked, egui::Checkbox::new(&mut open, label)).changed() {
+                                    if open { layout.show(pane); } else { layout.hide(pane); }
+                                }
+                            }
+                            ui.separator();
+                            if ui.add_enabled(!locked && layout.any_floating(), egui::Button::new("Dock floating panes")).clicked() {
+                                layout.dock_all();
+                                ui.close_menu();
+                            }
+                            if ui.add_enabled(!locked, egui::Button::new("Reset layout")).clicked() {
+                                layout.reset();
+                                ui.close_menu();
+                            }
+                            if locked { ui.label(egui::RichText::new("Unlock the layout to change it.").small()); }
+                        });
+                        let tip = if locked {
+                            "Layout locked: panes cannot be moved, floated or closed. Dividers still resize. Click to unlock"
+                        } else {
+                            "Lock the layout"
+                        };
+                        if lock_button(ui, locked).on_hover_text(tip).clicked() { layout.locked = !locked; }
+                    });
+                });
+        });
     // Not while a button is down: a drag changes the layout on every frame.
     if !ctx.input(|i| i.pointer.any_down()) { layout.save_if_changed(); }
 
@@ -244,6 +293,32 @@ fn dcc_ui(
     }
 }
 
+/// Padlock button, drawn by hand: closed when locked, shackle swung open
+/// when not. The emoji font's padlock is unreadable at this size.
+fn lock_button(ui: &mut egui::Ui, locked: bool) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(20.0, 18.0), egui::Sense::click());
+    let painter = ui.painter();
+    if locked || response.hovered() {
+        let fill = if locked { theme::c(80, 95, 115) } else { theme::raised(100, 100, 100) };
+        painter.rect_filled(rect, 3.0, fill);
+    }
+    let ink = if locked { egui::Color32::from_rgb(240, 240, 240) } else { theme::c(215, 215, 215) };
+    let c = rect.center();
+    let body = egui::Rect::from_center_size(c + egui::vec2(0.0, 3.0), egui::vec2(10.0, 7.0));
+    painter.rect_filled(body, 1.5, ink);
+    // Shackle: a half ring above the body. Open: one leg lifted clear of it.
+    let (r, top) = (3.0, body.top() - 3.0);
+    let lift = if locked { 0.0 } else { 3.0 };
+    let mut pts = vec![egui::pos2(c.x - r, body.top())];
+    for k in 0..=8 {
+        let a = std::f32::consts::PI * (1.0 - k as f32 / 8.0);
+        pts.push(egui::pos2(c.x + r * a.cos(), top - r * a.sin() * 0.9));
+    }
+    pts.push(egui::pos2(c.x + r, body.top() - lift));
+    painter.add(egui::Shape::line(pts, egui::Stroke::new(1.6_f32, ink)));
+    response
+}
+
 /// Everything the panes draw from, borrowed for one frame.
 struct Panes<'a> {
     graph:          &'a mut NodeGraphState,
@@ -264,14 +339,21 @@ struct Panes<'a> {
     keys_free:      bool,
     space_plays:    bool,
     revision:       u64,
-    reset_layout:   &'a mut bool,
+    locked:         bool,
+    /// Pane whose tab was double-clicked this frame.
+    toggle_float:   &'a mut Option<Pane>,
 }
 
 impl egui_dock::TabViewer for Panes<'_> {
     type Tab = Pane;
 
     fn title(&mut self, tab: &mut Pane) -> egui::WidgetText { tab.title().into() }
-    fn closeable(&mut self, _tab: &mut Pane) -> bool { false }
+    // Closing hides the pane. The Panes menu shows it again.
+    fn closeable(&mut self, _tab: &mut Pane) -> bool { !self.locked }
+    // Double-click a tab to float it, or to dock it back.
+    fn on_tab_button(&mut self, tab: &mut Pane, response: &egui::Response) {
+        if !self.locked && response.double_clicked() { *self.toggle_float = Some(*tab); }
+    }
     // Panes scroll their own content where they need to.
     fn scroll_bars(&self, _tab: &Pane) -> [bool; 2] { [false, false] }
     // The 3D view is drawn by the camera behind the interface.
@@ -363,23 +445,23 @@ impl egui_dock::TabViewer for Panes<'_> {
                         if ui.button(label).on_hover_text("Switch colour theme").clicked() {
                             theme::set_dark(ui.ctx(), !theme::is_dark());
                         }
-                        if ui.button("Reset layout").on_hover_text("Put every pane back where it started").clicked() {
-                            *self.reset_layout = true;
-                        }
                         // Ready-made graphs. Picking one replaces the current graph.
                         ui.menu_button("Templates", |ui| {
-                            if ui.button("Mocap split")
-                                .on_hover_text("Folder of takes, split per character, animation and skinned T-pose written per character")
-                                .clicked()
-                            {
-                                graph_io::mocap_split_template(self.graph);
-                                self.graph_file.message = "Template loaded. Select the Takes node and choose a folder.".into();
-                                ui.close_menu();
+                            for group in templates::GROUPS {
+                                ui.menu_button(group, |ui| {
+                                    for t in templates::TEMPLATES.iter().filter(|t| t.group == group) {
+                                        if ui.button(t.name).on_hover_text(t.hint).clicked() {
+                                            self.graph_file.message = (t.build)(self.graph, self.subnets);
+                                            self.nav.current_subnet = None;
+                                            ui.close_menu();
+                                        }
+                                    }
+                                });
                             }
                         });
                     });
                     if !self.graph_file.message.is_empty() {
-                        ui.label(egui::RichText::new(&self.graph_file.message).small());
+                        ui.label(&self.graph_file.message);
                     }
                     ui.label("Right-click/Tab: add  |  Shift+drag: pan  |  Esc: cancel wire  |  Double-click subnet: dive in");
                     ui.separator();

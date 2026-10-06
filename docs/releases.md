@@ -9,7 +9,7 @@ Every push to `main` that changes code is built by GitHub Actions for Linux, mac
 | `xms-macos-arm64.tar.gz` | macOS, Apple silicon |
 | `xms-macos-x86_64.tar.gz` | macOS, Intel |
 
-Each archive holds the program (`xms`, or `xms.exe`), the README and this documentation.
+Each archive holds the program (`xms`, or `xms.exe`), the README, this documentation and the `examples` folder. Keep `examples` next to the program: the templates that load files look for it there.
 
 - Linux: needs the ALSA, udev and X11 libraries, which desktop installs have.
 - macOS: the program is not signed. On first run, right-click it and choose Open, or run `xattr -d com.apple.quarantine xms`.
