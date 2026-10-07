@@ -10,7 +10,7 @@ out="${1:-_site}"
 rm -rf "$out"
 mkdir -p "$out/shots"
 cp site/index.html "$out/"
-cp -r site/fonts "$out/"
+cp -r site/fonts site/ads "$out/"
 cp assets/splash.png assets/icon.png "$out/"
 cp docs/*.png "$out/shots/"
 # No Jekyll processing: files are served as they are.

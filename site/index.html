@@ -133,6 +133,21 @@
   a.burst { text-decoration: none; cursor: pointer; }
   a.burst:hover { background: #000; }
 
+
+  /* ── Parody adverts down the margins: pictures only, nothing to click ── */
+  .desk { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1280px) minmax(0, 1fr); }
+  .rail { display: none; flex-direction: column; justify-content: space-between; align-items: center; gap: 60px; padding: 90px 0 60px; }
+  @media (min-width: 1680px) { .rail { display: flex; } }
+  .ad { pointer-events: none; user-select: none; width: 160px; }
+  .ad img { width: 160px; height: auto; image-rendering: pixelated; box-shadow: 6px 6px 0 #000; }
+  .ad figcaption { font-family: var(--tech); font-size: 8px; letter-spacing: .2em; text-transform: uppercase; color: #77738c; text-align: center; margin-bottom: 5px; }
+  .desk > .mag { grid-column: 2; width: 100%; } .desk > .rail:first-child { grid-column: 1; grid-row: 1; } .desk > .rail:last-child { grid-column: 3; grid-row: 1; }
+  /* Narrower windows have no margins: the small adverts go on a page of their own. */
+  .classified { background: #15151c; padding: 26px 16px 30px; border-top: 6px solid #000; }
+  .classified h2 { font-family: var(--tech); font-weight: 400; font-size: 11px; letter-spacing: .2em; text-transform: uppercase; text-align: center; color: #9a96b0; margin: 0 0 18px; }
+  .classified .row { display: flex; flex-wrap: wrap; justify-content: center; gap: 22px; }
+  @media (min-width: 1680px) { .classified { display: none; } }
+
   /* ── The numbers strip ── */
   .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); background: #000; border-top: 6px solid var(--yellow); border-bottom: 6px solid var(--yellow); }
   .stat { padding: 12px 14px 12px; border-right: 1px solid #333; }
@@ -229,6 +244,17 @@
 </style>
 </head>
 <body>
+<div class="desk">
+  <aside class="rail" aria-label="Parody adverts">
+    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/polygonator.gif" width="160" height="600" alt="Parody advert: Polygonator 9000 3D accelerator card" draggable="false"></figure>
+    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/megaslab.gif" width="160" height="240" alt="Parody advert: Megaslab 8 MB memory board" draggable="false"></figure>
+    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/marbles.gif" width="160" height="240" alt="Parody advert: Marbles and Chromes texture disks" draggable="false"></figure>
+    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/renderfridge.gif" width="160" height="600" alt="Parody advert: Renderfridge render farm" draggable="false"></figure>
+    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/diskbrick.gif" width="160" height="240" alt="Parody advert: Diskbrick 44 cartridge drive" draggable="false"></figure>
+    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/scribblepad.gif" width="160" height="240" alt="Parody advert: Scribblepad 1212 tablet" draggable="false"></figure>
+    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/chromeball.gif" width="160" height="600" alt="Parody advert: Chromeball Studio 2.1 raytracer" draggable="false"></figure>
+    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/morphomatic.gif" width="160" height="240" alt="Parody advert: Morph-o-matic" draggable="false"></figure>
+  </aside>
 <div class="mag">
 
   <nav class="bar" aria-label="Download">
@@ -587,6 +613,17 @@
     </div>
   </article>
 
+  <section class="classified" aria-label="Parody adverts">
+    <h2>Advertisements</h2>
+    <div class="row">
+    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/megaslab.gif" width="160" height="240" alt="Parody advert: Megaslab 8 MB memory board" draggable="false"></figure>
+    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/morphomatic.gif" width="160" height="240" alt="Parody advert: Morph-o-matic" draggable="false"></figure>
+    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/scribblepad.gif" width="160" height="240" alt="Parody advert: Scribblepad 1212 tablet" draggable="false"></figure>
+    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/marbles.gif" width="160" height="240" alt="Parody advert: Marbles and Chromes texture disks" draggable="false"></figure>
+    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/diskbrick.gif" width="160" height="240" alt="Parody advert: Diskbrick 44 cartridge drive" draggable="false"></figure>
+    </div>
+  </section>
+
   <!-- ── Credits ── -->
   <article id="credits">
     <span class="kicker">Masthead</span>
@@ -615,8 +652,20 @@
 
   <footer>
     <span>XMS: Cross-data Manipulation System</span>
+    <span>The adverts are parodies. None of those products exist.</span>
     <span><a href="https://github.com/srlegrand/xms-imago">Source</a> · <a href="https://github.com/srlegrand/xms-imago/tree/main/docs">Manual</a> · <a href="https://github.com/srlegrand/xms-imago/releases">All builds</a> · <a href="https://github.com/srlegrand/xms-imago/issues">Report a problem</a></span>
   </footer>
+</div>
+  <aside class="rail" aria-label="Parody adverts">
+    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/chromeball.gif" width="160" height="600" alt="Parody advert: Chromeball Studio 2.1 raytracer" draggable="false"></figure>
+    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/morphomatic.gif" width="160" height="240" alt="Parody advert: Morph-o-matic" draggable="false"></figure>
+    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/scribblepad.gif" width="160" height="240" alt="Parody advert: Scribblepad 1212 tablet" draggable="false"></figure>
+    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/polygonator.gif" width="160" height="600" alt="Parody advert: Polygonator 9000 3D accelerator card" draggable="false"></figure>
+    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/megaslab.gif" width="160" height="240" alt="Parody advert: Megaslab 8 MB memory board" draggable="false"></figure>
+    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/diskbrick.gif" width="160" height="240" alt="Parody advert: Diskbrick 44 cartridge drive" draggable="false"></figure>
+    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/renderfridge.gif" width="160" height="600" alt="Parody advert: Renderfridge render farm" draggable="false"></figure>
+    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/marbles.gif" width="160" height="240" alt="Parody advert: Marbles and Chromes texture disks" draggable="false"></figure>
+  </aside>
 </div>
 
 <script>

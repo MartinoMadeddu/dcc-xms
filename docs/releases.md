@@ -33,6 +33,8 @@ The downloads are in four places: a bar that stays at the top of the window, who
 
 The page is laid out as a 3D magazine of the 1990s: a cover, a contents page with the downloads on a cover disk, then a double page in its own colours for each area of the program, a reference card with the keys, the file formats and all 38 nodes, the build instructions as a type-in listing, and the known gaps. Its fonts are in `site/fonts/` and are served with it.
 
+The adverts down the margins are parodies of the period, for products that do not exist: eight 16-colour dithered GIFs in `site/ads/`, four of them animated. They are pictures only and cannot be clicked. The margins exist in windows 1680 pixels wide or more; in narrower ones the five small adverts sit on a page of their own before the credits.
+
 ![The website](xms_site.png)
 
 One-time setup on GitHub: Settings > Pages > Source: "GitHub Actions". With "Deploy from a branch" selected instead, GitHub also publishes the README as a plain page at the same address, and whichever of the two finished last is what visitors get.
