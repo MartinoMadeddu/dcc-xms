@@ -71,6 +71,11 @@ pub struct NodeGraphState {
     pub selected_connection: Option<ConnectionId>,
     pub graph_version:       u64,
     pub view_flag:           Option<NodeId>,  // Which node viewport displays
+    /// Output socket the add-node menu was opened from: the new node goes
+    /// under it, wired to it.
+    pub menu_from:           Option<(NodeId, usize)>,
+    /// Bring every node into view on the next frame.
+    pub frame_request:       bool,
 }
 
 impl Default for NodeGraphState {
@@ -89,6 +94,8 @@ impl Default for NodeGraphState {
             selected_connection: None,
             graph_version: 0,
             view_flag: None,
+            menu_from: None,
+            frame_request: true,
         };
         s.add_node("Output".into(), NodeType::Output, egui::pos2(200.0, 400.0));
         s
@@ -264,6 +271,83 @@ impl NodeGraphState {
     }
 
     /// Check if a specific node has the view flag
+    /// Lay the graph out top to bottom: Output last, each node on the row
+    /// above the first node that uses it. Rows are centred on
+    /// one another and a chain of single inputs comes out as a straight line.
+    pub fn auto_layout(&mut self) {
+        const DX: f32 = 205.0;
+        const DY: f32 = 100.0;
+        let n = self.nodes.len();
+        if n == 0 { return; }
+        let index: HashMap<NodeId, usize> = self.nodes.iter().enumerate().map(|(i, node)| (node.id, i)).collect();
+        let mut parents: Vec<Vec<usize>> = vec![vec![]; n];
+        let mut children: Vec<Vec<usize>> = vec![vec![]; n];
+        for (i, node) in self.nodes.iter().enumerate() {
+            for input in &node.inputs {
+                if let Some(src) = input.connected_output.and_then(|(id, _)| index.get(&id).copied()) {
+                    if src != i && !parents[i].contains(&src) { parents[i].push(src); children[src].push(i); }
+                }
+            }
+        }
+        // Row: as low as it can go, straight above the first node that
+        // uses it, so a branch sits beside the chain it joins instead of
+        // every source crowding the top row. The pass count bounds a loop.
+        let mut above = vec![0usize; n];   // rows between a node and the bottom
+        for _ in 0..n {
+            let mut moved = false;
+            for i in 0..n {
+                let want = children[i].iter().map(|c| above[*c] + 1).max().unwrap_or(0);
+                if want > above[i] && want <= n { above[i] = want; moved = true; }
+            }
+            if !moved { break; }
+        }
+        let depth = above.iter().copied().max().unwrap_or(0);
+        let mut row: Vec<usize> = above.iter().map(|a| depth - a).collect();
+        // Output goes under everything, wired or not.
+        let last = row.iter().copied().max().unwrap_or(0);
+        for (i, node) in self.nodes.iter().enumerate() {
+            if matches!(node.node_type, NodeType::Output) { row[i] = if parents[i].is_empty() { last + 1 } else { row[i].max(last) }; }
+        }
+        let rows = row.iter().copied().max().unwrap_or(0) + 1;
+        let mut by_row: Vec<Vec<usize>> = vec![vec![]; rows];
+        // Start from the order the nodes already have, left to right.
+        let mut order: Vec<usize> = (0..n).collect();
+        order.sort_by(|a, b| self.nodes[*a].position.x.total_cmp(&self.nodes[*b].position.x).then(a.cmp(b)));
+        for i in order { by_row[row[i]].push(i); }
+
+        let mut x = vec![0.0f32; n];
+        for members in &by_row {
+            for (k, i) in members.iter().enumerate() { x[*i] = (k as f32 - (members.len() as f32 - 1.0) * 0.5) * DX; }
+        }
+        // Pull each node towards the middle of its neighbours on the row
+        // above, then below, keeping nodes of a row apart.
+        let settle = |members: &mut Vec<usize>, x: &mut Vec<f32>, toward: &Vec<Vec<usize>>| {
+            let want: HashMap<usize, f32> = members.iter().map(|i| {
+                let near = &toward[*i];
+                (*i, if near.is_empty() { x[*i] } else { near.iter().map(|j| x[*j]).sum::<f32>() / near.len() as f32 })
+            }).collect();
+            members.sort_by(|a, b| want[a].total_cmp(&want[b]).then(a.cmp(b)));
+            let mut placed: Vec<f32> = vec![];
+            for i in members.iter() {
+                let at = placed.last().map(|p| want[i].max(p + DX)).unwrap_or(want[i]);
+                placed.push(at);
+            }
+            // Spread evenly about where the row wanted to be.
+            let shift = members.iter().zip(&placed).map(|(i, p)| want[i] - p).sum::<f32>() / members.len().max(1) as f32;
+            for (i, p) in members.iter().zip(&placed) { x[*i] = p + shift; }
+        };
+        for _ in 0..3 {
+            for r in 1..rows { settle(&mut by_row[r], &mut x, &parents); }
+            for r in (0..rows.saturating_sub(1)).rev() { settle(&mut by_row[r], &mut x, &children); }
+        }
+        for r in 1..rows { settle(&mut by_row[r], &mut x, &parents); }
+        let left = x.iter().copied().fold(f32::MAX, f32::min);
+        for (i, node) in self.nodes.iter_mut().enumerate() {
+            node.position = egui::pos2((x[i] - left + 40.0).round(), row[i] as f32 * DY + 20.0);
+        }
+        self.frame_request = true;
+    }
+
     pub fn toggle_bypass(&mut self, node_id: NodeId) {
         if let Some(n) = self.nodes.iter_mut().find(|n| n.id == node_id) {
             if matches!(n.node_type, NodeType::Output) { return; }

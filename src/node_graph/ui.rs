@@ -78,36 +78,111 @@ pub fn draw_node_graph(ui: &mut egui::Ui, graph: &mut NodeGraphState) -> Option<
                    (p.y - canvas_rect.min.y - pan.y) / zoom)
     };
 
-    // ── Tab menu ─────────────────────────────────────────────────────────────
+    // ── Frame every node ─────────────────────────────────────────────────────
+    let frame_key = response.hovered() && !ui.ctx().wants_keyboard_input()
+        && ui.input(|i| i.key_pressed(egui::Key::F) || i.key_pressed(egui::Key::A));
+    if (graph.frame_request || frame_key) && canvas_rect.width() > 40.0 && !graph.nodes.is_empty() {
+        graph.frame_request = false;
+        let mut bounds = egui::Rect::NOTHING;
+        for node in &graph.nodes {
+            bounds = bounds.union(egui::Rect::from_min_size(node.position, egui::vec2(NODE_WIDTH, NODE_HEIGHT)));
+        }
+        let room = canvas_rect.size() - egui::vec2(60.0, 70.0);
+        // Not so small that the names cannot be read: a graph too large
+        // for that is shown from its middle.
+        graph.zoom = (room.x / bounds.width()).min(room.y / bounds.height()).clamp(0.45, 1.0);
+        let middle = bounds.center().to_vec2() * graph.zoom;
+        graph.pan_offset = canvas_rect.size() * 0.5 - middle;
+        ui.ctx().request_repaint();
+    }
+
+    // ── Add-node menu: Tab, right-click, or right-click on an output ─────────
+    let mut opened_now = false;
     if response.hovered() && ui.input(|i| i.key_pressed(egui::Key::Tab)) {
         let cursor = ui.input(|i| i.pointer.hover_pos()).unwrap_or(canvas_rect.center());
         graph.tab_menu_screen_pos = Some(cursor);
         graph.tab_menu_canvas_pos = Some(to_canvas(cursor));
+        graph.menu_from = None;
+        opened_now = true;
+    }
+    // A right-click anywhere on the canvas. Over an output socket the menu
+    // belongs to that socket; over a wire it is left to the wire.
+    let right_click = ui.input(|i| if i.pointer.secondary_clicked() { i.pointer.interact_pos() } else { None })
+        .filter(|p| canvas_rect.contains(*p) && ui.rect_contains_pointer(canvas_rect));
+    if let Some(cursor) = right_click {
+        let socket = graph.nodes.iter().find_map(|node| (0..node.outputs.len()).find(|o| {
+            to_screen(output_socket_pos(node, *o)).distance(cursor) <= SOCKET_HIT * 0.5 + 2.0
+        }).map(|o| (node.id, o)));
+        if socket.is_some() || response.secondary_clicked() {
+            graph.tab_menu_screen_pos = Some(cursor);
+            graph.tab_menu_canvas_pos = Some(to_canvas(cursor));
+            graph.menu_from = socket;
+            graph.connecting_from = None;
+            opened_now = true;
+        }
     }
     if let Some(screen_pos) = graph.tab_menu_screen_pos {
         let canvas_pos = graph.tab_menu_canvas_pos.unwrap_or_default();
+        let before: Vec<NodeId> = graph.nodes.iter().map(|n| n.id).collect();
         let mut close  = false;
         let area_resp = egui::Area::new(egui::Id::new("tab_add_node"))
             .fixed_pos(screen_pos)
             .order(egui::Order::Foreground)
+            .constrain(true)
             .show(ui.ctx(), |ui| {
                 egui::Frame::popup(ui.style()).show(ui, |ui| {
                     ui.set_min_width(180.0);
+                    if let Some((from, _)) = graph.menu_from {
+                        if let Some(node) = graph.nodes.iter().find(|n| n.id == from) {
+                            ui.label(egui::RichText::new(format!("After {}", node.name)).small());
+                            ui.separator();
+                        }
+                    }
                     if add_node_menu(ui, graph, canvas_pos) { close = true; }
                 });
             });
+        // Where the new node goes: under the socket it was asked from and
+        // wired to it, or centred on the place that was clicked.
+        let fresh: Vec<NodeId> = graph.nodes.iter().map(|n| n.id).filter(|id| !before.contains(id)).collect();
+        if let Some(new_id) = fresh.first().copied() {
+            let from = graph.menu_from.and_then(|(id, out)| graph.nodes.iter().find(|n| n.id == id).map(|n| (id, out, n.position)));
+            let mut at = match from {
+                Some((_, _, pos)) => pos + egui::vec2(0.0, NODE_HEIGHT + 50.0),
+                None => canvas_pos - egui::vec2(NODE_WIDTH * 0.5, NODE_HEIGHT * 0.5),
+            };
+            // Step sideways until the place is free.
+            let taken = |p: egui::Pos2, graph: &NodeGraphState| graph.nodes.iter().any(|n| n.id != new_id
+                && (n.position.x - p.x).abs() < NODE_WIDTH + 10.0 && (n.position.y - p.y).abs() < NODE_HEIGHT + 10.0);
+            for _ in 0..40 { if !taken(at, graph) { break; } at.x += NODE_WIDTH + 30.0; }
+            if let Some(node) = graph.nodes.iter_mut().find(|n| n.id == new_id) { node.position = at; }
+            if let Some((src, out, _)) = from {
+                let has_input = graph.nodes.iter().find(|n| n.id == new_id).map(|n| !n.inputs.is_empty()).unwrap_or(false);
+                if has_input { graph.add_connection(src, out, new_id, 0); }
+            }
+            graph.selected_node = Some(new_id);
+            graph.selected_nodes = vec![new_id];
+            // Never leave a new node out of sight: move the view just enough.
+            let rect = egui::Rect::from_min_size(to_screen(at), egui::vec2(NODE_WIDTH, NODE_HEIGHT) * zoom);
+            let view = canvas_rect.shrink(12.0);
+            let mut shift = egui::Vec2::ZERO;
+            if rect.max.x > view.max.x { shift.x = view.max.x - rect.max.x; }
+            if rect.min.x + shift.x < view.min.x { shift.x = view.min.x - rect.min.x; }
+            if rect.max.y > view.max.y { shift.y = view.max.y - rect.max.y; }
+            if rect.min.y + shift.y < view.min.y { shift.y = view.min.y - rect.min.y; }
+            graph.pan_offset += shift;
+        }
         if ui.input(|i| i.key_pressed(egui::Key::Escape)) { close = true; }
-        if ui.input(|i| i.pointer.any_click()) && !area_resp.response.contains_pointer() {
+        if !opened_now && ui.input(|i| i.pointer.any_click()) && !area_resp.response.contains_pointer()
+            && !ui.ctx().memory(|m| m.any_popup_open()) {
             close = true;
         }
         if close {
             graph.tab_menu_screen_pos = None;
             graph.tab_menu_canvas_pos = None;
+            graph.menu_from = None;
         }
     }
 
-    // ── Background + grid ────────────────────────────────────────────────────
-    painter.rect_filled(canvas_rect, 0.0, xsi::BG());
     let grid_spacing = 50.0 * zoom;
     let offset_x = pan.x % grid_spacing;
     let offset_y = pan.y % grid_spacing;
@@ -270,13 +345,6 @@ pub fn draw_node_graph(ui: &mut egui::Ui, graph: &mut NodeGraphState) -> Option<
         }
     }
 
-    // ── RMB context menu ──────────────────────────────────────────────────────
-    response.context_menu(|ui| {
-        let ptr = ui.input(|i| i.pointer.hover_pos().unwrap_or_default());
-        let cp  = to_canvas(ptr);
-        add_node_menu(ui, graph, cp);
-    });
-
     dive_into
 }
 
@@ -436,7 +504,10 @@ fn draw_node(
             egui::Align2::CENTER_TOP, &out.name,
             egui::FontId::proportional(9.0 * zoom), xsi::TEXT_DIM());
 
-        if sr.drag_started() || (sr.is_pointer_button_down_on() && graph.connecting_from.is_none()) {
+        // The left button draws a wire. The right button opens the add-node
+        // menu for this socket, handled with the canvas.
+        let left = ui.input(|i| i.pointer.primary_down());
+        if left && (sr.drag_started_by(egui::PointerButton::Primary) || (sr.is_pointer_button_down_on() && graph.connecting_from.is_none())) {
             graph.connecting_from = Some((id, i));
         }
     }

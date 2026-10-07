@@ -63,6 +63,18 @@ pub const TEMPLATES: &[Template] = &[
         hint: "Folder of takes, split per character, animation and skinned T-pose written per character" },
 ];
 
+impl Template {
+    /// Build the template, lay its graph out and bring it into view.
+    pub fn load(&self, graph: &mut NodeGraphState, subnets: &mut SubnetStore) -> String {
+        let message = (self.build)(graph, subnets);
+        let (selected, many) = (graph.selected_node, graph.selected_nodes.clone());
+        graph.auto_layout();
+        graph.selected_node = selected;
+        graph.selected_nodes = many;
+        message
+    }
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 fn p(x: f32, y: f32) -> egui::Pos2 { egui::pos2(x, y) }
@@ -512,6 +524,44 @@ fn mocap_blank(g: &mut NodeGraphState, _: &mut SubnetStore) -> String {
 mod tests {
     use super::*;
     use crate::types::{MeshData, SubnetId};
+
+    #[test]
+    fn every_template_is_laid_out_in_clear_rows() {
+        use crate::node_graph::ui::{NODE_HEIGHT, NODE_WIDTH};
+        for t in TEMPLATES {
+            let mut g = NodeGraphState::default();
+            t.load(&mut g, &mut SubnetStore::default());
+            assert!(g.frame_request, "{}", t.name);
+            // No node on top of another.
+            for (i, a) in g.nodes.iter().enumerate() {
+                for b in &g.nodes[..i] {
+                    let apart = (a.position.x - b.position.x).abs() >= NODE_WIDTH + 20.0
+                        || (a.position.y - b.position.y).abs() >= NODE_HEIGHT + 20.0;
+                    assert!(apart, "{}: {} overlaps {}", t.name, a.name, b.name);
+                }
+            }
+            // Every wire runs downwards, and nothing sits below Output.
+            let at = |id| g.nodes.iter().find(|n| n.id == id).unwrap().position;
+            for c in &g.connections {
+                assert!(at(c.to_node).y > at(c.from_node).y, "{}: a wire runs upwards", t.name);
+            }
+            let out = at(output(&g)).y;
+            assert!(g.nodes.iter().all(|n| n.position.y <= out), "{}", t.name);
+        }
+    }
+
+    #[test]
+    fn a_chain_lays_out_as_a_straight_line() {
+        let mut g = NodeGraphState::default();
+        let a = g.add_node("A".into(), NodeType::CreateCube { size: 1.0 }, p(500.0, 300.0));
+        let b = g.add_node("B".into(), transform([0.0; 3], [0.0; 3], [1.0; 3]), p(-80.0, 10.0));
+        g.add_connection(a, 0, b, 0);
+        let out = output(&g);
+        g.add_connection(b, 0, out, 0);
+        g.auto_layout();
+        let x: Vec<f32> = [a, b, out].iter().map(|id| g.nodes.iter().find(|n| n.id == *id).unwrap().position.x).collect();
+        assert!(x.iter().all(|v| (v - x[0]).abs() < 0.5), "{x:?}");
+    }
 
     #[test]
     fn every_template_builds_something_to_look_at() {

@@ -686,15 +686,21 @@ impl egui_dock::TabViewer for Panes<'_> {
                         if ui.button("💾 Save").on_hover_text("Save this graph").clicked() {
                             self.browser.open(BrowseTarget::SaveGraph, BrowseMode::Save, "Save graph", &["json"], "graph.json");
                         }
+                        if ui.button("Tidy").on_hover_text("Lay the nodes out in rows, top to bottom, and bring them into view").clicked() {
+                            self.graph.auto_layout();
+                        }
+                        if ui.button("Frame").on_hover_text("Bring every node into view (F or A over the graph)").clicked() {
+                            self.graph.frame_request = true;
+                        }
                         ui.small_button("?").on_hover_text(
-                            "Right-click or Tab: add a node\nShift+drag: pan\nEsc: cancel a wire\nDouble-click a subnet: dive in\nRing at the left of a node: bypass\nEye at the right: show in the viewport");
+                            "Right-click or Tab: add a node\nShift+drag: pan\nEsc: cancel a wire\nDouble-click a subnet: dive in\nRight-click an output: add a node under it, wired\nF or A: frame every node\nRing at the left of a node: bypass\nEye at the right: show in the viewport");
                         // Ready-made graphs. Picking one replaces the current graph.
                         ui.menu_button("Templates", |ui| {
                             for group in templates::GROUPS {
                                 ui.menu_button(group, |ui| {
                                     for t in templates::TEMPLATES.iter().filter(|t| t.group == group) {
                                         if ui.button(t.name).on_hover_text(t.hint).clicked() {
-                                            self.graph_file.message = (t.build)(self.graph, self.subnets);
+                                            self.graph_file.message = t.load(self.graph, self.subnets);
                                             self.nav.current_subnet = None;
                                             ui.close_menu();
                                         }

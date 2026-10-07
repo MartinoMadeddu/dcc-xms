@@ -70,6 +70,7 @@ Load a folder of FBX takes, split the characters, fix the pose, skin a proxy and
 - **Fast:** the graph is cooked when its content changes, not on every frame
 - **Three themes, all editable:** Light, Dark, and ADHD (dark blues, with orange for whatever is selected or active). A colour editor changes any of them
 - **Layouts as files:** save a layout, load it back, pass it to someone else
+- **A tidy graph:** templates load laid out and framed, "Tidy" does the same to your own graph, and a right-click on an output adds the next node under it, already wired
 - **Compact lists:** the operator stack stays in one column however long the chain is
 
 ![A bypassed node, and the joint picker of Prune Joints](docs/xms_bypass_pick.png)

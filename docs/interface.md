@@ -38,6 +38,21 @@ The layout, the lock and the place of every floating window are saved when they 
 
 When the Viewport pane is closed or hidden behind another tab, the 3D view is not drawn.
 
+## Node graph
+
+| To | Do this |
+|---|---|
+| Add a node | Right-click or press Tab on the canvas. The node is centred on the place you clicked |
+| Add a node after another | Right-click an output socket. The node you pick goes under that node, wired to the socket. If the place is taken it steps to the right |
+| Draw a wire | Drag from an output socket with the left button |
+| Remove a wire | Right-click it |
+| See every node | "Frame" in the header, or F or A over the graph |
+| Tidy the graph | "Tidy" in the header lays the nodes out in rows, top to bottom, Output last, each node above the first node that uses it |
+
+A new node is never left out of sight: the view moves just enough to show it. Templates are laid out with Tidy and framed when they load.
+
+![A template after loading: laid out in rows and framed](xms_graph_layout.png)
+
 ## Node buttons
 
 Each node in the graph has two buttons in its title.
