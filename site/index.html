@@ -7,7 +7,7 @@
 <meta name="description" content="A node-based 3D application written in Rust: polygon modelling, UV and UDIM, USD at production size, motion capture. Free builds for Linux, macOS and Windows.">
 <meta property="og:title" content="XMS | Imago">
 <meta property="og:description" content="Node-based 3D in Rust: modelling, UV, USD, mocap. Free builds for Linux, macOS and Windows.">
-<meta property="og:image" content="https://srlegrand.github.io/dcc-xms/splash.png">
+<meta property="og:image" content="https://srlegrand.github.io/xms-imago/splash.png">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="icon" type="image/png" href="icon.png">
 <style>
@@ -231,12 +231,12 @@
           <h3>On the <em>cover disk</em></h3>
           <p>Built from every change to the source. These always fetch the newest build: unpack, run xms, pick a template.</p>
           <div class="dls">
-            <a class="dl" data-os="windows" href="https://github.com/srlegrand/dcc-xms/releases/latest/download/xms-windows-x86_64.zip"><span class="os">Windows</span><span class="what">64-bit · .zip</span><span class="go">Get it</span></a>
-            <a class="dl" data-os="linux" href="https://github.com/srlegrand/dcc-xms/releases/latest/download/xms-linux-x86_64.tar.gz"><span class="os">Linux</span><span class="what">x86-64 · .tar.gz</span><span class="go">Get it</span></a>
-            <a class="dl" data-os="mac-arm" href="https://github.com/srlegrand/dcc-xms/releases/latest/download/xms-macos-arm64.tar.gz"><span class="os">macOS</span><span class="what">Apple silicon · .tar.gz</span><span class="go">Get it</span></a>
-            <a class="dl" data-os="mac-intel" href="https://github.com/srlegrand/dcc-xms/releases/latest/download/xms-macos-x86_64.tar.gz"><span class="os">macOS</span><span class="what">Intel · .tar.gz</span><span class="go">Get it</span></a>
+            <a class="dl" data-os="windows" href="https://github.com/srlegrand/xms-imago/releases/latest/download/xms-windows-x86_64.zip"><span class="os">Windows</span><span class="what">64-bit · .zip</span><span class="go">Get it</span></a>
+            <a class="dl" data-os="linux" href="https://github.com/srlegrand/xms-imago/releases/latest/download/xms-linux-x86_64.tar.gz"><span class="os">Linux</span><span class="what">x86-64 · .tar.gz</span><span class="go">Get it</span></a>
+            <a class="dl" data-os="mac-arm" href="https://github.com/srlegrand/xms-imago/releases/latest/download/xms-macos-arm64.tar.gz"><span class="os">macOS</span><span class="what">Apple silicon · .tar.gz</span><span class="go">Get it</span></a>
+            <a class="dl" data-os="mac-intel" href="https://github.com/srlegrand/xms-imago/releases/latest/download/xms-macos-x86_64.tar.gz"><span class="os">macOS</span><span class="what">Intel · .tar.gz</span><span class="go">Get it</span></a>
           </div>
-          <p class="build" id="build">&gt; LATEST BUILD: <a href="https://github.com/srlegrand/dcc-xms/releases/latest">see releases</a></p>
+          <p class="build" id="build">&gt; LATEST BUILD: <a href="https://github.com/srlegrand/xms-imago/releases/latest">see releases</a></p>
           <p class="build">&gt; UNSIGNED. macOS: right-click, Open, the first time. Windows: "More info", "Run anyway".</p>
         </div>
       </aside>
@@ -493,8 +493,8 @@
     <div class="spread">
       <div>
         <p class="standfirst">The whole program is open source. With Rust installed, three lines get you a build.</p>
-<pre class="listing"><span class="n">10 </span>git clone https://github.com/srlegrand/dcc-xms
-<span class="n">20 </span>cd dcc-xms
+<pre class="listing"><span class="n">10 </span>git clone https://github.com/srlegrand/xms-imago
+<span class="n">20 </span>cd xms-imago
 <span class="n">30 </span>cargo run --release
 <span class="n">40 </span><span class="c">REM  Ubuntu or Debian, first:</span>
 <span class="n">50 </span>sudo apt install build-essential pkg-config \
@@ -507,7 +507,7 @@
           <tr><td>Engine</td><td>Bevy, with egui for the interface</td></tr>
           <tr><td>Graphics</td><td>Vulkan, Metal or DirectX 12, through wgpu</td></tr>
           <tr><td>Builds</td><td>Linux x86-64, Windows x86-64, macOS Apple silicon and Intel, from every change</td></tr>
-          <tr><td>Manual</td><td><a href="https://github.com/srlegrand/dcc-xms/tree/main/docs">docs/</a> in the repository, updated with every change</td></tr>
+          <tr><td>Manual</td><td><a href="https://github.com/srlegrand/xms-imago/tree/main/docs">docs/</a> in the repository, updated with every change</td></tr>
         </table></div>
       </div>
     </div>
@@ -542,14 +542,14 @@
       <div><div class="role">Created by</div><div class="who">Martino Madeddu</div>
         <p>The node graph, the viewport, the ICE subnets and the look of the interface. <a href="https://github.com/MartinoMadeddu/xms-imago">The original project</a>.</p></div>
       <div><div class="role">Additional development by</div><div class="who">Simon Legrand</div>
-        <p>Polygon modelling, UV, USD, motion capture and the dockable interface. <a href="https://github.com/srlegrand/dcc-xms">This fork</a>.</p></div>
+        <p>Polygon modelling, UV, USD, motion capture and the dockable interface. <a href="https://github.com/srlegrand/xms-imago">This fork</a>.</p></div>
     </div>
     </div>
   </article>
 
   <footer>
     <span>XMS: Cross-data Manipulation System</span>
-    <span><a href="https://github.com/srlegrand/dcc-xms">Source</a> · <a href="https://github.com/srlegrand/dcc-xms/tree/main/docs">Manual</a> · <a href="https://github.com/srlegrand/dcc-xms/releases">All builds</a> · <a href="https://github.com/srlegrand/dcc-xms/issues">Report a problem</a></span>
+    <span><a href="https://github.com/srlegrand/xms-imago">Source</a> · <a href="https://github.com/srlegrand/xms-imago/tree/main/docs">Manual</a> · <a href="https://github.com/srlegrand/xms-imago/releases">All builds</a> · <a href="https://github.com/srlegrand/xms-imago/issues">Report a problem</a></span>
   </footer>
 </div>
 
@@ -572,7 +572,7 @@
   })();
 
   // Name the newest build, from GitHub's public record of it.
-  fetch("https://api.github.com/repos/srlegrand/dcc-xms/releases/latest")
+  fetch("https://api.github.com/repos/srlegrand/xms-imago/releases/latest")
     .then(function (r) { return r.ok ? r.json() : null; })
     .then(function (rel) {
       if (!rel || !rel.tag_name) return;

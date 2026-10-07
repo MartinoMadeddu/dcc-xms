@@ -8,9 +8,9 @@ This is Simon Legrand's fork of [MartinoMadeddu/xms-imago](https://github.com/Ma
 
 ![Splash](assets/splash.png)
 
-**[xms | imago website](https://srlegrand.github.io/dcc-xms/)** · **[Download a build](https://github.com/srlegrand/dcc-xms/releases)** for Linux, macOS or Windows, pick a template, and start changing numbers.
+**[xms | imago website](https://srlegrand.github.io/xms-imago/)** · **[Download a build](https://github.com/srlegrand/xms-imago/releases)** for Linux, macOS or Windows, pick a template, and start changing numbers.
 
-[![The website](docs/xms_site.png)](https://srlegrand.github.io/dcc-xms/)
+[![The website](docs/xms_site.png)](https://srlegrand.github.io/xms-imago/)
 
 ## Everything stays live
 
@@ -108,7 +108,7 @@ Load a folder of FBX takes, split the characters, fix the pose, skin a proxy and
 
 ## Get it
 
-**Download:** binaries for Linux, macOS and Windows are built from every change to `main` and published on the [Releases page](https://github.com/srlegrand/dcc-xms/releases). See [docs/releases.md](docs/releases.md).
+**Download:** binaries for Linux, macOS and Windows are built from every change to `main` and published on the [Releases page](https://github.com/srlegrand/xms-imago/releases). See [docs/releases.md](docs/releases.md).
 
 **Build from source:**
 

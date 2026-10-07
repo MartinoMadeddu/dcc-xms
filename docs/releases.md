@@ -1,6 +1,6 @@
 # Builds and releases
 
-Every push to `main` that changes code is built by GitHub Actions for Linux, macOS and Windows, and published on the [Releases page](https://github.com/srlegrand/dcc-xms/releases) as "Build N". Changes to documentation alone do not trigger a build.
+Every push to `main` that changes code is built by GitHub Actions for Linux, macOS and Windows, and published on the [Releases page](https://github.com/srlegrand/xms-imago/releases) as "Build N". Changes to documentation alone do not trigger a build.
 
 | File | Platform |
 |---|---|
@@ -27,7 +27,7 @@ On Ubuntu or Debian, first:
 
 ## Website
 
-The page at https://srlegrand.github.io/dcc-xms/ is the `site/` folder of the repository, published by `.github/workflows/pages.yml` on every push to `main` that touches the site, the screenshots in `docs/` or the artwork in `assets/`.
+The page at https://srlegrand.github.io/xms-imago/ is the `site/` folder of the repository, published by `.github/workflows/pages.yml` on every push to `main` that touches the site, the screenshots in `docs/` or the artwork in `assets/`.
 
 Its download buttons point at `releases/latest/download/<file>`, so they always fetch the newest build without the page being touched. The page also names the newest build, from GitHub's public record of it.
 
@@ -35,7 +35,7 @@ The page is laid out as a 3D magazine of the 1990s: a cover, a contents page wit
 
 ![The website](xms_site.png)
 
-One-time setup on GitHub: Settings > Pages > Source: "GitHub Actions".
+One-time setup on GitHub: Settings > Pages > Source: "GitHub Actions". With "Deploy from a branch" selected instead, GitHub also publishes the README as a plain page at the same address, and whichever of the two finished last is what visitors get.
 
 To look at the site before pushing:
 
