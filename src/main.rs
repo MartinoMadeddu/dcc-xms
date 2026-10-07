@@ -6,6 +6,8 @@ mod properties;
 mod viewport;
 mod ice;
 mod usd_loader;
+mod usd_scene;
+mod usda_text;
 mod prim_inspector;
 mod fbx_loader;
 mod fbx_writer;
@@ -17,6 +19,7 @@ mod theme;
 mod modelling;
 mod layout;
 mod uv_editor;
+mod uv_canvas;
 mod examples;
 mod templates;
 
@@ -399,7 +402,12 @@ fn dcc_ui(
     // The dock area only offers places beside single panes. While a tab is
     // dragged, the four edges of the window are drop places too: the pane
     // then spans that whole side, as the timeline does by default.
-    let (down, moving, let_go) = ctx.input(|i| (i.pointer.primary_down(), i.pointer.is_decidedly_dragging(), i.pointer.primary_released()));
+    // A drag is the pointer travelling, not a long press: holding a tab
+    // still never docks it.
+    let (down, moving, let_go) = ctx.input(|i| {
+        let travelled = match (i.pointer.press_origin(), i.pointer.interact_pos()) { (Some(a), Some(b)) => a.distance(b) > 8.0, _ => false };
+        (i.pointer.primary_down(), i.pointer.is_decidedly_dragging() && travelled, i.pointer.primary_released())
+    });
     if let Some(pane) = tab_pressed { if layout.tab_drag.is_none() { layout.tab_drag = Some((pane, false)); } }
     if let Some((pane, moved)) = layout.tab_drag {
         let released = let_go || !down;

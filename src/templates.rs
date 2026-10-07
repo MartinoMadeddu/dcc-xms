@@ -18,7 +18,7 @@ pub struct Template {
     pub build: fn(&mut NodeGraphState, &mut SubnetStore) -> String,
 }
 
-pub const GROUPS: [&str; 4] = ["Basics", "Modelling", "UV", "Animation & Mocap"];
+pub const GROUPS: [&str; 5] = ["Basics", "Modelling", "UV", "USD", "Animation & Mocap"];
 
 pub const TEMPLATES: &[Template] = &[
     Template { group: "Basics", name: "Primitives", build: primitives,
@@ -47,6 +47,12 @@ pub const TEMPLATES: &[Template] = &[
         hint: "A box unwrapped, then islands moved, turned and scaled in a UV Edit node" },
     Template { group: "UV", name: "UDIM tiles", build: uv_udim,
         hint: "A body and two hands made of separate pieces, unwrapped over three UDIM tiles: each hand keeps its fingers on its own tile" },
+    Template { group: "USD", name: "USD: heavy model", build: usd_heavy,
+        hint: "A 460,000 triangle model as 43 packed primitives. Select the Load USD node for its materials and textures; open the UV Editor for its UVs" },
+    Template { group: "USD", name: "USD: pick and edit", build: usd_pick,
+        hint: "One wheel picked out of the model and moved. Only the picked primitive goes through the Transform and Edit Poly nodes" },
+    Template { group: "USD", name: "USD: prune", build: usd_prune,
+        hint: "The model cut down to its wheels and callipers with a path pattern" },
     Template { group: "Animation & Mocap", name: "Clip basics", build: clip_basics,
         hint: "Test clip renamed, trimmed, retimed and given a start timecode. Select each node to see the timeline follow" },
     Template { group: "Animation & Mocap", name: "FBX import", build: fbx_import,
@@ -351,6 +357,39 @@ fn bolt(g: &mut NodeGraphState, _: &mut SubnetStore) -> String {
     g.add_connection(cube, 0, ep, 0);
     finish(g, ep, ep, p(180.0, 260.0));
     "Edit Poly bolt: chamfer, slice, outline, vertex extrude and hinge. Change the hinge angle in the last operation.".into()
+}
+
+// ── USD ──────────────────────────────────────────────────────────────────────
+
+fn load_delorean(g: &mut NodeGraphState) -> NodeId {
+    crate::graph_io::clear(g);
+    g.add_node("DeLorean".into(), NodeType::LoadUsd { path: examples::path(examples::DELOREAN_USD) }, p(180.0, 20.0))
+}
+
+fn usd_heavy(g: &mut NodeGraphState, _: &mut SubnetStore) -> String {
+    let load = load_delorean(g);
+    finish(g, load, load, p(180.0, 130.0));
+    format!("USD: 43 packed primitives, 461,595 triangles. The Properties of the Load USD node list its materials and textures. The UV Editor tab shows its UVs.{}", missing_examples())
+}
+
+fn usd_pick(g: &mut NodeGraphState, _: &mut SubnetStore) -> String {
+    let load = load_delorean(g);
+    let pick = g.add_node("PickWheel".into(), NodeType::PickPrims { pattern: "Wheel_Front_L".into() }, p(180.0, 110.0));
+    let lift = g.add_node("PullOut".into(), transform([0.6, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]), p(180.0, 200.0));
+    let edit = g.add_node("EditWheel".into(), edit_poly(vec![], PolySelection::default()), p(180.0, 290.0));
+    g.add_connection(load, 0, pick, 0);
+    g.add_connection(pick, 0, lift, 0);
+    g.add_connection(lift, 0, edit, 0);
+    finish(g, edit, pick, p(180.0, 380.0));
+    format!("USD pick: the front left wheel is picked by a path pattern, pulled out by the Transform, and is what the Edit Poly node edits. The other 42 primitives pass through untouched.{}", missing_examples())
+}
+
+fn usd_prune(g: &mut NodeGraphState, _: &mut SubnetStore) -> String {
+    let load = load_delorean(g);
+    let prune = g.add_node("WheelsOnly".into(), NodeType::PrunePrims { pattern: "Wheel, Calliper".into(), keep: true }, p(180.0, 110.0));
+    g.add_connection(load, 0, prune, 0);
+    finish(g, prune, prune, p(180.0, 200.0));
+    format!("USD prune: only the primitives whose path matches the pattern are kept. Switch to \"Remove the matches\" for the car without its wheels.{}", missing_examples())
 }
 
 // ── UV ───────────────────────────────────────────────────────────────────────

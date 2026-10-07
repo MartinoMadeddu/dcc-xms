@@ -60,7 +60,8 @@ pub fn input_mesh(
     let node = graph.nodes.iter().find(|n| n.id == id)?;
     let (src, out) = node.inputs.first()?.connected_output?;
     let mut cache = std::collections::HashMap::new();
-    let mesh = graph.eval_node_out(src, out, &mut cache, eval_subnet)?.into_mesh();
+    // On packed primitives with some picked, the tools see only those.
+    let mesh = graph.eval_node_out(src, out, &mut cache, eval_subnet)?.work_mesh();
     (!mesh.vertices.is_empty()).then(|| PolyMesh::from_mesh(&mesh))
 }
 

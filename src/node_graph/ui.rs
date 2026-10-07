@@ -727,6 +727,21 @@ fn add_node_menu(ui: &mut egui::Ui, graph: &mut NodeGraphState, cp: egui::Pos2) 
             if ui.button(label).clicked() { graph.add_node(name.into(), node, cp); added = true; }
         }
     });
+    ui.menu_button("📂  USD", |ui| {
+        ui.set_min_width(190.0);
+        if ui.button("📂  Load USD").clicked() {
+            graph.add_node("LoadUSD".into(), NodeType::LoadUsd { path: String::new() }, cp); added = true;
+        }
+        if ui.button("👆  Pick Primitives").on_hover_text("Choose packed primitives for the nodes that follow to work on").clicked() {
+            graph.add_node("Pick".into(), NodeType::PickPrims { pattern: String::new() }, cp); added = true;
+        }
+        if ui.button("✂  Prune Primitives").on_hover_text("Remove packed primitives, or keep only some").clicked() {
+            graph.add_node("Prune".into(), NodeType::PrunePrims { pattern: String::new(), keep: false }, cp); added = true;
+        }
+        if ui.button("📦  Unpack").on_hover_text("Merge packed primitives into one mesh").clicked() {
+            graph.add_node("Unpack".into(), NodeType::UnpackPrims, cp); added = true;
+        }
+    });
     ui.menu_button("🗺  UV", |ui| {
         ui.set_min_width(170.0);
         if ui.button("🗺  UV Unwrap").clicked() {

@@ -51,18 +51,8 @@ pub fn load_usd_meshes(path: &Path) -> UsdResult<Vec<(String, MeshData)>> {
 // TRANSFORM HELPERS
 // ============================================================================
 
-/// Decompose a flat 16-element row-major matrix from USD into a bevy Mat4.
-/// USD stores matrices row-major, bevy uses column-major, so we transpose.
-fn mat4_from_usd_flat(v: &[f64]) -> Mat4 {
-    if v.len() < 16 { return Mat4::IDENTITY; }
-    // USD row-major → transpose to get column-major for bevy
-    Mat4::from_cols(
-        Vec4::new(v[0]  as f32, v[4]  as f32, v[8]  as f32, v[12] as f32),
-        Vec4::new(v[1]  as f32, v[5]  as f32, v[9]  as f32, v[13] as f32),
-        Vec4::new(v[2]  as f32, v[6]  as f32, v[10] as f32, v[14] as f32),
-        Vec4::new(v[3]  as f32, v[7]  as f32, v[11] as f32, v[15] as f32),
-    )
-}
+/// A flat USD matrix as a bevy matrix: see `usd_scene::mat4_from_usd`.
+fn mat4_from_usd_flat(v: &[f64]) -> Mat4 { crate::usd_scene::mat4_from_usd(v) }
 
 fn mat4_from_translate(t: [f64; 3]) -> Mat4 {
     Mat4::from_translation(Vec3::new(t[0] as f32, t[1] as f32, t[2] as f32))

@@ -32,6 +32,14 @@ The Templates menu in the node graph header holds ready-made graphs. Picking one
 | UDIM tiles | A body and two hands made of separate pieces, unwrapped over three tiles |
 | Edit UV islands | A box unwrapped, the layout scaled with UV Transform, two islands moved with UV Edit |
 
+## USD
+
+| Template | Shows |
+|---|---|
+| USD: heavy model | A 461,595 triangle model as 43 packed primitives, with its materials, textures and UVs |
+| USD: pick and edit | One wheel picked by a path pattern, moved, and handed to an Edit Poly node. The other primitives pass through |
+| USD: prune | The model cut down to its wheels and callipers |
+
 ## Animation & Mocap
 
 | Template | Shows |
@@ -51,6 +59,7 @@ In the `examples` folder:
 | File | Content |
 |---|---|
 | `takes/S3_12point5_002.fbx` | A real motion capture take: two characters ("Skeleton 001" and "Skeleton 002"), 136 bones, 728 frames at 120 fps |
+| `DeLorean.usdz` | A production-size model: 43 mesh prims, 461,595 triangles, 30 materials, 40 textures. By VTX (https://sketchfab.com/VTX_car), CC BY-NC-SA 4.0: no commercial use. See `examples/CREDITS.md` |
 | `shapes.usda` | Three meshes: pyramid, prism, octahedron |
 | `table.usda` | A table: a top and four legs, five meshes |
 

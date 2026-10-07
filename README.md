@@ -16,7 +16,7 @@ Nothing is baked. A mesh is a cube node followed by the operations that shaped i
 
 ![Twelve of the built-in templates](docs/xms_templates.png)
 
-Twenty templates ship with the program, one for each area of it. Each loads a working graph and tells you what to try.
+Twenty-three templates ship with the program, one for each area of it. Each loads a working graph and tells you what to try.
 
 ## Polygon modelling in a single node
 
@@ -40,6 +40,16 @@ Edit Poly keeps a whole modelling session in one node, modelled on the Edit Poly
 ![The sea mine unwrapped: 339 islands in the UV Editor](docs/xms_uv_editor.png)
 
 ![Nine separate pieces spread over three UDIM tiles](docs/xms_udim.png)
+
+## USD, at production size
+
+- **Packed primitives:** a USD file comes in as one piece per mesh prim, passed along without copying. A 460,000 triangle model stays light until you touch part of it
+- **Pick, then edit:** Pick Primitives chooses pieces by path pattern. Edit Poly, Transform and the UV nodes then work on those and pass the rest through
+- **A full transform stack:** every `xformOp`, in order, with units and up axis converted
+- **What is in the file:** materials with their textures, cameras, skeletons and lights are listed on the node, along with what is not read yet
+- **UVs from the file**, shown in a UV editor that draws a million edges
+
+![A 461,595 triangle USD model, one wheel picked and pulled out](docs/xms_usd_pick.png)
 
 ## Motion capture, from take to engine
 
@@ -88,7 +98,6 @@ Load a folder of FBX takes, split the characters, fix the pose, skin a proxy and
 - Cube, sphere and grid primitives, Transform, Merge
 - Scatter Points and Copy To Points
 - ICE-style subnets: graphs inside a node
-- USD import (`.usda`, `.usdc`, `.usdz`)
 - Primitive Inspector: a spreadsheet of the selected node. Vertex, Edge, Polygon, FaceVarying and Constant tabs for a mesh, Joint and Bone tabs for a clip
 - Graphs saved and loaded as JSON
 
@@ -106,13 +115,14 @@ On Ubuntu or Debian, first:
 
 ## Documentation
 
-[docs/](docs/README.md): interface, templates, Edit Poly, UV, viewport navigation, animation and mocap, builds and releases.
+[docs/](docs/README.md): interface, templates, Edit Poly, UV, USD, viewport navigation, animation and mocap, builds and releases.
 
 ## Not done yet
 
 - Undo
 - Edit Poly: interactive cut and quickslice, extrude along spline, target weld, attach, smoothing groups, material IDs, paint deformation, constraints
-- UV: editing single UV vertices and edges, a checker in the viewport, UVs kept through Edit Poly and Copy To Points, UVs in FBX and USD files. Unwrapping is LSCM only: ABF++, SLIM and BFF are not implemented
+- USD: materials and textures in the viewport, cameras, animation and skinning, references to other files, instancing, writing USD
+- UV: editing single UV vertices and edges, a checker in the viewport, UVs kept through Edit Poly and Copy To Points, UVs in FBX files. Unwrapping is LSCM only: ABF++, SLIM and BFF are not implemented
 - Mocap: IK, foot planting, characterization
 - Meshes and skinning read from FBX
 - Timeline zoom and pan
@@ -121,6 +131,10 @@ On Ubuntu or Debian, first:
 - The program icon inside the file itself (Windows Explorer, macOS dock). The window and task bar icon is set on X11 and Windows
 - Viewport interaction has been tested with simulated input, not yet thoroughly by hand
 - Import into Unreal has not been tested. Written files were checked by reading them back and against a reference script, on one OptiTrack Motive take
+
+## Example files
+
+The USD model in `examples/DeLorean.usdz` is by VTX (https://sketchfab.com/VTX_car), under CC BY-NC-SA 4.0: it may not be used commercially. See `examples/CREDITS.md`.
 
 ## Credit
 

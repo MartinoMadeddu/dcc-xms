@@ -156,6 +156,8 @@ impl NodeGraphState {
             | NodeType::CreateSphere { .. }
             | NodeType::CreateGrid { .. }
             | NodeType::LoadUsd { .. }      => (vec![], vec![o("Mesh")]),
+            NodeType::PickPrims { .. } | NodeType::PrunePrims { .. } | NodeType::UnpackPrims
+                => (vec![i("Prims")], vec![o("Prims")]),
             NodeType::Transform { .. }      => (vec![i("Input")], vec![o("Output")]),
             NodeType::Merge                 => (vec![i("A"), i("B")], vec![o("Result")]),
             NodeType::ScatterPoints { .. }  => (vec![i("Surface")], vec![o("Points")]),
@@ -346,6 +348,27 @@ impl NodeGraphState {
             node.position = egui::pos2((x[i] - left + 40.0).round(), row[i] as f32 * DY + 20.0);
         }
         self.frame_request = true;
+    }
+
+    /// Paths of the packed primitives on an output socket, with whether each
+    /// is picked. Kept until the graph changes: the properties panel asks
+    /// every frame.
+    pub fn eval_packed(
+        &self, id: NodeId, output: usize,
+        eval_subnet: &impl Fn(SubnetId, &MeshData, Option<&MeshData>) -> MeshData,
+    ) -> Option<Vec<(String, bool)>> {
+        type Kept = (u64, usize, usize, Option<Vec<(String, bool)>>);
+        static LAST: std::sync::Mutex<Option<Kept>> = std::sync::Mutex::new(None);
+        let key = self.content_hash();
+        if let Ok(last) = LAST.lock() {
+            if let Some((k, i, o, value)) = &*last { if *k == key && *i == id.0 && *o == output { return value.clone(); } }
+        }
+        let value = match self.eval_node_out(id, output, &mut HashMap::new(), eval_subnet) {
+            Some(EvalResult::Named(prims)) => Some(prims.iter().map(|p| (p.path.clone(), p.picked)).collect()),
+            _ => None,
+        };
+        if let Ok(mut last) = LAST.lock() { *last = Some((key, id.0, output, value.clone())); }
+        value
     }
 
     pub fn toggle_bypass(&mut self, node_id: NodeId) {

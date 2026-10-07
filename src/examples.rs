@@ -13,6 +13,9 @@ pub const TAKES_DIR:  &str = "takes";
 pub const TAKE_FBX:   &str = "takes/S3_12point5_002.fbx";
 pub const SHAPES_USD: &str = "shapes.usda";
 pub const TABLE_USD:  &str = "table.usda";
+/// A production-size model: 43 mesh prims, 461,595 triangles, 30 materials.
+/// By VTX (https://sketchfab.com/VTX_car), CC BY-NC-SA 4.0.
+pub const DELOREAN_USD: &str = "DeLorean.usdz";
 
 /// The examples folder: the one named by XMS_EXAMPLES, next to the program,
 /// at the root of the source tree when run through cargo, or in the working

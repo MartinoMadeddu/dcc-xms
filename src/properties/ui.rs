@@ -114,6 +114,16 @@ pub fn draw_properties(
     let all_writers  = batch::write_nodes(graph);
     let batch_files  = batch::file_count(graph, &batch::upstream_folder_loaders(graph, &[sel_id]));
     let mut resync   = false;
+    // Packed primitives coming into the node: their paths, and which are picked.
+    // Asked only for the nodes that list them: it cooks what is upstream.
+    let packed_in: Vec<(String, bool)> = graph.nodes.iter().find(|n| n.id == sel_id)
+        .filter(|n| matches!(n.node_type, NodeType::PickPrims { .. } | NodeType::PrunePrims { .. } | NodeType::UnpackPrims))
+        .and_then(|n| n.inputs.first()).and_then(|i| i.connected_output)
+        .and_then(|(src, out)| {
+            let pass = |_: crate::types::SubnetId, m: &crate::types::MeshData, _: Option<&crate::types::MeshData>| m.clone();
+            graph.eval_packed(src, out, &pass)
+        }).unwrap_or_default();
+    let prim_paths: Vec<String> = packed_in.iter().map(|p| p.0.clone()).collect();
 
     // Type-specific parameters
     if let Some(node) = graph.nodes.iter_mut().find(|n| n.id == sel_id) {
@@ -159,6 +169,34 @@ pub fn draw_properties(
                 ui.label(egui::RichText::new("Supported: .usda  .usdc  .usdz")
                     .color(egui::Color32::from_gray(160))
                     .small());
+                if !path.is_empty() { usd_summary(ui, path); }
+            }
+            NodeType::PickPrims { pattern } => {
+                section_label(ui, "Pick primitives");
+                section(ui, |ui| {
+                    pattern_field(ui, "pick_prims", "Paths:", pattern, &prim_paths, false);
+                    ui.colored_label(xsi::DIM(), egui::RichText::new(
+                        "Nodes after this one work on the picked primitives only and pass the others through. Edit Poly, Transform and the UV nodes all do.").small());
+                    if prim_paths.is_empty() { ui.colored_label(xsi::DIM(), "No packed primitives coming in. Connect a Load USD node."); }
+                });
+            }
+            NodeType::PrunePrims { pattern, keep } => {
+                section_label(ui, "Prune primitives");
+                section(ui, |ui| {
+                    pattern_field(ui, "prune_prims", "Paths:", pattern, &prim_paths, false);
+                    ui.horizontal(|ui| {
+                        ui.selectable_value(keep, false, "Remove the matches");
+                        ui.selectable_value(keep, true, "Keep only the matches");
+                    });
+                    if prim_paths.is_empty() { ui.colored_label(xsi::DIM(), "No packed primitives coming in. Connect a Load USD node."); }
+                });
+            }
+            NodeType::UnpackPrims => {
+                section(ui, |ui| {
+                    ui.colored_label(xsi::LABEL(), format!("{} packed primitives in, one mesh out", prim_paths.len()));
+                    ui.colored_label(xsi::DIM(), egui::RichText::new(
+                        "Merges every primitive into a single mesh. Nodes that need one mesh do this on their own; use Unpack to make it explicit, or to drop a pick.").small());
+                });
             }
             NodeType::Transform { translation, rotation, scale } => {
                 section_label(ui, "Translation");
@@ -1236,6 +1274,59 @@ fn section(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
         .inner_margin(egui::vec2(8.0, 6.0))
         .rounding(4.0)
         .show(ui, add);
+}
+
+/// What a USD file holds, from the cached stage.
+fn usd_summary(ui: &mut egui::Ui, path: &str) {
+    let scene = match crate::usd_scene::load_cached(path) {
+        Ok(s) => s,
+        Err(e) => { ui.colored_label(egui::Color32::from_rgb(210, 120, 60), format!("Could not read the file: {e}")); return; }
+    };
+    ui.add_space(4.0);
+    section_label(ui, "Stage");
+    section(ui, |ui| {
+        ui.colored_label(xsi::LABEL(), format!("{} mesh primitives, {} triangles", scene.meshes.len(), scene.triangles()));
+        let unit = match scene.meters_per_unit { Some(u) => format!("{u} m per unit, converted to metres"), None => "unit not stated, left as it is".to_string() };
+        ui.colored_label(xsi::DIM(), format!("Up axis {}, {unit}", scene.up_axis));
+        if let Some((start, end, rate)) = scene.time {
+            ui.colored_label(xsi::DIM(), format!("Time {start} to {end} at {rate} per second"));
+        }
+        let kinds: Vec<String> = scene.prim_counts.iter().map(|(k, n)| format!("{n} {k}")).collect();
+        ui.colored_label(xsi::DIM(), egui::RichText::new(format!("Prims: {}", kinds.join(", "))).small());
+    });
+    let list = |ui: &mut egui::Ui, title: String, rows: Vec<(String, String)>| {
+        if rows.is_empty() { return; }
+        ui.add_space(2.0);
+        egui::CollapsingHeader::new(title).default_open(false).show(ui, |ui| {
+            egui::ScrollArea::vertical().id_source(ui.id().with("usd_rows")).max_height(180.0).show(ui, |ui| {
+                for (name, detail) in rows {
+                    ui.colored_label(xsi::LABEL(), name);
+                    if !detail.is_empty() { ui.colored_label(xsi::DIM(), egui::RichText::new(detail).small()); }
+                }
+            });
+        });
+    };
+    let leaf = |p: &str| p.rsplit('/').next().unwrap_or(p).to_string();
+    list(ui, format!("Materials ({})", scene.materials.len()), scene.materials.iter().map(|m| {
+        let mut parts = vec![];
+        if let Some(c) = m.diffuse { parts.push(format!("colour {:.2} {:.2} {:.2}", c[0], c[1], c[2])); }
+        if let Some(v) = m.roughness { parts.push(format!("roughness {v:.2}")); }
+        if let Some(v) = m.metallic { parts.push(format!("metallic {v:.2}")); }
+        if let Some(v) = m.opacity { parts.push(format!("opacity {v:.2}")); }
+        for (role, file) in &m.textures { parts.push(format!("{role}: {file}")); }
+        (leaf(&m.path), parts.join("\n"))
+    }).collect());
+    list(ui, format!("Cameras ({})", scene.cameras.len()), scene.cameras.iter().map(|c| {
+        (leaf(&c.path), format!("{} {} mm, aperture {} x {}, clip {} to {}, at {:.2} {:.2} {:.2}",
+            c.projection, c.focal_length, c.aperture[0], c.aperture[1], c.clip[0], c.clip[1], c.position[0], c.position[1], c.position[2]))
+    }).collect());
+    list(ui, format!("Skeletons ({})", scene.skeletons.len()), scene.skeletons.iter().map(|s| (leaf(&s.path), format!("{} joints", s.joints.len()))).collect());
+    list(ui, format!("Lights ({})", scene.lights.len()), scene.lights.iter().map(|(p, k)| (leaf(p), k.clone())).collect());
+    if !scene.notes.is_empty() {
+        ui.add_space(2.0);
+        section_label(ui, "Not read in full");
+        section(ui, |ui| { for n in &scene.notes { ui.colored_label(xsi::DIM(), egui::RichText::new(n).small()); } });
+    }
 }
 
 /// A name pattern: comma-separated regular expressions (see

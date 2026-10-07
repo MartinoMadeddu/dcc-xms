@@ -57,6 +57,12 @@ pub enum NodeType {
     CreateSphere { radius: f32, segments: u32 },
     CreateGrid   { rows: u32, cols: u32, size: f32 },
     LoadUsd      { path: String },
+    /// Mark packed primitives whose path matches a pattern as picked.
+    PickPrims    { pattern: String },
+    /// Remove packed primitives whose path matches a pattern, or keep only those.
+    PrunePrims   { pattern: String, keep: bool },
+    /// Merge packed primitives into one mesh.
+    UnpackPrims,
     Transform    {
         #[serde(with = "vec3_array")] translation: Vec3,
         #[serde(with = "vec3_array")] rotation:    Vec3,
@@ -185,6 +191,9 @@ pub fn node_type_icon(t: &NodeType) -> &'static str {
         NodeType::CreateSphere { .. }  => "●",
         NodeType::CreateGrid { .. }    => "⊞",
         NodeType::LoadUsd { .. }       => "📂",
+        NodeType::PickPrims { .. }     => "👆",
+        NodeType::PrunePrims { .. }    => "✂",
+        NodeType::UnpackPrims          => "📦",
         NodeType::Transform { .. }     => "⟲",
         NodeType::Merge                => "⊕",
         NodeType::ScatterPoints { .. } => "∷",
@@ -226,6 +235,9 @@ pub fn node_type_label(t: &NodeType) -> &'static str {
         NodeType::CreateSphere { .. }  => "Create Sphere",
         NodeType::CreateGrid { .. }    => "Create Grid",
         NodeType::LoadUsd { .. }       => "Load USD",
+        NodeType::PickPrims { .. }     => "Pick Primitives",
+        NodeType::PrunePrims { .. }    => "Prune Primitives",
+        NodeType::UnpackPrims          => "Unpack",
         NodeType::Transform { .. }     => "Transform",
         NodeType::Merge                => "Merge",
         NodeType::ScatterPoints { .. } => "Scatter Points",
@@ -484,8 +496,20 @@ impl MeshData {
 
 #[derive(Clone, Debug)]
 pub struct NamedMesh {
-    pub path:  String,
-    pub mesh:  MeshData,
+    pub path:     String,
+    /// Shared: a packed primitive is passed along without being copied.
+    pub mesh:     std::sync::Arc<MeshData>,
+    /// Chosen by a Pick Primitives node. Nodes that change a mesh then work
+    /// on the picked primitives and pass the others through untouched.
+    pub picked:   bool,
+    /// Path of the material bound to it in the file it came from.
+    pub material: Option<String>,
+}
+
+impl NamedMesh {
+    pub fn new(path: String, mesh: MeshData) -> Self {
+        Self { path, mesh: std::sync::Arc::new(mesh), picked: false, material: None }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -500,10 +524,10 @@ impl EvalResult {
     pub fn into_mesh(self) -> MeshData {
         match self {
             EvalResult::Single(m) => m,
-            EvalResult::Named(prims) => prims.into_iter().map(|p| p.mesh).fold(
-                MeshData::default(),
-                |acc, m| crate::node_graph::nodes::merge(&acc, &m),
-            ),
+            EvalResult::Named(prims) => {
+                let all: Vec<&MeshData> = prims.iter().map(|p| &*p.mesh).collect();
+                crate::node_graph::nodes::merge_all(&all)
+            }
             EvalResult::Anim(_) => MeshData::default(),
         }
     }
@@ -514,6 +538,50 @@ impl EvalResult {
 
     pub fn as_mesh(&self) -> MeshData {
         self.clone().into_mesh()
+    }
+
+    /// True when this is packed primitives with at least one picked.
+    pub fn has_picked(&self) -> bool {
+        matches!(self, EvalResult::Named(prims) if prims.iter().any(|p| p.picked))
+    }
+
+    /// The mesh a modifying node works on: the picked primitives as one
+    /// mesh when some are picked, everything as one mesh otherwise.
+    pub fn work_mesh(&self) -> MeshData {
+        match self {
+            EvalResult::Named(prims) if prims.iter().any(|p| p.picked) => {
+                let picked: Vec<&MeshData> = prims.iter().filter(|p| p.picked).map(|p| &*p.mesh).collect();
+                crate::node_graph::nodes::merge_all(&picked)
+            }
+            other => other.as_mesh(),
+        }
+    }
+
+    /// Run a mesh operation. On packed primitives with some picked, only
+    /// those go through it: they come out as one primitive, still picked,
+    /// in the place of the first of them, and the rest pass through as they
+    /// are. Otherwise everything is merged and goes through.
+    pub fn map_mesh(&self, op: impl FnOnce(MeshData) -> MeshData) -> EvalResult {
+        match self {
+            EvalResult::Named(prims) if prims.iter().any(|p| p.picked) => {
+                let result = op(self.work_mesh());
+                let mut out: Vec<NamedMesh> = Vec::with_capacity(prims.len());
+                let mut result = Some(result);
+                for p in prims {
+                    if !p.picked { out.push(p.clone()); continue; }
+                    if let Some(mesh) = result.take() {
+                        out.push(NamedMesh { path: p.path.clone(), mesh: std::sync::Arc::new(mesh), picked: true, material: p.material.clone() });
+                    }
+                }
+                EvalResult::Named(out)
+            }
+            other => EvalResult::Single(op(other.as_mesh())),
+        }
+    }
+
+    /// Paths of the packed primitives, in order.
+    pub fn prim_paths(&self) -> Vec<String> {
+        match self { EvalResult::Named(prims) => prims.iter().map(|p| p.path.clone()).collect(), _ => vec![] }
     }
 }
 

@@ -20,7 +20,16 @@ pub struct UvEditorState {
     // The layout being shown, rebuilt when the graph revision moves.
     key:       Option<(Option<NodeId>, u64)>,
     mesh:      Option<Arc<MeshData>>,
-    edges:     Vec<([f32; 2], [f32; 2], bool, u32)>,
+    edges:     Vec<crate::uv_canvas::Edge>,
+    /// Show island borders only.
+    pub borders_only: bool,
+    /// The wire layer as drawn last, and what it was drawn for.
+    wire:      Option<egui::TextureHandle>,
+    wire_key:  Option<(u64, crate::uv_canvas::View, crate::uv_canvas::Options, u64)>,
+    /// How long the last redraw of the wire layer took, in milliseconds.
+    wire_ms:   f32,
+    /// Edge count the borders-only default was last chosen for.
+    auto_for:  usize,
     island_of: Vec<usize>,
     islands:   usize,
     coverage:  f32,
@@ -28,19 +37,29 @@ pub struct UvEditorState {
     tiles:     Vec<(i32, i32)>,
     /// Fit the view to the tiles on the next frame.
     fit:       bool,
+    /// That fit takes in UVs that repeat outside the unit square.
+    fit_all:   bool,
 }
 
 impl Default for UvEditorState {
     fn default() -> Self {
         Self {
             pan: egui::Vec2::ZERO, zoom: 1.0, selected: None, key: None, mesh: None,
-            edges: vec![], island_of: vec![], islands: 0, coverage: 0.0, tiles: vec![], fit: true,
+            edges: vec![], island_of: vec![], islands: 0, coverage: 0.0, tiles: vec![], fit: true, fit_all: false,
+            borders_only: false, wire: None, wire_key: None, wire_ms: 0.0, auto_for: 0,
         }
     }
 }
 
 /// More edges than this are not drawn one by one.
-const MAX_EDGES: usize = 150_000;
+/// True when the tiles in use read as UDIM tiles: on the ten-wide grid,
+/// none below zero, and not hundreds of them.
+fn udim_like(tiles: &[(i32, i32)]) -> bool {
+    tiles.len() <= 200 && tiles.iter().all(|(u, v)| (0..crate::core::uv::UDIM_ROW as i32).contains(u) && *v >= 0)
+}
+
+/// Edge count past which the editor starts in borders-only.
+const AUTO_BORDERS: usize = 300_000;
 
 pub fn draw_uv_editor(
     ui:       &mut egui::Ui,
@@ -57,7 +76,13 @@ pub fn draw_uv_editor(
             Some(m) => {
                 let (island_of, count) = uv::islands(m);
                 state.edges = uv::uv_edges(m).into_iter()
-                    .map(|(a, b, seam, tri)| (a, b, seam, island_of[tri] as u32)).collect();
+                    .map(|(a, b, seam, tri)| crate::uv_canvas::Edge { a, b, seam, island: island_of[tri] as u32 }).collect();
+                // Past this, the inside of the islands is more noise than help.
+                // Decided once per layout size, so the choice made after that sticks.
+                if state.auto_for != state.edges.len() {
+                    state.auto_for = state.edges.len();
+                    state.borders_only = state.edges.len() > AUTO_BORDERS;
+                }
                 state.island_of = island_of;
                 state.islands = count;
                 state.coverage = uv::coverage(m);
@@ -83,7 +108,15 @@ pub fn draw_uv_editor(
             Some(m) => {
                 let n = state.tiles.len().max(1);
                 let used = state.coverage / n as f32 * 100.0;
-                if n > 1 {
+                if !udim_like(&state.tiles) {
+                    // UVs that run far past the unit square are a repeating
+                    // texture, not a set of UDIM tiles.
+                    let (u0, u1) = (state.tiles.iter().map(|t| t.0).min().unwrap_or(0), state.tiles.iter().map(|t| t.0).max().unwrap_or(0) + 1);
+                    let (v0, v1) = (state.tiles.iter().map(|t| t.1).min().unwrap_or(0), state.tiles.iter().map(|t| t.1).max().unwrap_or(0) + 1);
+                    ui.label(format!("{} islands, {} triangles. UVs repeat outside the unit square: u {u0} to {u1}, v {v0} to {v1}",
+                        state.islands, m.indices.len() / 3));
+                    if ui.small_button("Fit all").on_hover_text("Show the whole extent of the UVs").clicked() { state.fit_all = true; state.fit = true; }
+                } else if n > 1 {
                     let numbers: Vec<i32> = state.tiles.iter().map(|(u, v)| uv::udim(*u, *v)).collect();
                     ui.label(format!("{} islands, {} triangles, {} UDIM tiles ({} to {}), {:.0}% of them used",
                         state.islands, m.indices.len() / 3, n, numbers[0], numbers[n - 1], used));
@@ -95,6 +128,11 @@ pub fn draw_uv_editor(
             None => { ui.label("No UVs on the selected node. Add a UV Unwrap node after a mesh."); }
         }
         if ui.small_button("Fit").on_hover_text("Show every tile in use (F)").clicked() { state.fit = true; }
+        ui.checkbox(&mut state.borders_only, "Borders only")
+            .on_hover_text("Draw the outline of each island and leave out the edges inside. Turned on by itself for very dense layouts.");
+        if state.edges.len() > 100_000 {
+            ui.weak(format!("{} edges drawn in {:.0} ms", state.edges.len(), state.wire_ms));
+        }
         if editing {
             ui.weak("Click an island to select it, drag to move it.");
         } else {
@@ -113,7 +151,10 @@ pub fn draw_uv_editor(
     if state.fit && rect.width() > 1.0 {
         state.fit = false;
         let (mut lo, mut hi) = (egui::vec2(0.0, 0.0), egui::vec2(1.0, 1.0));
-        for (u, v) in &state.tiles {
+        // Repeating UVs: the unit square, unless the whole extent is asked for.
+        let whole = udim_like(&state.tiles) || state.fit_all;
+        state.fit_all = false;
+        for (u, v) in state.tiles.iter().filter(|_| whole) {
             lo = lo.min(egui::vec2(*u as f32, *v as f32));
             hi = hi.max(egui::vec2(*u as f32 + 1.0, *v as f32 + 1.0));
         }
@@ -184,7 +225,7 @@ pub fn draw_uv_editor(
     // square is always drawn.
     let pan = state.pan;
     let grid = egui::Color32::from_rgb(54, 57, 64);
-    let mut tiles = state.tiles.clone();
+    let mut tiles = if udim_like(&state.tiles) { state.tiles.clone() } else { vec![] };
     if !tiles.contains(&(0, 0)) { tiles.push((0, 0)); }
     let many = tiles.len() > 1;
     for (tu, tv) in &tiles {
@@ -209,25 +250,34 @@ pub fn draw_uv_editor(
             egui::FontId::monospace(10.0), egui::Color32::from_rgb(130, 135, 145));
     }
 
-    // Edges: inner ones faint, seams bright, the selected island in orange.
-    if state.edges.len() > MAX_EDGES {
-        painter.text(rect.center(), egui::Align2::CENTER_CENTER,
-            format!("{} UV edges: too many to draw", state.edges.len()),
-            egui::FontId::proportional(13.0), egui::Color32::from_rgb(200, 200, 200));
-        return;
-    }
-    let inner  = egui::Stroke::new(1.0_f32, egui::Color32::from_rgba_unmultiplied(170, 175, 185, 90));
-    let seam   = egui::Stroke::new(1.3_f32, egui::Color32::from_rgb(110, 170, 255));
-    let picked = egui::Stroke::new(1.6_f32, egui::Color32::from_rgb(255, 150, 70));
-    let view = rect.expand(2.0);
-    for pass in 0..2 {
-        for (a, b, is_seam, island) in &state.edges {
-            let chosen = state.selected == Some(*island);
-            // Seams and the selection go over the inner edges.
-            if (pass == 1) != (*is_seam || chosen) { continue; }
-            let (pa, pb) = (to_screen(*a, pan), to_screen(*b, pan));
-            if !view.intersects(egui::Rect::from_two_pos(pa, pb)) { continue; }
-            painter.line_segment([pa, pb], if chosen { picked } else if *is_seam { seam } else { inner });
+    // Edges: drawn into a pixel buffer by the canvas and shown as one
+    // texture. Inner ones faint, seams bright, the selected island in the
+    // accent colour. Redrawn only when something it depends on changes.
+    let ppp = ui.ctx().pixels_per_point();
+    let view = crate::uv_canvas::View {
+        w: (rect.width() * ppp).round().max(1.0) as usize,
+        h: (rect.height() * ppp).round().max(1.0) as usize,
+        scale: scale * ppp,
+        ox: (rect.width() * 0.5 + (pan.x - 0.5) * scale) * ppp,
+        // v runs up the screen.
+        oy: (rect.height() * 0.5 + (0.5 - pan.y) * scale) * ppp,
+    };
+    let options = crate::uv_canvas::Options { borders_only: state.borders_only, selected: state.selected, thick: ppp >= 1.5 };
+    let key = (revision, view, options, crate::theme::revision());
+    if state.wire_key != Some(key) || state.wire.is_none() {
+        let accent = crate::theme::accent();
+        let colours = crate::uv_canvas::Colours { inner: [170, 175, 185], seam: [110, 170, 255], picked: [accent.r(), accent.g(), accent.b()] };
+        let started = std::time::Instant::now();
+        let pixels = crate::uv_canvas::raster(&state.edges, &view, &options, &colours);
+        state.wire_ms = started.elapsed().as_secs_f32() * 1000.0;
+        let image = egui::ColorImage::from_rgba_unmultiplied([view.w, view.h], &pixels);
+        match &mut state.wire {
+            Some(texture) => texture.set(image, egui::TextureOptions::NEAREST),
+            None => state.wire = Some(ui.ctx().load_texture("uv_wire", image, egui::TextureOptions::NEAREST)),
         }
+        state.wire_key = Some(key);
+    }
+    if let Some(texture) = &state.wire {
+        painter.image(texture.id(), rect, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE);
     }
 }

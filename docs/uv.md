@@ -53,12 +53,24 @@ A tab behind the Node Graph in the default layout. It draws the UVs of the selec
 
 ![Islands moved with a UV Edit node](xms_uv_islands.png)
 
+## Heavy layouts
+
+The editor draws the layout into a pixel buffer of its own, on several threads, and shows it as one image. It is redrawn only when the view, the layout or an option changes, so a still view costs nothing. There is no limit on the number of edges. The header shows the edge count and the time the last redraw took once a layout passes 100,000 edges.
+
+"Borders only" draws the outline of each island and leaves out the edges inside. It turns itself on for layouts over 300,000 edges, and can be turned off again. Where many inner edges land on one pixel they add up, so density reads as tone.
+
+UVs that run far outside the unit square, as a repeating texture does, are not taken for UDIM tiles: the header gives their extent, Fit shows the unit square and "Fit all" the whole extent.
+
+![The authored UVs of a 461,595 triangle model](xms_uv_heavy.png)
+
+The canvas is built as a stack of layers composed into that image. The wireframe is the only layer today.
+
 ## Not done yet
 
 - Editing single UV vertices and edges, sewing and cutting seams by hand
 - A checker texture in the viewport
 - UVs through Edit Poly, Copy To Points and Scatter. Transform and Merge keep them
-- UVs read from or written to FBX and USD
+- UVs read from FBX, and written to FBX or USD. UVs are read from USD
 - ABF++, SLIM and BFF. Charts with strong curvature stretch under LSCM
 - Packing is by rows, not tight
 - Texel density is even inside a tile, not between tiles
