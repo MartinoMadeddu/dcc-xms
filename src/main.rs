@@ -152,7 +152,7 @@ fn splash(
     let screen = ctx.screen_rect();
     // Painted straight onto a layer above every pane and window.
     let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Debug, egui::Id::new("splash")));
-    painter.rect_filled(screen, 0.0, egui::Color32::from_rgb(10, 16, 30).gamma_multiply(alpha));
+    painter.rect_filled(screen, 0.0, egui::Color32::BLACK.gamma_multiply(alpha));
     // Whole image in view, never enlarged past its own size.
     let size = texture.size_vec2();
     let k = (screen.width() / size.x).min(screen.height() / size.y).min(1.0);
