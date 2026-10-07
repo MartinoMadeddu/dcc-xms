@@ -25,9 +25,13 @@ pub fn evaluate_node_type(
             // Packed primitives: one per mesh prim, shared with the cached stage.
             match crate::usd_scene::load_cached(path) {
                 Ok(scene) if scene.meshes.is_empty() => None,
-                Ok(scene) => Some(EvalResult::Named(scene.meshes.iter().map(|m| NamedMesh {
-                    path: m.path.clone(), mesh: m.mesh.clone(), picked: false, material: m.material.clone(),
-                }).collect())),
+                Ok(scene) => {
+                    let looks = scene.looks();
+                    Some(EvalResult::Named(scene.meshes.iter().map(|m| NamedMesh {
+                        path: m.path.clone(), mesh: m.mesh.clone(), picked: false, material: m.material.clone(),
+                        look: m.material.as_ref().and_then(|p| looks.get(p).cloned()),
+                    }).collect()))
+                }
                 Err(_) => None,
             }
         }

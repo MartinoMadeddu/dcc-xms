@@ -46,10 +46,13 @@ Edit Poly keeps a whole modelling session in one node, modelled on the Edit Poly
 - **Packed primitives:** a USD file comes in as one piece per mesh prim, passed along without copying. A 460,000 triangle model stays light until you touch part of it
 - **Pick, then edit:** Pick Primitives chooses pieces by path pattern. Edit Poly, Transform and the UV nodes then work on those and pass the rest through
 - **A full transform stack:** every `xformOp`, in order, with units and up axis converted
-- **What is in the file:** materials with their textures, cameras, skeletons and lights are listed on the node, along with what is not read yet
+- **Materials and textures in the viewport**, straight from the `.usdz`
+- **What is in the file:** materials, cameras, skeletons and lights are listed on the node, along with what is not read yet
 - **UVs from the file**, shown in a UV editor that draws a million edges
 
-![A 461,595 triangle USD model, one wheel picked and pulled out](docs/xms_usd_pick.png)
+![A 461,595 triangle USD model with its packed textures](docs/xms_usd_textured.png)
+
+![One wheel picked and pulled out](docs/xms_usd_pick.png)
 
 ## Motion capture, from take to engine
 
@@ -121,7 +124,7 @@ On Ubuntu or Debian, first:
 
 - Undo
 - Edit Poly: interactive cut and quickslice, extrude along spline, target weld, attach, smoothing groups, material IDs, paint deformation, constraints
-- USD: materials and textures in the viewport, cameras, animation and skinning, references to other files, instancing, writing USD
+- USD: normal and roughness maps in the viewport, cameras, animation and skinning, references to other files, instancing, writing USD
 - UV: editing single UV vertices and edges, a checker in the viewport, UVs kept through Edit Poly and Copy To Points, UVs in FBX files. Unwrapping is LSCM only: ABF++, SLIM and BFF are not implemented
 - Mocap: IK, foot planting, characterization
 - Meshes and skinning read from FBX

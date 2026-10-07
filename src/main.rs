@@ -475,6 +475,15 @@ fn dcc_ui(
                         if ui.selectable_label(nav_help, "?").on_hover_text("Show the navigation keys").clicked() {
                             nav_help = !nav_help;
                         }
+                        let mut textured = viewport::textures::enabled();
+                        if ui.checkbox(&mut textured, "Textures").on_hover_text("Show the materials and textures of USD primitives").changed() {
+                            viewport::textures::set_enabled(textured);
+                        }
+                        let loading = viewport::textures::pending();
+                        if loading > 0 {
+                            ui.label(egui::RichText::new(format!("loading {loading}")).small());
+                            ui.ctx().request_repaint();
+                        }
                     });
                 });
         });
@@ -823,10 +832,12 @@ fn update_generated_meshes(
     query:        Query<Entity, With<GeneratedMesh>>,
     revision:     Res<node_graph::GraphRevision>,
     mut shown:    Local<Option<(f64, u64)>>,
+    mut images:   ResMut<Assets<Image>>,
+    mut textures: Local<std::collections::HashMap<std::path::PathBuf, Handle<Image>>>,
 ) {
-    // Cook again when the graph changed, the playhead moved or the theme
-    // switched; not when the camera moves.
-    let now = (playback.time, theme::revision());
+    // Cook again when the graph changed, the playhead moved, the theme
+    // switched or a texture finished loading; not when the camera moves.
+    let now = (playback.time, theme::revision() ^ viewport::textures::generation().rotate_left(32));
     if !revision.is_changed() && *shown == Some(now) { return; }
     *shown = Some(now);
     for e in query.iter() { commands.entity(e).despawn(); }
@@ -887,9 +898,55 @@ fn update_generated_meshes(
             GeneratedMesh,
         ));
     }
+    // Packed primitives with materials: one mesh per material, textured.
+    let packed = if stage.is_none() { graph.evaluate_for_viewport_packed(&eval_subnet) } else { None };
+    if let Some(types::EvalResult::Named(prims)) = &packed {
+        if viewport::textures::enabled() && prims.iter().any(|p| p.look.is_some()) {
+            let mut groups: Vec<(Option<std::sync::Arc<types::Look>>, Vec<&MeshData>)> = vec![];
+            for p in prims {
+                match groups.iter_mut().find(|(look, _)| look.as_ref().map(std::sync::Arc::as_ptr) == p.look.as_ref().map(std::sync::Arc::as_ptr)) {
+                    Some((_, list)) => list.push(&p.mesh),
+                    None => groups.push((p.look.clone(), vec![&p.mesh])),
+                }
+            }
+            let mut texture = |path: &Option<std::path::PathBuf>| -> Option<(Handle<Image>, bool)> {
+                let path = path.as_ref()?;
+                let decoded = viewport::textures::request(path)?;
+                let handle = textures.entry(path.clone()).or_insert_with(|| images.add(texture_image(&decoded))).clone();
+                Some((handle, decoded.has_alpha))
+            };
+            for (look, parts) in groups {
+                let md = node_graph::nodes::merge_all(&parts);
+                if md.vertices.is_empty() { continue; }
+                let material = match &look {
+                    Some(look) => {
+                        let color_map = texture(&look.color_map);
+                        let emissive_map = texture(&look.emissive_map);
+                        let see_through = look.opacity < 0.999;
+                        let cut = look.cutout && color_map.as_ref().map(|c| c.1).unwrap_or(false);
+                        StandardMaterial {
+                            base_color: Color::srgba(look.color[0], look.color[1], look.color[2], look.opacity),
+                            base_color_texture: color_map.map(|c| c.0),
+                            emissive: if emissive_map.is_some() { LinearRgba::WHITE } else { LinearRgba::BLACK },
+                            emissive_texture: emissive_map.map(|c| c.0),
+                            perceptual_roughness: look.roughness.clamp(0.089, 1.0),
+                            metallic: look.metallic.clamp(0.0, 1.0),
+                            alpha_mode: if see_through { AlphaMode::Blend } else if cut { AlphaMode::Mask(0.5) } else { AlphaMode::Opaque },
+                            double_sided: true,
+                            cull_mode: None,
+                            ..default()
+                        }
+                    }
+                    None => StandardMaterial { base_color: Color::srgb(0.6, 0.6, 0.6), metallic: 0.1, perceptual_roughness: 0.5, ..default() },
+                };
+                commands.spawn((PbrBundle { mesh: meshes.add(mesh_data_to_bevy_textured(&md)), material: mats.add(material), ..default() }, GeneratedMesh));
+            }
+            return;
+        }
+    }
     let shown = match &stage {
         Some(s) => Some(s.mesh.to_mesh()),
-        None    => graph.evaluate_for_viewport(&eval_subnet),
+        None    => packed.map(|r| r.into_mesh()),
     };
     if let Some(md) = shown {
         if md.vertices.is_empty() { return; }
@@ -1000,6 +1057,55 @@ fn mesh_data_to_bevy(d: &MeshData) -> Mesh {
     m.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
     m.insert_indices(bevy::render::mesh::Indices::U32(indices));
     m
+}
+
+/// A mesh with its texture coordinates. Each triangle corner gets a vertex
+/// of its own, since a vertex can have a different UV in each face. Meshes
+/// without UVs go through `mesh_data_to_bevy`.
+fn mesh_data_to_bevy_textured(d: &MeshData) -> Mesh {
+    if d.uvs.len() != d.indices.len() || d.uvs.is_empty() { return mesh_data_to_bevy(d); }
+    let mut normals = d.normals.clone();
+    if normals.len() != d.vertices.len() {
+        let mut with = d.clone();
+        with.compute_normals();
+        normals = with.normals;
+    }
+    let corner = |i: &u32| *i as usize;
+    let positions: Vec<[f32; 3]> = d.indices.iter().map(|i| d.vertices[corner(i)]).collect();
+    let normals: Vec<[f32; 3]> = d.indices.iter().map(|i| normals.get(corner(i)).copied().unwrap_or([0.0, 1.0, 0.0])).collect();
+    // USD puts v = 0 at the bottom of the image, the GPU at the top.
+    let uvs: Vec<[f32; 2]> = d.uvs.iter().map(|uv| [uv[0], 1.0 - uv[1]]).collect();
+    let mut m = Mesh::new(
+        bevy::render::mesh::PrimitiveTopology::TriangleList,
+        bevy::render::render_asset::RenderAssetUsages::default(),
+    );
+    m.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    m.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    m.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+    m
+}
+
+/// A decoded texture as a GPU image: its smaller copies included, repeating
+/// in both directions, filtered between pixels and between sizes.
+fn texture_image(d: &viewport::textures::Decoded) -> Image {
+    use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+    use bevy::render::texture::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
+    let mut image = Image::new(
+        Extent3d { width: d.width, height: d.height, depth_or_array_layers: 1 },
+        TextureDimension::D2, d.pixels[..(d.width * d.height * 4) as usize].to_vec(),
+        TextureFormat::Rgba8UnormSrgb, bevy::render::render_asset::RenderAssetUsages::RENDER_WORLD,
+    );
+    image.data = d.pixels.clone();
+    image.texture_descriptor.mip_level_count = d.levels;
+    image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+        address_mode_u: ImageAddressMode::Repeat,
+        address_mode_v: ImageAddressMode::Repeat,
+        mag_filter: ImageFilterMode::Linear,
+        min_filter: ImageFilterMode::Linear,
+        mipmap_filter: ImageFilterMode::Linear,
+        ..default()
+    });
+    image
 }
 
 // ── Scene setup ───────────────────────────────────────────────────────────────

@@ -410,6 +410,22 @@ impl NodeGraphState {
     // 👁️ MODIFIED - Now respects view flag
     // Evaluates from the view flag node if set, otherwise from Output.
     // This allows viewing intermediate results in the node chain.
+    /// What the viewport shows, before anything is merged: packed
+    /// primitives keep their materials.
+    pub fn evaluate_for_viewport_packed(
+        &self,
+        eval_subnet: &impl Fn(SubnetId, &MeshData, Option<&MeshData>) -> MeshData,
+    ) -> Option<EvalResult> {
+        let id = self.get_viewport_node()?;
+        let node = self.nodes.iter().find(|n| n.id == id)?;
+        let mut cache = HashMap::new();
+        if matches!(node.node_type, NodeType::Output) {
+            let (src, out) = node.inputs.first()?.connected_output?;
+            return self.eval_node_out(src, out, &mut cache, eval_subnet);
+        }
+        self.eval_node(id, &mut cache, eval_subnet)
+    }
+
     pub fn evaluate_for_viewport(
         &self,
         eval_subnet: &impl Fn(SubnetId, &MeshData, Option<&MeshData>) -> MeshData,

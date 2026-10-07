@@ -504,11 +504,28 @@ pub struct NamedMesh {
     pub picked:   bool,
     /// Path of the material bound to it in the file it came from.
     pub material: Option<String>,
+    /// That material, as far as the viewport can show it.
+    pub look:     Option<std::sync::Arc<Look>>,
+}
+
+/// How a surface looks in the viewport.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Look {
+    pub name:      String,
+    pub color:     [f32; 3],
+    pub roughness: f32,
+    pub metallic:  f32,
+    pub opacity:   f32,
+    /// Texture files, as full paths.
+    pub color_map:    Option<std::path::PathBuf>,
+    pub emissive_map: Option<std::path::PathBuf>,
+    /// The colour texture's alpha cuts the surface out.
+    pub cutout:    bool,
 }
 
 impl NamedMesh {
     pub fn new(path: String, mesh: MeshData) -> Self {
-        Self { path, mesh: std::sync::Arc::new(mesh), picked: false, material: None }
+        Self { path, mesh: std::sync::Arc::new(mesh), picked: false, material: None, look: None }
     }
 }
 
@@ -570,7 +587,7 @@ impl EvalResult {
                 for p in prims {
                     if !p.picked { out.push(p.clone()); continue; }
                     if let Some(mesh) = result.take() {
-                        out.push(NamedMesh { path: p.path.clone(), mesh: std::sync::Arc::new(mesh), picked: true, material: p.material.clone() });
+                        out.push(NamedMesh { path: p.path.clone(), mesh: std::sync::Arc::new(mesh), picked: true, material: p.material.clone(), look: p.look.clone() });
                     }
                 }
                 EvalResult::Named(out)

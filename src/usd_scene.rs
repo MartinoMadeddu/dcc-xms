@@ -59,6 +59,8 @@ pub struct UsdSkeleton {
 
 #[derive(Clone, Debug, Default)]
 pub struct UsdScene {
+    /// Folder the layer was read from: texture paths are relative to it.
+    pub base_dir:        std::path::PathBuf,
     pub meshes:          Vec<UsdMesh>,
     pub cameras:         Vec<UsdCamera>,
     pub materials:       Vec<UsdMaterial>,
@@ -78,6 +80,25 @@ pub struct UsdScene {
 }
 
 impl UsdScene {
+    /// Each material as the viewport can show it, by material path.
+    pub fn looks(&self) -> std::collections::HashMap<String, Arc<crate::types::Look>> {
+        self.materials.iter().map(|m| {
+            let file = |role: &str| m.textures.iter().find(|(r, _)| r == role).map(|(_, f)| self.base_dir.join(f));
+            let look = crate::types::Look {
+                name: m.path.rsplit('/').next().unwrap_or("").to_string(),
+                // A textured surface is white under its texture.
+                color: m.diffuse.unwrap_or(if file("diffuseColor").is_some() { [1.0; 3] } else { [0.6; 3] }),
+                roughness: m.roughness.unwrap_or(0.5),
+                metallic: m.metallic.unwrap_or(0.0),
+                opacity: m.opacity.unwrap_or(1.0),
+                color_map: file("diffuseColor"),
+                emissive_map: file("emissiveColor"),
+                cutout: m.textures.iter().any(|(r, _)| r == "opacity"),
+            };
+            (m.path.clone(), Arc::new(look))
+        }).collect()
+    }
+
     pub fn triangles(&self) -> usize { self.meshes.iter().map(|m| m.mesh.indices.len() / 3).sum() }
 }
 
@@ -406,10 +427,17 @@ fn read_scene(data: Layer) -> UsdScene {
     scene
 }
 
-/// The first `.usda` or `.usdc` inside a `.usdz`, written to a folder of its
-/// own in the temp directory. A usdz stores its files uncompressed.
+/// Unpack a `.usdz` into a folder of its own in the temp directory and
+/// return its first `.usda` or `.usdc`: the root layer. The textures come
+/// out beside it. A usdz stores its files uncompressed. Files already
+/// unpacked at the right size are left alone.
 fn extract_usdz(path: &Path) -> Result<std::path::PathBuf, String> {
+    use std::hash::{Hash, Hasher};
     let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    path.hash(&mut h);
+    let dir = std::env::temp_dir().join(format!("xms_usdz_{:016x}", h.finish()));
+    let mut layer = None;
     let mut i = 0usize;
     while i + 30 < bytes.len() {
         if &bytes[i..i + 4] != b"PK\x03\x04" { i += 1; continue; }
@@ -420,20 +448,17 @@ fn extract_usdz(path: &Path) -> Result<std::path::PathBuf, String> {
         let end = start + size;
         if name_end > bytes.len() || end > bytes.len() { break; }
         let name = String::from_utf8_lossy(&bytes[i + 30..name_end]).to_string();
-        let ext = name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
-        if ext == "usda" || ext == "usdc" || ext == "usd" {
-            use std::hash::{Hash, Hasher};
-            let mut h = std::collections::hash_map::DefaultHasher::new();
-            path.hash(&mut h);
-            let dir = std::env::temp_dir().join(format!("xms_usdz_{:016x}", h.finish()));
-            std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-            let out = dir.join(name.rsplit('/').next().unwrap_or("scene.usdc"));
-            std::fs::write(&out, &bytes[start..end]).map_err(|e| e.to_string())?;
-            return Ok(out);
-        }
         i = end.max(i + 1);
+        // Nothing that would land outside the folder.
+        if name.is_empty() || name.ends_with('/') || name.starts_with('/') || name.split('/').any(|part| part == "..") { continue; }
+        let out = dir.join(&name);
+        if let Some(parent) = out.parent() { std::fs::create_dir_all(parent).map_err(|e| e.to_string())?; }
+        let there = std::fs::metadata(&out).map(|m| m.len() as usize == size).unwrap_or(false);
+        if !there { std::fs::write(&out, &bytes[start..end]).map_err(|e| e.to_string())?; }
+        let ext = name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+        if layer.is_none() && (ext == "usda" || ext == "usdc" || ext == "usd") { layer = Some(out); }
     }
-    Err("no usda or usdc layer inside the usdz".into())
+    layer.ok_or_else(|| "no usda or usdc layer inside the usdz".to_string())
 }
 
 fn open(path: &Path) -> Result<Layer, String> {
@@ -463,6 +488,7 @@ pub fn load(path: &Path) -> Result<UsdScene, String> {
             scene
         }
     };
+    scene.base_dir = layer.parent().map(|p| p.to_path_buf()).unwrap_or_default();
     if scene.meshes.is_empty() && ext != "usdz" {
         // Nothing found: let the older text reader try.
         if let Ok(meshes) = crate::usd_loader::load_usd_meshes(&layer) {

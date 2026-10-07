@@ -27,6 +27,20 @@ The pattern is a name pattern as described in [Interface](interface.md#name-patt
 
 ![One wheel picked out of a 461,595 triangle model and moved](xms_usd_pick.png)
 
+## Materials in the viewport
+
+Packed primitives are drawn with their materials: colour, roughness, metallic, opacity, the colour texture and the emissive texture of a UsdPreviewSurface. Textures packed in a `.usdz` are unpacked beside the layer and used from there.
+
+![The example model with its textures](xms_usd_textured.png)
+
+- Texture files are decoded in the background. A surface shows its plain colour until its texture is ready, and "loading N" shows next to the viewport menu meanwhile.
+- Images larger than 2048 pixels on a side are reduced to that. Each gets its chain of smaller copies, so distant surfaces do not shimmer. Textures repeat outside the unit square.
+- A material with opacity below one is blended. A material whose opacity comes from its colour texture is cut out by that texture's alpha.
+- "Textures" in the viewport menu turns all of this off and shows plain grey.
+- Primitives that share a material are drawn as one mesh.
+
+Not shown: normal, roughness, metallic and occlusion maps, and per-face material subsets. A primitive that has been through Edit Poly loses its UVs, so it shows its material's colour without the texture. A selected Edit Poly node shows the mesh being edited, untextured.
+
 ## What Load USD reads
 
 | | |
@@ -48,7 +62,7 @@ The Properties of a Load USD node show the stage: primitive and triangle counts,
 
 ## Not done yet
 
-- Showing materials and textures in the viewport
+- Normal, roughness, metallic and occlusion maps in the viewport
 - Looking through a USD camera
 - Animation: time samples beyond the first, skeletal animation, skinning, blend shapes
 - Composition across files: references, payloads, sublayers, inherits. Variants in the binary format
