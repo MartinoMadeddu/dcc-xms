@@ -527,11 +527,13 @@ dependencies = [
  "bevy_egui",
  "egui_dock",
  "flate2",
+ "image",
  "openusd",
  "regex",
  "serde",
  "serde_json",
  "ufbx",
+ "winit",
 ]
 
 [[package]]

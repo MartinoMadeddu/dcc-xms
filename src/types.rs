@@ -185,7 +185,7 @@ pub fn node_type_icon(t: &NodeType) -> &'static str {
         NodeType::LoadUsd { .. }       => "📂",
         NodeType::Transform { .. }     => "⟲",
         NodeType::Merge                => "⊕",
-        NodeType::ScatterPoints { .. } => "⁙",
+        NodeType::ScatterPoints { .. } => "∷",
         NodeType::CopyToPoints         => "❇",
         NodeType::Subnet { .. }        => "▣",
         NodeType::Output               => "▶",
@@ -287,9 +287,9 @@ pub fn subnet_node_icon(t: &SubnetNodeType) -> &'static str {
     match t {
         SubnetNodeType::SubInput            => "▶",
         SubnetNodeType::SubOutput           => "◀",
-        SubnetNodeType::AddVec3             => "＋",
-        SubnetNodeType::SubtractVec3        => "－",
-        SubnetNodeType::MultiplyVec3 { .. } => "✕",
+        SubnetNodeType::AddVec3             => "+",
+        SubnetNodeType::SubtractVec3        => "-",
+        SubnetNodeType::MultiplyVec3 { .. } => "×",
         SubnetNodeType::CrossProduct        => "×",
         SubnetNodeType::Normalize           => "|v|",
         SubnetNodeType::DotProduct          => "·",
@@ -297,7 +297,7 @@ pub fn subnet_node_icon(t: &SubnetNodeType) -> &'static str {
         SubnetNodeType::ConstVec3 { .. }    => "→v",
         SubnetNodeType::ConstFloat { .. }   => "→f",
         SubnetNodeType::ConstInt { .. }     => "→i",
-        SubnetNodeType::ScatterPoints { .. } => "⁙",
+        SubnetNodeType::ScatterPoints { .. } => "∷",
         SubnetNodeType::GetTemplate          => "📄",
         SubnetNodeType::CopyToPoints         => "📦",
     }
@@ -627,7 +627,7 @@ fn prim_icon(name: &str, has_children: bool) -> &'static str {
     // Leaf mesh — guess from name
     if lower.contains("cylinder") || lower.contains("tube") { return "🔩"; }
     if lower.contains("sphere")   || lower.contains("ball") { return "🔵"; }
-    if lower.contains("cube")     || lower.contains("box")  { return "🟫"; }
+    if lower.contains("cube")     || lower.contains("box")  { return "⬛"; }
     if lower.contains("plane")    || lower.contains("grid") { return "⬜"; }
     if lower.contains("cone")                               { return "🔺"; }
     "🔹"  // generic mesh leaf

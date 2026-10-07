@@ -41,7 +41,16 @@ use layout::{Layout, Pane};
 
 fn main() {
     App::new()
-        .add_plugins(DefaultPlugins)
+        .add_plugins(DefaultPlugins.set(WindowPlugin {
+            primary_window: Some(Window {
+                title: "XMS DCC".into(),
+                // Window class on X11 and app id on Wayland, so the desktop
+                // groups the window under its own name.
+                name: Some("xms-dcc".into()),
+                ..default()
+            }),
+            ..default()
+        }))
         .add_plugins(EguiPlugin)
         .init_resource::<NodeGraphState>()
         .init_resource::<CameraOrbitState>()
@@ -64,6 +73,8 @@ fn main() {
         .add_systems(Startup, (setup_scene, setup_egui_theme, setup_gizmos, modelling::setup_gizmos))
         .add_systems(Update, (
             dcc_ui,
+            splash.after(dcc_ui),
+            set_window_icon,
             track_revision.after(dcc_ui).after(modelling::pick_system),
             update_operator_stack.after(track_revision),
             update_scene_hierarchy.after(track_revision),
@@ -82,6 +93,73 @@ fn main() {
 
 fn setup_egui_theme(mut contexts: EguiContexts) {
     theme::init(contexts.ctx_mut());
+}
+
+// ── Icon and splash ──────────────────────────────────────────────────────────
+
+fn decode_png(bytes: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
+    let img = image::load_from_memory_with_format(bytes, image::ImageFormat::Png).ok()?.into_rgba8();
+    let (w, h) = img.dimensions();
+    Some((img.into_raw(), w, h))
+}
+
+/// Give the window its icon, which the task bar shows. Tried every frame
+/// until the window exists. X11 and Windows use it; Wayland and macOS take
+/// the icon from the installed application instead.
+fn set_window_icon(windows: NonSend<bevy::winit::WinitWindows>, mut done: Local<bool>) {
+    if *done || windows.windows.is_empty() { return; }
+    *done = true;
+    let Some((rgba, w, h)) = decode_png(include_bytes!("../assets/icon.png")) else { return };
+    let Ok(icon) = winit::window::Icon::from_rgba(rgba, w, h) else { return };
+    for window in windows.windows.values() { window.set_window_icon(Some(icon.clone())); }
+}
+
+/// How long the splash stays, and how long it takes to fade, in seconds.
+const SPLASH_HOLD: f64 = 1.6;
+const SPLASH_FADE: f64 = 0.4;
+
+/// The splash image, over the whole window while the program starts. A click
+/// or a key sends it away. `XMS_NO_SPLASH` set to anything skips it.
+fn splash(
+    mut contexts: EguiContexts,
+    time:         Res<Time<Real>>,
+    mut state:    Local<Option<(f64, Option<egui::TextureHandle>)>>,
+    mut over:     Local<bool>,
+    mut frames:   Local<u32>,
+) {
+    if *over { return; }
+    *frames += 1;
+    let ctx = contexts.ctx_mut();
+    let now = time.elapsed_seconds_f64();
+    let (start, texture) = state.get_or_insert_with(|| {
+        let texture = decode_png(include_bytes!("../assets/splash.png")).map(|(rgba, w, h)| {
+            ctx.load_texture("splash", egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba), Default::default())
+        });
+        (now, texture)
+    });
+    // The first frames are slow while the renderer warms up: the clock
+    // starts once they are through, so the splash is seen for its full time.
+    if *frames <= 3 { *start = now; }
+    let age = now - *start;
+    let skip = std::env::var_os("XMS_NO_SPLASH").is_some()
+        || ctx.input(|i| i.pointer.any_pressed() || i.events.iter().any(|e| matches!(e, egui::Event::Key { pressed: true, .. })));
+    let Some(texture) = texture.clone().filter(|_| !skip && age < SPLASH_HOLD + SPLASH_FADE) else {
+        *over = true;
+        *state = Some((0.0, None));   // let go of the texture
+        return;
+    };
+    let alpha = (1.0 - (age - SPLASH_HOLD) / SPLASH_FADE).clamp(0.0, 1.0) as f32;
+    let screen = ctx.screen_rect();
+    // Painted straight onto a layer above every pane and window.
+    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Debug, egui::Id::new("splash")));
+    painter.rect_filled(screen, 0.0, egui::Color32::from_rgb(10, 16, 30).gamma_multiply(alpha));
+    // Whole image in view, never enlarged past its own size.
+    let size = texture.size_vec2();
+    let k = (screen.width() / size.x).min(screen.height() / size.y).min(1.0);
+    let rect = egui::Rect::from_center_size(screen.center(), size * k);
+    painter.image(texture.id(), rect, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+        egui::Color32::WHITE.gamma_multiply(alpha));
+    ctx.request_repaint();
 }
 
 // ── UI ────────────────────────────────────────────────────────────────────────
@@ -131,6 +209,18 @@ fn dcc_ui(
                     Err(e)  => format!("Could not open {}: {e}", path.display()),
                 };
             }
+            BrowseTarget::OpenLayout => {
+                graph_file.message = match layout.load_from(&path) {
+                    Ok(())  => format!("Layout loaded from {}", path.display()),
+                    Err(e)  => format!("Could not load layout {}: {e}", path.display()),
+                };
+            }
+            BrowseTarget::SaveLayout => {
+                graph_file.message = match layout.save_as(&path) {
+                    Ok(())  => format!("Layout saved to {}", path.display()),
+                    Err(e)  => format!("Could not save layout {}: {e}", path.display()),
+                };
+            }
             BrowseTarget::SaveGraph => {
                 graph_file.message = match graph_io::save(&graph, &path) {
                     Ok(())  => format!("Saved {}", path.display()),
@@ -174,7 +264,7 @@ fn dcc_ui(
         .show(ctx, |ui| {
             ui.horizontal_centered(|ui| {
                 draw_logo(ui);
-                ui.label(egui::RichText::new("XMS DCC").strong().color(theme::c(225, 225, 225)));
+                ui.label(egui::RichText::new("XMS DCC").strong().color(theme::c(243, 243, 243)));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     // Right to left: the lock sits at the far right, the menu before it.
                     {
@@ -202,11 +292,22 @@ fn dcc_ui(
                                 layout.reset();
                                 ui.close_menu();
                             }
+                            ui.separator();
+                            if ui.button("Save layout...").on_hover_text("Write this layout to a file").clicked() {
+                                browser.open(BrowseTarget::SaveLayout, BrowseMode::Save, "Save layout", &["json"], "layout.json");
+                                ui.close_menu();
+                            }
+                            if ui.add_enabled(!locked, egui::Button::new("Load layout...")).on_hover_text("Replace this layout with one from a file").clicked() {
+                                browser.open(BrowseTarget::OpenLayout, BrowseMode::File, "Load layout", &["json"], "");
+                                ui.close_menu();
+                            }
                             if locked { ui.label(egui::RichText::new("Unlock the layout to change it.").small()); }
                         });
+                        ui.menu_button("Theme ⏷", theme::menu);
                 });
             });
         });
+    theme::editor(ctx);
 
     let mut toggle_float = None;
     let mut dock_rect = ctx.screen_rect();
@@ -224,6 +325,11 @@ fn dcc_ui(
         };
         let mut style = egui_dock::Style::from_egui(ctx.style().as_ref());
         style.tab_bar.fill_tab_bar = true;
+        // Tab titles: readable when idle, brightest on the tab in front.
+        style.tab.inactive.text_color = theme::c(223, 223, 223);
+        style.tab.hovered.text_color  = theme::c(250, 250, 250);
+        style.tab.active.text_color   = theme::c(250, 250, 250);
+        style.tab.focused.text_color  = theme::c(245, 245, 245);
         layout.size_new_windows();
         // What is left under the top bar.
         let screen = ctx.available_rect();
@@ -374,7 +480,7 @@ fn lock_button(ui: &mut egui::Ui, locked: bool) -> egui::Response {
         let fill = if locked { theme::c(80, 95, 115) } else { theme::raised(100, 100, 100) };
         painter.rect_filled(rect, 3.0, fill);
     }
-    let ink = if locked { egui::Color32::from_rgb(240, 240, 240) } else { theme::c(215, 215, 215) };
+    let ink = if locked { egui::Color32::from_rgb(240, 240, 240) } else { theme::c(233, 233, 233) };
     let c = rect.center();
     let body = egui::Rect::from_center_size(c + egui::vec2(0.0, 3.0), egui::vec2(10.0, 7.0));
     painter.rect_filled(body, 1.5, ink);
@@ -533,10 +639,8 @@ impl egui_dock::TabViewer for Panes<'_> {
                         if ui.button("💾 Save").on_hover_text("Save this graph").clicked() {
                             self.browser.open(BrowseTarget::SaveGraph, BrowseMode::Save, "Save graph", &["json"], "graph.json");
                         }
-                        let label = if theme::is_dark() { "Light mode" } else { "Dark mode" };
-                        if ui.button(label).on_hover_text("Switch colour theme").clicked() {
-                            theme::set_dark(ui.ctx(), !theme::is_dark());
-                        }
+                        ui.small_button("?").on_hover_text(
+                            "Right-click or Tab: add a node\nShift+drag: pan\nEsc: cancel a wire\nDouble-click a subnet: dive in\nRing at the left of a node: bypass\nEye at the right: show in the viewport");
                         // Ready-made graphs. Picking one replaces the current graph.
                         ui.menu_button("Templates", |ui| {
                             for group in templates::GROUPS {
@@ -553,9 +657,8 @@ impl egui_dock::TabViewer for Panes<'_> {
                         });
                     });
                     if !self.graph_file.message.is_empty() {
-                        ui.label(&self.graph_file.message);
+                        ui.label(egui::RichText::new(&self.graph_file.message).small().color(theme::c(230, 230, 230)));
                     }
-                    ui.label("Right-click/Tab: add  |  Shift+drag: pan  |  Esc: cancel wire  |  Double-click subnet: dive in");
                     ui.separator();
 
                     // The canvas gets its own child Ui. Nodes are widgets placed
@@ -658,11 +761,11 @@ fn update_generated_meshes(
     mut mats:     ResMut<Assets<StandardMaterial>>,
     query:        Query<Entity, With<GeneratedMesh>>,
     revision:     Res<node_graph::GraphRevision>,
-    mut shown:    Local<Option<(f64, bool)>>,
+    mut shown:    Local<Option<(f64, u64)>>,
 ) {
     // Cook again when the graph changed, the playhead moved or the theme
     // switched; not when the camera moves.
-    let now = (playback.time, theme::is_dark());
+    let now = (playback.time, theme::revision());
     if !revision.is_changed() && *shown == Some(now) { return; }
     *shown = Some(now);
     for e in query.iter() { commands.entity(e).despawn(); }

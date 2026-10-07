@@ -19,8 +19,8 @@ mod xsi {
     pub fn ROW_EVEN() -> Color32 { crate::theme::c(72, 72, 72) }
     pub fn ROW_ODD() -> Color32 { crate::theme::c(66, 66, 66) }
     pub fn BORDER() -> Color32 { crate::theme::c(50, 50, 50) }
-    pub fn TEXT() -> Color32 { crate::theme::c(210, 210, 210) }
-    pub fn TEXT_DIM() -> Color32 { crate::theme::c(150, 150, 150) }
+    pub fn TEXT() -> Color32 { crate::theme::c(228, 228, 228) }
+    pub fn TEXT_DIM() -> Color32 { crate::theme::c(210, 210, 210) }
     pub fn TEXT_IDX() -> Color32 { crate::theme::c(120, 130, 145) }
     pub fn TAB_ACTIVE() -> Color32 { crate::theme::c(80, 95, 115) }
     pub fn TAB_BG() -> Color32 { crate::theme::c(58, 58, 58) }

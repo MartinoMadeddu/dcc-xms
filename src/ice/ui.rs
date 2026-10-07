@@ -26,8 +26,8 @@ mod pal {
     pub fn BORDER_SEL() -> Color32 { crate::theme::c(175, 200, 220) }
     pub fn BORDER_TERM() -> Color32 { crate::theme::c(120, 175, 120) }
     pub fn BORDER_CONST() -> Color32 { crate::theme::c(170, 130, 200) }
-    pub fn TEXT() -> Color32 { crate::theme::c(230, 230, 230) }
-    pub fn TEXT_DIM() -> Color32 { crate::theme::c(185, 185, 185) }
+    pub fn TEXT() -> Color32 { crate::theme::c(248, 248, 248) }
+    pub fn TEXT_DIM() -> Color32 { crate::theme::c(210, 210, 210) }
     pub fn WIRE() -> Color32 { crate::theme::c(160, 160, 160) }
     pub fn WIRE_HOV() -> Color32 { crate::theme::c(220, 185,  90) }
     pub fn BREADCRUMB_BG() -> Color32 { crate::theme::c( 78,  78,  82) }
@@ -218,15 +218,15 @@ pub fn draw_subnet_graph(ui: &mut egui::Ui, graph: &mut SubnetGraph) {
         }
         ui.separator();
         ui.label(egui::RichText::new("Vec3 Math").strong());
-        if ui.button("＋  Add").clicked() {
+        if ui.button("+  Add").clicked() {
             graph.add_node("Add".into(), SubnetNodeType::AddVec3, cp);
             ui.close_menu();
         }
-        if ui.button("－  Subtract").clicked() {
+        if ui.button("-  Subtract").clicked() {
             graph.add_node("Subtract".into(), SubnetNodeType::SubtractVec3, cp);
             ui.close_menu();
         }
-        if ui.button("✕  Multiply").clicked() {
+        if ui.button("×  Multiply").clicked() {
             graph.add_node("Multiply".into(), SubnetNodeType::MultiplyVec3 { scalar: 1.0 }, cp);
             ui.close_menu();
         }

@@ -20,9 +20,9 @@ mod xsi {
     use bevy_egui::egui::Color32;
     pub fn PANEL_BG() -> Color32 { crate::theme::c(118, 118, 118) }
     pub fn SECTION_BG() -> Color32 { crate::theme::c(108, 108, 108) }
-    pub fn HEADER_TEXT() -> Color32 { crate::theme::c(230, 230, 230) }
-    pub fn LABEL() -> Color32 { crate::theme::c(210, 210, 210) }
-    pub fn DIM() -> Color32 { crate::theme::c(170, 170, 170) }
+    pub fn HEADER_TEXT() -> Color32 { crate::theme::c(248, 248, 248) }
+    pub fn LABEL() -> Color32 { crate::theme::c(228, 228, 228) }
+    pub fn DIM() -> Color32 { crate::theme::c(210, 210, 210) }
 }
 
 /// Clips around the selected node and the playhead, so animation nodes can
@@ -152,7 +152,7 @@ pub fn draw_properties(
                 } else if std::path::Path::new(path).exists() {
                     ui.label(egui::RichText::new("✔ File found").color(egui::Color32::from_rgb(140, 200, 140)));
                 } else {
-                    ui.label(egui::RichText::new("✘ File not found").color(egui::Color32::from_rgb(200, 120, 120)));
+                    ui.label(egui::RichText::new("× File not found").color(egui::Color32::from_rgb(200, 120, 120)));
                 }
 
                 ui.separator();
@@ -230,7 +230,7 @@ pub fn draw_properties(
                             }
                         }
                         Err(e) => {
-                            ui.label(egui::RichText::new(format!("✘ {e}")).color(egui::Color32::from_rgb(200, 120, 120)));
+                            ui.label(egui::RichText::new(format!("× {e}")).color(egui::Color32::from_rgb(200, 120, 120)));
                         }
                     }
                 });
@@ -331,7 +331,7 @@ pub fn draw_properties(
                 section(ui, |ui| {
                     path_row(ui, dir, "/path/to/folder", io, sel_id, BrowseMode::Folder, "Choose FBX folder", &["fbx"]);
                     if files.is_empty() {
-                        let msg = if dir.is_empty() { "No folder set" } else { "✘ No .fbx files in this folder" };
+                        let msg = if dir.is_empty() { "No folder set" } else { "× No .fbx files in this folder" };
                         ui.label(egui::RichText::new(msg).color(egui::Color32::from_rgb(200, 120, 120)));
                         return;
                     }
@@ -370,7 +370,7 @@ pub fn draw_properties(
                             }
                         }
                         Err(e) => {
-                            ui.label(egui::RichText::new(format!("✘ {e}")).color(egui::Color32::from_rgb(200, 120, 120)));
+                            ui.label(egui::RichText::new(format!("× {e}")).color(egui::Color32::from_rgb(200, 120, 120)));
                         }
                     }
                 });
@@ -1055,8 +1055,6 @@ pub fn draw_properties(
     }
     if resync { graph.sync_sockets(sel_id); }
 
-    ui.add_space(6.0);
-    ui.colored_label(xsi::DIM(), format!("「{}」", node_name));
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

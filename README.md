@@ -6,6 +6,8 @@ This is Simon Legrand's fork of [MartinoMadeddu/xms-imago](https://github.com/Ma
 
 ![The sea mine template: eleven Edit Poly operations on one cube, about 9,600 polygons](docs/xms_sea_mine.png)
 
+![Splash](assets/splash.png)
+
 **[Download a build](https://github.com/srlegrand/dcc-xms/releases)** for Linux, macOS or Windows, pick a template, and start changing numbers.
 
 ## Everything stays live
@@ -63,11 +65,17 @@ Load a folder of FBX takes, split the characters, fix the pose, skin a proxy and
 - **Your navigation:** Maya, Houdini, XSI, Blender, Max, Modo or Unreal viewport controls, from a menu
 - **Remembered:** layout, floating windows, theme and navigation style come back at the next start
 - **Fast:** the graph is cooked when its content changes, not on every frame
-- **Light and dark themes**
+- **Three themes, all editable:** Light, Dark, and ADHD (dark blues, with orange for whatever is selected or active). A colour editor changes any of them
+- **Layouts as files:** save a layout, load it back, pass it to someone else
+- **Compact lists:** the operator stack stays in one column however long the chain is
 
 ![A bypassed node, and the joint picker of Prune Joints](docs/xms_bypass_pick.png)
 
-![The default layout, with the top bar](docs/xms_layout.png)
+![The ADHD theme, with the colour editor](docs/xms_theme_adhd.png)
+
+![The dark theme](docs/xms_theme_dark.png)
+
+![The default layout in the light theme](docs/xms_layout.png)
 
 ![Docking a pane along a whole side of the window](docs/xms_edge_dock.png)
 
@@ -106,6 +114,7 @@ On Ubuntu or Debian, first:
 - Timeline zoom and pan
 - Curve cleanup
 - ICE subnet contents in saved graphs
+- The program icon inside the file itself (Windows Explorer, macOS dock). The window and task bar icon is set on X11 and Windows
 - Viewport interaction has been tested with simulated input, not yet thoroughly by hand
 - Import into Unreal has not been tested. Written files were checked by reading them back and against a reference script, on one OptiTrack Motive take
 

@@ -260,6 +260,24 @@ impl Layout {
         for pane in Pane::ALL { self.dock_pane(pane); }
     }
 
+    /// Write the layout to a file of the user's choosing.
+    pub fn save_as(&self, path: &std::path::Path) -> Result<(), String> {
+        let text = to_json(&self.dock, self.locked).ok_or("the layout could not be written as text")?;
+        std::fs::write(path, text).map_err(|e| e.to_string())
+    }
+
+    /// Replace the layout with one read from a file. The current layout is
+    /// kept when the file is not a layout.
+    pub fn load_from(&mut self, path: &std::path::Path) -> Result<(), String> {
+        let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+        let (dock, locked) = from_json(&text).ok_or("not a layout file")?;
+        self.dock = dock;
+        self.locked = locked;
+        self.sized.clear();
+        self.restore_windows();
+        Ok(())
+    }
+
     /// Write the layout if it changed since the last write.
     pub fn save_if_changed(&mut self) {
         let Some(text) = to_json(&self.dock, self.locked) else { return };
@@ -279,6 +297,25 @@ mod tests {
     fn layout() -> Layout { Layout { dock: default_dock(), locked: false, saved: String::new(), sized: vec![], tab_drag: None } }
     const ALL: usize = Pane::ALL.len();
     fn open(l: &Layout) -> usize { Pane::ALL.iter().filter(|p| l.is_open(**p)).count() }
+
+    #[test]
+    fn layout_file_round_trip() {
+        let dir = std::env::temp_dir().join(format!("xms_layout_test_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("mine.json");
+        let mut a = layout();
+        a.hide(Pane::UvEditor);
+        a.locked = true;
+        a.save_as(&file).unwrap();
+        let mut b = layout();
+        b.load_from(&file).unwrap();
+        assert!(b.locked && !b.is_open(Pane::UvEditor) && open(&b) == ALL - 1);
+        // Something that is not a layout leaves the layout alone.
+        std::fs::write(&file, "{\"nodes\": []}").unwrap();
+        assert!(b.load_from(&file).is_err());
+        assert!(b.locked && open(&b) == ALL - 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn default_layout_has_every_pane_once() {

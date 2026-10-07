@@ -21,8 +21,8 @@ mod xsi {
     pub fn NODE_TITLE_SUB() -> Color32 { crate::theme::c( 80,  90, 100) }
     pub fn BORDER() -> Color32 { crate::theme::outline( 70,  70,  70) }
     pub fn BORDER_SEL() -> Color32 { crate::theme::c(180, 200, 220) }
-    pub fn TEXT() -> Color32 { crate::theme::c(230, 230, 230) }
-    pub fn TEXT_DIM() -> Color32 { crate::theme::c(190, 190, 190) }
+    pub fn TEXT() -> Color32 { crate::theme::c(248, 248, 248) }
+    pub fn TEXT_DIM() -> Color32 { crate::theme::c(210, 210, 210) }
     pub fn WIRE() -> Color32 { crate::theme::c(160, 160, 155) }
     pub fn WIRE_HOV() -> Color32 { crate::theme::c(220, 185,  90) }
     pub fn SOCK_IN() -> Color32 { crate::theme::c(100, 140, 100) }
@@ -576,7 +576,7 @@ fn add_node_menu(ui: &mut egui::Ui, graph: &mut NodeGraphState, cp: egui::Pos2) 
     }
     ui.separator();
     ui.label(egui::RichText::new("Scatter").strong());
-    if ui.button("⁙  Scatter Points").clicked() {
+    if ui.button("∷  Scatter Points").clicked() {
         graph.add_node("ScatterPoints".into(), NodeType::ScatterPoints { count: 100, seed: 42 }, cp); added = true;
     }
     if ui.button("❇  Copy to Points").clicked() {

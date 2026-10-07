@@ -14,8 +14,8 @@ mod xsi {
     pub fn CLIP_EDGE() -> Color32 { crate::theme::c(160, 195, 225) }
     pub fn TICK() -> Color32 { crate::theme::c(150, 150, 150) }
     pub fn TICK_MINOR() -> Color32 { crate::theme::c(112, 112, 112) }
-    pub fn TEXT() -> Color32 { crate::theme::c(230, 230, 230) }
-    pub fn TEXT_DIM() -> Color32 { crate::theme::c(185, 185, 185) }
+    pub fn TEXT() -> Color32 { crate::theme::c(248, 248, 248) }
+    pub fn TEXT_DIM() -> Color32 { crate::theme::c(210, 210, 210) }
     pub fn PLAYHEAD() -> Color32 { crate::theme::c(235, 190,  95) }
 }
 

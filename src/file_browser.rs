@@ -27,6 +27,8 @@ pub enum BrowseTarget {
     Node(NodeId),
     OpenGraph,
     SaveGraph,
+    OpenLayout,
+    SaveLayout,
 }
 
 struct Request {

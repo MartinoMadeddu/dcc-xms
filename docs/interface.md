@@ -4,7 +4,7 @@
 
 ## Top bar
 
-A fixed line across the top of the window, for things that belong to the whole program. It holds the logo and the name on the left, the Panes menu and the layout padlock on the right. It is not a pane: it cannot be moved, floated or closed.
+A fixed line across the top of the window, for things that belong to the whole program. It holds the logo and the name on the left, the Theme menu, the Panes menu and the layout padlock on the right. It is not a pane: it cannot be moved, floated or closed.
 
 ## Panes
 
@@ -21,6 +21,8 @@ Eight panes: Viewport, Node Graph, UV Editor, Scene Explorer, Operator Stack, Pr
 | Show a closed pane | Tick it in the Panes menu, in the top bar. It comes back as a tab of the main area |
 | Resize | Drag the line between two panes, or the corner of a floating window |
 | Start over | "Reset layout" in the Panes menu |
+| Keep a layout | "Save layout..." in the Panes menu writes it to a file |
+| Bring one back | "Load layout..." in the Panes menu. A file that is not a layout is refused and the current layout stays |
 
 Right-clicking a tab offers the same close and float actions.
 
@@ -72,7 +74,42 @@ With the cursor over the viewport:
 
 ## Theme
 
-Light by default. "Dark mode" in the node graph header switches, and the choice is kept.
+The Theme menu in the top bar has three schemes. The choice is kept.
+
+| Scheme | Look |
+|---|---|
+| Light | The original grey theme. The default |
+| Dark | Neutral dark greys with strong text contrast |
+| ADHD | Dark blue surfaces. Orange marks whatever is selected or active, and nothing else |
+
+![The ADHD scheme, with the colour editor](xms_theme_adhd.png)
+
+![The dark scheme](xms_theme_dark.png)
+
+### Colour editor
+
+"Edit colours..." in the Theme menu opens it. A scheme is six colours:
+
+| Colour | Used for |
+|---|---|
+| Darkest surface | Canvases, text fields |
+| Lightest surface | Nodes, buttons. Every other surface sits between the two |
+| Text | Names, values |
+| Dim text | Labels, hints |
+| Accent | Selection, active flags, highlights |
+| Outline | Node borders, window edges |
+
+Changes show at once and are saved as you edit, in `theme.json` in the config folder. "Start from" loads a preset, "Reset" undoes the edits to the current one. Colours that carry meaning (axes, wires, warnings) are the same in every scheme. The 3D viewport background does not follow the scheme.
+
+## Operator Stack
+
+One row per node, from Output down to the sources. A chain of single inputs stays in one column however long it is. Only a node with several inputs, such as a Merge, steps its branches in. The triangle at the left of a row folds what is under it: it shows at branch points, on folded rows, and under the cursor. The type of the node is at the right when there is room. A bypassed node is struck through.
+
+## Splash and icon
+
+A splash image covers the window for about two seconds at start. A click or a key sends it away. Setting the environment variable `XMS_NO_SPLASH` skips it.
+
+The window has its own icon, shown in the task bar on X11 and Windows. On Wayland and macOS the desktop takes the icon from an installed application entry or bundle, which the program does not ship. The icon of the file itself in Windows Explorer is not set. Both images are in `assets/`.
 
 ## Primitive Inspector
 
