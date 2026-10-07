@@ -186,7 +186,8 @@ impl Joint {
     }
 }
 
-/// Mesh bound to a skeleton, each vertex following exactly one joint.
+/// Mesh bound to a skeleton. Each vertex follows one joint, or, when
+/// `weights` is filled in, a blend of up to four.
 #[derive(Clone, Debug, Default)]
 pub struct SkinMesh {
     /// Bind-pose positions, world space, metres.
@@ -198,6 +199,9 @@ pub struct SkinMesh {
     pub joint:     Vec<u32>,
     /// World matrix of every joint in the bind pose.
     pub bind:      Vec<Mat4>,
+    /// Joints and weights per vertex, heaviest first, summing to one. Empty
+    /// for a mesh whose vertices each follow `joint` alone.
+    pub weights:   Vec<[(u32, f32); 4]>,
 }
 
 /// One manual correction applied by the Fix Pose node.
@@ -581,6 +585,21 @@ impl SkinMesh {
         let skin: Vec<Mat4> = pose.iter().zip(&self.bind).map(|(p, b)| *p * b.inverse()).collect();
         let mut pos = Vec::with_capacity(self.positions.len());
         let mut nrm = Vec::with_capacity(self.positions.len());
+        if self.weights.len() == self.positions.len() {
+            // Linear blend: the weighted mean of where each joint takes the vertex.
+            for i in 0..self.positions.len() {
+                let (mut p, mut n) = (Vec3::ZERO, Vec3::ZERO);
+                for (j, w) in self.weights[i] {
+                    if w <= 0.0 { continue; }
+                    let Some(m) = skin.get(j as usize) else { continue };
+                    p += m.transform_point3(self.positions[i]) * w;
+                    n += m.transform_vector3(self.normals[i]) * w;
+                }
+                pos.push(p);
+                nrm.push(n.normalize_or_zero());
+            }
+            return (pos, nrm);
+        }
         for i in 0..self.positions.len() {
             let m = skin.get(self.joint[i] as usize).copied().unwrap_or(Mat4::IDENTITY);
             pos.push(m.transform_point3(self.positions[i]));

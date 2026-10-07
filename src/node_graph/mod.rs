@@ -155,6 +155,7 @@ impl NodeGraphState {
             NodeType::CreateCube { .. }
             | NodeType::CreateSphere { .. }
             | NodeType::CreateGrid { .. }
+            | NodeType::LoadFbxMesh { .. }
             | NodeType::LoadUsd { .. }      => (vec![], vec![o("Mesh")]),
             NodeType::PickPrims { .. } | NodeType::PrunePrims { .. } | NodeType::UnpackPrims
                 => (vec![i("Prims")], vec![o("Prims")]),
@@ -181,7 +182,9 @@ impl NodeGraphState {
             | NodeType::LoopClip { .. }
             | NodeType::TimeWarp { .. }
             | NodeType::PruneJoints { .. }
+            | NodeType::Calamari { .. }
             | NodeType::FloorClip { .. }    => (vec![i("Clip")], vec![o("Clip")]),
+            NodeType::Ragdoll { .. }        => (vec![i("Clip"), i("Collider")], vec![o("Clip")]),
             NodeType::BlendClips { .. }     => (vec![i("First"), i("Next")], vec![o("Clip")]),
             NodeType::Retarget              => (vec![i("Motion"), i("Skeleton")], vec![o("Clip")]),
             NodeType::UvUnwrap { .. }
@@ -600,7 +603,7 @@ impl NodeGraphState {
         // Only mesh generator nodes appear in the scene explorer
         if matches!(node.node_type,
             NodeType::CreateCube { .. } | NodeType::CreateSphere { .. }
-            | NodeType::CreateGrid { .. } | NodeType::LoadUsd { .. })
+            | NodeType::CreateGrid { .. } | NodeType::LoadUsd { .. } | NodeType::LoadFbxMesh { .. })
         {
             if let Some(r) = self.eval_node_out(id, 0, cache, eval_subnet) {
                 out.push((node.id, node.name.clone(), r));
@@ -622,6 +625,36 @@ impl NodeGraphState {
                 (0..picks.len()).filter_map(|o| self.eval_anim_out(id, o)).collect(),
             _ => self.eval_anim(id).into_iter().collect(),
         }
+    }
+
+    /// The mesh the viewed clip was kept out of, to draw with it: the
+    /// collider of the Ragdoll node that is viewed, or of the nearest one
+    /// upstream of the viewed node.
+    pub fn display_collider(&self) -> Option<std::sync::Arc<MeshData>> {
+        let mut id = self.display_source()?;
+        let mut node = self.nodes.iter().find(|n| n.id == id)?;
+        for _ in 0..64 {
+            if !node.node_type.is_anim() { return None; }
+            if matches!(node.node_type, NodeType::Ragdoll { .. }) && !node.bypassed { break; }
+            id = node.inputs.first()?.connected_output?.0;
+            node = self.nodes.iter().find(|n| n.id == id)?;
+        }
+        if !matches!(node.node_type, NodeType::Ragdoll { .. }) { return None; }
+        let (src, out) = node.inputs.get(1)?.connected_output?;
+        let passthrough = |_: SubnetId, mesh: &MeshData, _: Option<&MeshData>| mesh.clone();
+        self.eval_node_out(src, out, &mut HashMap::new(), &passthrough).map(|r| r.shared_mesh())
+    }
+
+    /// The clip and the collider that reach a Ragdoll node.
+    pub fn ragdoll_inputs(&self, id: NodeId) -> (Option<std::sync::Arc<crate::core::anim::AnimData>>, Option<std::sync::Arc<MeshData>>) {
+        let Some(node) = self.nodes.iter().find(|n| n.id == id) else { return (None, None) };
+        let passthrough = |_: SubnetId, mesh: &MeshData, _: Option<&MeshData>| mesh.clone();
+        let mut cache = HashMap::new();
+        let input = |k: usize, cache: &mut EvalCache| node.inputs.get(k).and_then(|s| s.connected_output)
+            .and_then(|(src, out)| self.eval_node_out(src, out, cache, &passthrough));
+        let clip = match input(0, &mut cache) { Some(EvalResult::Anim(a)) => Some(a), _ => None };
+        let collider = match input(1, &mut cache) { Some(EvalResult::Anim(_)) | None => None, Some(r) => Some(r.shared_mesh()) };
+        (clip, collider)
     }
 
     /// Make a node's sockets match its type again after its parameters

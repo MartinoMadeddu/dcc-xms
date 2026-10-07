@@ -161,6 +161,24 @@ pub fn evaluate_node_type(
             anim_op2(node_type, inputs, |a, b| a.blended(b, *blend, *align)),
         NodeType::Retarget => anim_op2(node_type, inputs, |a, b| a.retargeted(b).0),
 
+        // ── Ragdoll ──────────────────────────────────────────────────────────
+        NodeType::LoadFbxMesh { path } => {
+            let meshes = crate::fbx_loader::load_meshes_cached(path).ok()?;
+            Some(EvalResult::Named(meshes.iter().map(|(name, mesh)| NamedMesh {
+                path: format!("/{name}"), mesh: mesh.clone(), picked: false, material: None, look: None,
+            }).collect()))
+        }
+        NodeType::Calamari { hulls, detail } =>
+            anim_op(node_type, inputs, |a| crate::ragdoll::calamari(a, *hulls, *detail)),
+        NodeType::Ragdoll { settings } => {
+            // The clip, and the collider when one is wired. Nothing is solved
+            // here: the node puts out the result of a solve when there is
+            // one for exactly these inputs and settings.
+            let clip = inputs.iter().find_map(|r| r.as_anim())?;
+            let collider = inputs.iter().find(|r| r.as_anim().is_none()).map(|r| r.shared_mesh());
+            Some(EvalResult::Anim(crate::ragdoll::output(clip, collider.as_ref(), settings)))
+        }
+
         // ── UV ───────────────────────────────────────────────────────────────
         NodeType::UvUnwrap { method, angle, margin, axis, tiles } => inputs.first().map(|r| r.map_mesh(|mut mesh| {
             mesh.uvs = (*crate::core::uv::unwrap_cached(&mesh, *method, *angle, *margin, *axis, *tiles)).clone();

@@ -10,7 +10,7 @@ The timeline has no range of its own. It takes range, rate and timecode from the
 
 | Node | What it does |
 |---|---|
-| Load FBX | Reads the hierarchy and one take from an FBX file, baked per frame, converted to Y-up metres |
+| Load FBX | Reads the hierarchy and one take from an FBX file, baked per frame, converted to Y-up metres. A mesh bound to the skeleton comes with it, with its weights |
 | Load FBX Folder | One file out of a folder, picked by index or from a dropdown of file names |
 | Test Clip | A generated clip for trying things out |
 | Rename Joints | Renames joints. Find is a regular expression, picked from the joint list or typed. Replace may use `$1`, `$2` for its groups |
@@ -67,3 +67,7 @@ Open and Save in the node graph header read and write the graph as JSON. The con
 ## Not done yet
 
 Meshes and skinning read from FBX, timeline zoom and pan, curve cleanup, IK, foot planting, characterization. Import into Unreal has not been tested.
+
+## Ragdoll
+
+Keeping a captured character out of a set and out of itself has a page of its own: [Ragdoll](ragdoll.md).

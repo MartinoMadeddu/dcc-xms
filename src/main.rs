@@ -22,6 +22,7 @@ mod uv_editor;
 mod uv_canvas;
 mod examples;
 mod templates;
+mod ragdoll;
 
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts, EguiPlugin};
@@ -238,7 +239,7 @@ fn dcc_ui(
             BrowseTarget::Node(id) => {
                 if let Some(node) = graph.nodes.iter_mut().find(|n| n.id == id) {
                     match &mut node.node_type {
-                        NodeType::LoadUsd { path } | NodeType::LoadFbx { path, .. } => *path = text,
+                        NodeType::LoadUsd { path } | NodeType::LoadFbx { path, .. } | NodeType::LoadFbxMesh { path } => *path = text,
                         NodeType::LoadFbxDir { dir, index, .. } => { *dir = text; *index = 0; }
                         // A folder was picked: keep the file name pattern.
                         NodeType::WriteFbx { path } => {
@@ -777,7 +778,8 @@ fn track_revision(
     let in_subnet = nav.current_subnet.is_some()
         && (mouse.get_pressed().next().is_some() || mouse.get_just_released().next().is_some()
             || keys.get_just_pressed().next().is_some());
-    if *last != Some(hash) || in_subnet {
+    // A solve that finished on its thread changes what its node puts out.
+    if *last != Some(hash) || in_subnet || ragdoll::take_changed() {
         *last = Some(hash);
         revision.0 = revision.0.wrapping_add(1);
     }
@@ -831,7 +833,8 @@ fn update_generated_meshes(
     mut commands: Commands,
     mut meshes:   ResMut<Assets<Mesh>>,
     mut mats:     ResMut<Assets<StandardMaterial>>,
-    query:        Query<Entity, With<GeneratedMesh>>,
+    query:        Query<Entity, (With<GeneratedMesh>, Without<types::PosedMesh>)>,
+    posed:        Query<Entity, With<types::PosedMesh>>,
     revision:     Res<node_graph::GraphRevision>,
     mut shown:    Local<Option<(f64, u64)>>,
     mut images:   ResMut<Assets<Image>>,
@@ -844,8 +847,11 @@ fn update_generated_meshes(
     // switched or a texture finished loading; not when the camera moves.
     let now = (playback.time, theme::revision() ^ viewport::textures::generation().rotate_left(32));
     if !revision.is_changed() && *shown == Some(now) { return; }
+    // When only the playhead moved, only what follows it is made again. A
+    // heavy model standing next to a character is left alone.
+    let only_time = !revision.is_changed() && shown.map(|s| s.1) == Some(now.1);
     *shown = Some(now);
-    for e in query.iter() { commands.entity(e).despawn(); }
+    for e in posed.iter() { commands.entity(e).despawn(); }
 
     // Meshes bound to a skeleton, posed at the playhead.
     for clip in graph.display_clips() {
@@ -873,8 +879,11 @@ fn update_generated_meshes(
                 ..default()
             },
             GeneratedMesh,
+            types::PosedMesh,
         ));
     }
+    if only_time { return; }
+    for e in query.iter() { commands.entity(e).despawn(); }
 
     let eval_subnet = |sid: SubnetId, mesh: &MeshData, template: Option<&MeshData>| -> MeshData {
         subnets
@@ -949,11 +958,17 @@ fn update_generated_meshes(
             return;
         }
     }
-    let shown = match &stage {
-        Some(s) => Some(s.mesh.to_mesh()),
-        None    => packed.map(|r| r.into_mesh()),
+    // With a clip that was kept out of a collider, the collider is drawn
+    // too, see-through so the character shows inside it.
+    let collider = if stage.is_none() && matches!(packed, Some(types::EvalResult::Anim(_))) { graph.display_collider() } else { None };
+    let ghostly = collider.is_some();
+    let shown: Option<std::sync::Arc<MeshData>> = match (&stage, collider) {
+        (Some(s), _) => Some(std::sync::Arc::new(s.mesh.to_mesh())),
+        (None, Some(c)) => Some(c),
+        (None, None) => packed.map(|r| std::sync::Arc::new(r.into_mesh())),
     };
     if let Some(md) = shown {
+        let md = &*md;
         if md.vertices.is_empty() { return; }
         let lines = matches!(mode, DisplayMode::HiddenLine | DisplayMode::Wireframe);
         if lines {
@@ -987,6 +1002,10 @@ fn update_generated_meshes(
             DisplayMode::Wireframe => None,
             DisplayMode::HiddenLine => Some(StandardMaterial {
                 base_color: clear.0, unlit: true, double_sided: true, cull_mode: None, ..default()
+            }),
+            _ if ghostly => Some(StandardMaterial {
+                base_color: Color::srgba(0.62, 0.66, 0.72, 0.32), alpha_mode: AlphaMode::Blend,
+                perceptual_roughness: 0.7, double_sided: true, cull_mode: None, ..default()
             }),
             _ => Some(StandardMaterial { base_color: Color::srgb(0.6, 0.6, 0.6), metallic: 0.1, perceptual_roughness: 0.5, ..default() }),
         };

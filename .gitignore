@@ -1,2 +1,4 @@
 /target
 _site/
+/crates/*/target
+/crates/*/Cargo.lock

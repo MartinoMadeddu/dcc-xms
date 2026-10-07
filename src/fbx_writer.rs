@@ -383,14 +383,24 @@ pub fn write_fbx(path: &Path, clip: &AnimData, animation: bool) -> std::io::Resu
         ]));
         conns.extend([oo(mesh, 0), oo(geo, mesh), oo(deformer, geo)]);
 
-        let mut by_joint: Vec<Vec<i32>> = vec![vec![]; clip.joints.len()];
-        for (vi, j) in skin.joint.iter().enumerate() {
-            if let Some(list) = by_joint.get_mut(*j as usize) { list.push(vi as i32); }
+        // One cluster per joint: the vertices it moves and by how much.
+        let mut by_joint: Vec<Vec<(i32, f64)>> = vec![vec![]; clip.joints.len()];
+        if skin.weights.len() == skin.positions.len() {
+            for (vi, list) in skin.weights.iter().enumerate() {
+                for (j, w) in list {
+                    if *w <= 0.0 { continue; }
+                    if let Some(l) = by_joint.get_mut(*j as usize) { l.push((vi as i32, *w as f64)); }
+                }
+            }
+        } else {
+            for (vi, j) in skin.joint.iter().enumerate() {
+                if let Some(list) = by_joint.get_mut(*j as usize) { list.push((vi as i32, 1.0)); }
+            }
         }
-        for (j, verts) in by_joint.into_iter().enumerate() {
-            if verts.is_empty() { continue; }
+        for (j, list) in by_joint.into_iter().enumerate() {
+            if list.is_empty() { continue; }
             let cluster = ids.next();
-            let weights = vec![1.0f64; verts.len()];
+            let (verts, weights): (Vec<i32>, Vec<f64>) = list.into_iter().unzip();
             objects.push(node("Deformer", vec![Prop::I64(cluster), named(&clip.joints[j].name, "SubDeformer"), s("Cluster")], vec![
                 leaf("Version", vec![Prop::I32(100)]),
                 leaf("UserData", vec![s(""), s("")]),

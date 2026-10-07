@@ -726,6 +726,17 @@ fn add_node_menu(ui: &mut egui::Ui, graph: &mut NodeGraphState, cp: egui::Pos2) 
         for (label, name, node) in tools {
             if ui.button(label).clicked() { graph.add_node(name.into(), node, cp); added = true; }
         }
+        ui.separator();
+        ui.label(egui::RichText::new("Ragdoll").strong());
+        if ui.button("📂  Load FBX Mesh").on_hover_text("The meshes of an FBX file: a set to collide with").clicked() {
+            graph.add_node("Set".into(), NodeType::LoadFbxMesh { path: String::new() }, cp); added = true;
+        }
+        if ui.button("✂  Calamari").on_hover_text("The skin in rigid pieces, one per body, or their convex hulls").clicked() {
+            graph.add_node("Calamari".into(), NodeType::Calamari { hulls: true, detail: 1 }, cp); added = true;
+        }
+        if ui.button("🚶  Ragdoll").on_hover_text("Keep the character out of a collider and out of itself").clicked() {
+            graph.add_node("Ragdoll".into(), NodeType::Ragdoll { settings: Default::default() }, cp); added = true;
+        }
     });
     ui.menu_button("📂  USD", |ui| {
         ui.set_min_width(190.0);

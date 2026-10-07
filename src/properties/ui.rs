@@ -124,6 +124,11 @@ pub fn draw_properties(
             graph.eval_packed(src, out, &pass)
         }).unwrap_or_default();
     let prim_paths: Vec<String> = packed_in.iter().map(|p| p.0.clone()).collect();
+    // What reaches a Ragdoll node: its clip and its collider.
+    let ragdoll_in = match graph.nodes.iter().find(|n| n.id == sel_id).map(|n| &n.node_type) {
+        Some(NodeType::Ragdoll { .. }) => graph.ragdoll_inputs(sel_id),
+        _ => (None, None),
+    };
 
     // Type-specific parameters
     if let Some(node) = graph.nodes.iter_mut().find(|n| n.id == sel_id) {
@@ -273,7 +278,7 @@ pub fn draw_properties(
                     }
                 });
                 ui.colored_label(xsi::DIM(), egui::RichText::new(
-                    "Skeleton and one take, baked per frame. Converted to Y-up, metres. Meshes are not read.").small());
+                    "Skeleton and one take, baked per frame. Converted to Y-up, metres. A mesh bound to the skeleton comes with it.").small());
             }
             NodeType::TestClip { seconds, fps_num, fps_den } => {
                 section_label(ui, "Clip");
@@ -707,6 +712,154 @@ pub fn draw_properties(
                     }
                 });
                 clip_summary(ui, anim);
+            }
+
+            // ── Ragdoll ──────────────────────────────────────────────────────
+            NodeType::LoadFbxMesh { path } => {
+                section_label(ui, "FBX File");
+                section(ui, |ui| {
+                    path_row(ui, path, "/path/to/set.fbx", io, sel_id, BrowseMode::File, "Open FBX", &["fbx"]);
+                    match crate::fbx_loader::load_meshes_cached(path) {
+                        Ok(meshes) => {
+                            let tris: usize = meshes.iter().map(|m| m.1.indices.len() / 3).sum();
+                            ui.label(egui::RichText::new(format!("✔ {} mesh{}, {} triangles", meshes.len(), if meshes.len() == 1 { "" } else { "es" }, tris))
+                                .color(egui::Color32::from_rgb(140, 200, 140)));
+                        }
+                        Err(e) => { ui.label(egui::RichText::new(format!("× {e}")).color(egui::Color32::from_rgb(200, 120, 120))); }
+                    }
+                });
+                ui.colored_label(xsi::DIM(), egui::RichText::new(
+                    "Every mesh of the file, where it stands, as packed primitives. Converted to Y-up, metres. For a set to collide with: wire it to the Collider input of a Ragdoll node.").small());
+            }
+            NodeType::Calamari { hulls, detail } => {
+                section_label(ui, "Calamari");
+                section(ui, |ui| {
+                    ui.radio_value(hulls, false, "Skin in rigid pieces").on_hover_text("Each face goes to the body most of its corners follow");
+                    ui.radio_value(hulls, true, "Convex hulls").on_hover_text("The shape of each body as the Ragdoll node collides it");
+                    detail_combo(ui, "calamari_detail", detail);
+                    ui.colored_label(xsi::DIM(), egui::RichText::new(
+                        "One body per main bone, found by name: pelvis, spine, neck, head, clavicle, upper and lower arm, hand, thigh, calf, foot, toe. Skin on fingers, twist and helper joints goes to the body above them.").small());
+                    if let Some(skin) = anim.output.as_ref().and_then(|c| c.skin.as_ref()) {
+                        let mut bodies: Vec<u32> = skin.joint.clone();
+                        bodies.sort_unstable(); bodies.dedup();
+                        ui.colored_label(xsi::LABEL(), format!("{} pieces, {} vertices", bodies.len(), skin.positions.len()));
+                    }
+                });
+                clip_summary(ui, anim);
+            }
+            NodeType::Ragdoll { settings } => {
+                section_label(ui, "Ragdoll");
+                let (clip, collider) = &ragdoll_in;
+                section(ui, |ui| {
+                    ui.colored_label(xsi::DIM(), egui::RichText::new(
+                        "The character follows the capture and is kept out of the collider and out of itself. Joints give way, each as far as that joint may. No bone changes length.").small());
+                    match (clip, collider) {
+                        (None, _) => { ui.colored_label(xsi::LABEL(), "Connect a clip with a human skeleton to the first input."); }
+                        (Some(c), col) => {
+                            ui.colored_label(xsi::LABEL(), format!("Clip: {} frames, {}", c.frames, match &c.skin {
+                                Some(s) => format!("skin of {} vertices", s.positions.len()), None => "no skin: capsules stand in".into() }));
+                            ui.colored_label(xsi::LABEL(), match col {
+                                Some(m) => format!("Collider: {} triangles", m.indices.len() / 3),
+                                None => "No collider: the character collides with itself only.".into() });
+                        }
+                    }
+                });
+                ui.add_space(4.0);
+                section_label(ui, "Contact");
+                section(ui, |ui| {
+                    labeled_slider(ui, "Soft margin (cm)", &mut settings.margin, 0.0..=5.0);
+                    labeled_slider(ui, "Friction", &mut settings.friction, 0.0..=2.0);
+                    labeled_slider(ui, "Release speed (cm/s)", &mut settings.release, 5.0..=300.0);
+                    ui.checkbox(&mut settings.self_collision, "Collide with itself");
+                    ui.add_enabled_ui(settings.self_collision, |ui| {
+                        labeled_slider(ui, "Its parts may overlap by (cm)", &mut settings.self_slack, 0.0..=10.0);
+                    });
+                    detail_combo(ui, "ragdoll_detail", &mut settings.detail);
+                });
+                section_label(ui, "Following the capture");
+                section(ui, |ui| {
+                    labeled_slider(ui, "Stiffness", &mut settings.stiffness, 0.25..=3.0);
+                    labeled_slider(ui, "Limb lets go at (cm)", &mut settings.limb_limit, 5.0..=100.0);
+                    labeled_slider_u32(ui, "Even out over (frames each side)", &mut settings.smooth, 0..=8);
+                });
+                section_label(ui, "The trunk");
+                section(ui, |ui| {
+                    labeled_slider(ui, "Is moved at most (cm)", &mut settings.ghost_depth, 1.0..=40.0);
+                    labeled_slider(ui, "May rest in a surface by (cm)", &mut settings.sink, 0.0..=15.0);
+                    ui.colored_label(xsi::DIM(), egui::RichText::new(
+                        "Hips and spine sunk in a seat are lifted onto it, up to the first distance. Deeper than that, they are lifted that far and left in by the rest.").small());
+                });
+                section_label(ui, "When it cannot be resolved");
+                section(ui, |ui| {
+                    labeled_slider_u32(ui, "Fade out (frames)", &mut settings.fade_out, 1..=60);
+                    labeled_slider_u32(ui, "Fade in (frames)", &mut settings.fade_in, 1..=60);
+                    ui.colored_label(xsi::DIM(), egui::RichText::new(
+                        "Where the capture takes the trunk through a surface, as when an actor walks through a door that was not there on the day, the character follows the capture with collisions off, and is caught again after.").small());
+                });
+                ui.add_space(4.0);
+                section_label(ui, "Solve");
+                section(ui, |ui| {
+                    let Some(c) = clip else { ui.colored_label(xsi::DIM(), "Nothing to solve."); return };
+                    let key = crate::ragdoll::key(c, collider.as_ref(), settings);
+                    let job = crate::ragdoll::job(key).or_else(|| { crate::ragdoll::solved(key); crate::ragdoll::job(key) });
+                    let solve = |ui: &mut egui::Ui, label: &str| {
+                        if ui.button(label).clicked() { crate::ragdoll::start(c.clone(), collider.clone(), *settings); }
+                    };
+                    let Some(job) = job else {
+                        ui.colored_label(xsi::LABEL(), "Not solved for these inputs and settings. The clip passes through as it came.");
+                        solve(ui, "Solve");
+                        return;
+                    };
+                    let notes = job.notes.lock().unwrap().clone();
+                    if !notes.is_empty() { ui.colored_label(xsi::DIM(), egui::RichText::new(notes).small()); }
+                    let state = job.state.lock().unwrap();
+                    match &*state {
+                        crate::ragdoll::State::Running => {
+                            let done = job.done.load(std::sync::atomic::Ordering::Relaxed);
+                            let secs = job.started.elapsed().as_secs_f32();
+                            let rate = done as f32 / secs.max(0.01);
+                            let left = if rate > 0.0 { (job.total.saturating_sub(done)) as f32 / rate } else { 0.0 };
+                            ui.add(egui::ProgressBar::new(done as f32 / job.total.max(1) as f32)
+                                .text(format!("{done} of {} frames, {rate:.0} a second, {left:.0} s left", job.total)));
+                            if ui.button("Stop").clicked() { crate::ragdoll::cancel(key); }
+                            ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
+                        }
+                        crate::ragdoll::State::Done(s) => {
+                            let r = &s.report;
+                            ui.label(egui::RichText::new(format!("✔ Solved {} frames in {:.1} s", s.frames, s.seconds)).color(egui::Color32::from_rgb(140, 200, 140)));
+                            ui.colored_label(xsi::LABEL(), format!("In or near contact: {} frames", r.contact_frames));
+                            ui.colored_label(xsi::LABEL(), format!("Furthest from the capture: {:.1} cm", r.max_deviation * 100.0));
+                            ui.colored_label(xsi::LABEL(), format!("Deepest left in the collider: {:.1} cm", r.max_residual * 100.0));
+                            if r.ghost_ranges.is_empty() {
+                                ui.colored_label(xsi::LABEL(), "Collisions were on throughout.");
+                            } else {
+                                ui.colored_label(xsi::LABEL(), format!("Left as captured, collisions off: {} frames in {} stretch{}", r.ghost_frames, r.ghost_ranges.len(), if r.ghost_ranges.len() == 1 { "" } else { "es" }));
+                                egui::ScrollArea::vertical().id_source("ragdoll_ghosts").max_height(110.0).show(ui, |ui| {
+                                    for (a, b) in &r.ghost_ranges {
+                                        ui.colored_label(xsi::DIM(), egui::RichText::new(format!(
+                                            "{} to {}  (frames {} to {})",
+                                            c.timecode(c.start_frame + *a as i64), c.timecode(c.start_frame + *b as i64), a, b)).monospace().small());
+                                    }
+                                });
+                            }
+                            drop(state);
+                            ui.horizontal(|ui| {
+                                solve(ui, "Solve again");
+                                if ui.button("Forget").on_hover_text("Remove the solved result, from memory and from disk").clicked() { crate::ragdoll::clear(key); }
+                            });
+                        }
+                        crate::ragdoll::State::Failed(e) => {
+                            ui.label(egui::RichText::new(format!("× {e}")).color(egui::Color32::from_rgb(200, 120, 120)));
+                            drop(state);
+                            solve(ui, "Solve");
+                        }
+                        crate::ragdoll::State::Cancelled => {
+                            ui.colored_label(xsi::LABEL(), "Stopped. The clip passes through as it came.");
+                            drop(state);
+                            solve(ui, "Solve");
+                        }
+                    }
+                });
             }
 
             // ── UV ───────────────────────────────────────────────────────────
@@ -1377,6 +1530,17 @@ fn pattern_field(ui: &mut egui::Ui, id: &str, label: &str, text: &mut String, na
         ui.colored_label(xsi::DIM(), egui::RichText::new(
             "Comma-separated regular expressions, case ignored. A plain word matches names containing it.").small());
     }
+}
+
+/// Fineness of the convex hulls: how closely the samples on them are spaced.
+fn detail_combo(ui: &mut egui::Ui, id: &str, detail: &mut u32) {
+    const NAMES: [&str; 3] = ["Coarse (3.5 cm)", "Medium (2.5 cm)", "Fine (1.8 cm)"];
+    ui.horizontal(|ui| {
+        ui.colored_label(xsi::LABEL(), "Hull detail:");
+        egui::ComboBox::from_id_source(id).selected_text(NAMES[(*detail).min(2) as usize]).show_ui(ui, |ui| {
+            for (i, n) in NAMES.iter().enumerate() { ui.selectable_value(detail, i as u32, *n); }
+        });
+    });
 }
 
 fn section_label(ui: &mut egui::Ui, label: &str) {

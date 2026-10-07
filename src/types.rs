@@ -11,6 +11,11 @@ pub struct MainCamera;
 #[derive(Component)]
 pub struct GeneratedMesh;
 
+/// A generated mesh that follows the playhead: rebuilt when time moves,
+/// while the others stay as they are.
+#[derive(Component)]
+pub struct PosedMesh;
+
 #[derive(Component)]
 pub struct GroundGrid;
 
@@ -120,6 +125,15 @@ pub enum NodeType {
     /// Put the lowest point of the clip at `height` (metres).
     FloorClip    { height: f32 },
 
+    // ── Ragdoll ──────────────────────────────────────────────────────────────
+    /// Every mesh of an FBX file, as packed primitives: a set to collide with.
+    LoadFbxMesh  { path: String },
+    /// The skin cut into rigid pieces, one per body, or their convex hulls.
+    Calamari     { hulls: bool, detail: u32 },
+    /// Keeps the character out of a collider mesh and out of itself.
+    /// Solving is started from the properties panel.
+    Ragdoll      { settings: crate::ragdoll::Settings },
+
     // ── UV ───────────────────────────────────────────────────────────────────
     /// Make texture coordinates. `angle` (degrees) limits how far a chart's
     /// normals may spread; `margin` is the gap between charts.
@@ -181,7 +195,7 @@ impl NodeType {
             | NodeType::MirrorClip | NodeType::SmoothClip { .. } | NodeType::InPlace { .. }
             | NodeType::TransformClip { .. } | NodeType::BlendClips { .. } | NodeType::LoopClip { .. }
             | NodeType::Retarget | NodeType::TimeWarp { .. } | NodeType::PruneJoints { .. }
-            | NodeType::FloorClip { .. })
+            | NodeType::FloorClip { .. } | NodeType::Calamari { .. } | NodeType::Ragdoll { .. })
     }
 }
 
@@ -223,6 +237,9 @@ pub fn node_type_icon(t: &NodeType) -> &'static str {
         NodeType::TimeWarp { .. }      => "⏩",
         NodeType::PruneJoints { .. }   => "🌿",
         NodeType::FloorClip { .. }     => "⬇",
+        NodeType::LoadFbxMesh { .. }   => "📂",
+        NodeType::Calamari { .. }      => "✂",
+        NodeType::Ragdoll { .. }       => "🚶",
         NodeType::UvUnwrap { .. }      => "🗺",
         NodeType::UvTransform { .. }   => "📌",
         NodeType::UvEdit { .. }        => "✋",
@@ -267,6 +284,9 @@ pub fn node_type_label(t: &NodeType) -> &'static str {
         NodeType::TimeWarp { .. }      => "Time Warp",
         NodeType::PruneJoints { .. }   => "Prune Joints",
         NodeType::FloorClip { .. }     => "Floor",
+        NodeType::LoadFbxMesh { .. }   => "Load FBX Mesh",
+        NodeType::Calamari { .. }      => "Calamari",
+        NodeType::Ragdoll { .. }       => "Ragdoll",
         NodeType::UvUnwrap { .. }      => "UV Unwrap",
         NodeType::UvTransform { .. }   => "UV Transform",
         NodeType::UvEdit { .. }        => "UV Edit",
@@ -555,6 +575,31 @@ impl EvalResult {
 
     pub fn as_mesh(&self) -> MeshData {
         self.clone().into_mesh()
+    }
+
+    /// Everything as one mesh, shared. A single packed primitive is handed
+    /// over as it is. Several are merged once and the merge is kept while
+    /// the same primitives keep arriving, so a heavy model is not copied
+    /// each time the graph is evaluated.
+    pub fn shared_mesh(&self) -> std::sync::Arc<MeshData> {
+        use std::sync::{Arc, Mutex};
+        type Kept = (Vec<Arc<MeshData>>, Arc<MeshData>);
+        static MERGED: Mutex<Vec<Kept>> = Mutex::new(Vec::new());
+        match self {
+            EvalResult::Named(prims) if prims.len() == 1 => prims[0].mesh.clone(),
+            EvalResult::Named(prims) => {
+                let mut kept = MERGED.lock().unwrap();
+                if let Some((_, m)) = kept.iter().find(|(parts, _)| parts.len() == prims.len() && parts.iter().zip(prims).all(|(a, b)| Arc::ptr_eq(a, &b.mesh))) {
+                    return m.clone();
+                }
+                let all: Vec<&MeshData> = prims.iter().map(|p| &*p.mesh).collect();
+                let merged = Arc::new(crate::node_graph::nodes::merge_all(&all));
+                if kept.len() >= 2 { kept.remove(0); }
+                kept.push((prims.iter().map(|p| p.mesh.clone()).collect(), merged.clone()));
+                merged
+            }
+            other => Arc::new(other.as_mesh()),
+        }
     }
 
     /// True when this is packed primitives with at least one picked.

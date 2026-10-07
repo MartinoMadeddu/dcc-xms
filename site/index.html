@@ -297,7 +297,7 @@
         <li><a href="#uv"><b>UVs and UDIMs that think</b><span>LSCM unwrap, tiles chosen by size.</span></a></li>
         <li><a href="#mocap"><b>From take to engine</b><span>Split, retarget, write FBX by the folder.</span></a></li>
         <li><a href="#ui"><b>The workbench</b><span>Eight panes, seven ways to navigate.</span></a></li>
-        <li><a href="#ref"><b>Reference card</b><span>Keys, formats and all 38 nodes.</span></a></li>
+        <li><a href="#ref"><b>Reference card</b><span>Keys, formats and all 41 nodes.</span></a></li>
         <li><a href="#build-it"><b>Type-in</b><span>Build it yourself in three lines.</span></a></li>
         <li><a href="#gaps"><b>Known gaps</b><span>What it does not do yet.</span></a></li>
         <li><a href="#credits"><b>Credits</b><span>Who made it.</span></a></li>
@@ -333,9 +333,9 @@
   </section>
 
   <section class="stats" aria-label="In numbers">
-    <div class="stat"><b>38</b><span>Nodes</span></div>
+    <div class="stat"><b>41</b><span>Nodes</span></div>
     <div class="stat"><b>27</b><span>Edit Poly operations</span></div>
-    <div class="stat"><b>23</b><span>Templates</span></div>
+    <div class="stat"><b>24</b><span>Templates</span></div>
     <div class="stat"><b>8</b><span>Dockable panes</span></div>
     <div class="stat"><b>7</b><span>Navigation styles</span></div>
     <div class="stat"><b>4</b><span>Display modes</span></div>
@@ -354,7 +354,7 @@
           <p>A mocap clip is a file node followed by the trims, renames and retimes applied to it. A model is a primitive, or a USD file, followed by its edits. Go back to any node, change a number, and the result updates.</p>
           <p>The graph is cooked when its content changes, not on every frame. Moving nodes about, panning and orbiting the camera cook nothing.</p>
           <h3>Start from a template</h3>
-          <p>Twenty-three templates ship with the program, one for each area of it. Each loads a working graph, laid out in rows and framed, and tells you what to try.</p>
+          <p>Twenty-four templates ship with the program, one for each area of it. Each loads a working graph, laid out in rows and framed, and tells you what to try.</p>
           <h3>Never out of sight</h3>
           <p>Right-click an output and the node you pick lands under it, already wired. The ring at the left of a node bypasses it. The eye at the right shows it in the viewport.</p>
         </div>
@@ -366,7 +366,7 @@
             <tr><td>Modelling</td><td>Edit Poly: tower, panels, goblet, bridge, sea mine, bolt</td></tr>
             <tr><td>UV</td><td>Unwrap the sea mine · UDIM tiles · Edit UV islands</td></tr>
             <tr><td>USD</td><td>Heavy model · Pick and edit · Prune</td></tr>
-            <tr><td>Animation &amp; Mocap</td><td>Clip basics · FBX import · T-pose and export · Mocap tools · Retarget · Mocap split (two versions)</td></tr>
+            <tr><td>Animation &amp; Mocap</td><td>Clip basics · FBX import · T-pose and export · Mocap tools · Retarget · Ragdoll · Mocap split (two versions)</td></tr>
           </table></div>
         </div>
       </div>
@@ -481,6 +481,7 @@
           <p>A clip holds a skeleton, per-frame transforms, a rational frame rate and timecode, drop-frame included. The timeline has no range of its own: it takes range, rate and timecode from whichever node is selected.</p>
           <p>Retarget puts the motion of one skeleton on another. Joints are matched by name, ignoring prefixes and namespaces, and bones are aligned in the rest pose, so the two may rest differently.</p>
           <p>Nodes that choose joints by name take comma-separated regular expressions, with a picker listing the joints coming in and a live match count. <code>thumb, index, middle</code> works. So does <code>^Left.*(Arm|Hand)$</code>.</p>
+          <p>Ragdoll keeps a captured character out of a set and out of itself. The actor sat on a box; the character sits in the car, on the seat, feet on the floor. 12,227 frames against 1.7 million triangles solve in under five minutes on two cores.</p>
           <p>Write FBX writes binary files with skeleton, animation, mesh, skin and bind pose, for one file or every file of the folder, in the background.</p>
         </div>
         <div class="box">
@@ -495,6 +496,7 @@
             <tr><td>Retarget · Time Warp</td><td>Another skeleton, another speed</td></tr>
             <tr><td>Prune Joints · Floor</td><td>Drop fingers, sit on the ground</td></tr>
             <tr><td>Proxy Skin · Write FBX</td><td>A body to look at, a file to ship</td></tr>
+            <tr><td>Calamari · Ragdoll</td><td>Out of the set and out of itself</td></tr>
           </table></div>
         </div>
       </div>
@@ -553,14 +555,14 @@
         <h3>Files in and out</h3>
         <div class="in scroll"><table>
           <tr><th>Format</th><th>In</th><th>Out</th></tr>
-          <tr><td>FBX</td><td>Skeleton, animation</td><td>Skeleton, animation, mesh, skin, bind pose</td></tr>
+          <tr><td>FBX</td><td>Skeleton, animation, skinned mesh, meshes</td><td>Skeleton, animation, mesh, skin, bind pose</td></tr>
           <tr><td>USD</td><td>Meshes, UVs, materials, textures</td><td>No</td></tr>
           <tr><td>Graph (JSON)</td><td>Yes</td><td>Yes</td></tr>
           <tr><td>Layout (JSON)</td><td>Yes</td><td>Yes</td></tr>
         </table></div>
       </div>
       <div class="box">
-        <h3>The 38 nodes</h3>
+        <h3>The 41 nodes</h3>
         <div class="in scroll"><table>
           <tr><td>Generate</td><td>Cube · Sphere · Grid</td></tr>
           <tr><td>Modify</td><td>Transform · Edit Poly · Merge</td></tr>
@@ -570,6 +572,7 @@
           <tr><td>UV</td><td>UV Unwrap · UV Transform · UV Edit</td></tr>
           <tr><td>Clips</td><td>Load FBX · Load FBX Folder · Test Clip · Rename Joints · Trim · Retime · Set Timecode · Split Characters · Auto T-Pose · Fix Pose · Proxy Skin · Write FBX</td></tr>
           <tr><td>Mocap tools</td><td>Mirror · Smooth · In Place · Transform Clip · Blend Clips · Loop · Retarget · Time Warp · Prune Joints · Floor</td></tr>
+          <tr><td>Ragdoll</td><td>Load FBX Mesh · Calamari · Ragdoll</td></tr>
         </table></div>
       </div>
     </div>
@@ -610,7 +613,7 @@
     <div class="grid3">
       <div class="box"><h3>General</h3><div class="in"><ul><li>Undo</li><li>Timeline zoom and pan</li><li>ICE subnet contents in saved graphs</li><li>Signed builds</li></ul></div></div>
       <div class="box"><h3>Modelling and UV</h3><div class="in"><ul><li>Interactive cut, target weld, attach, smoothing groups, material IDs</li><li>Editing single UV vertices and edges</li><li>UVs kept through Edit Poly</li></ul></div></div>
-      <div class="box"><h3>USD and mocap</h3><div class="in"><ul><li>Normal and roughness maps in the viewport</li><li>USD cameras, animation, skinning, instancing, references to other files</li><li>Meshes and skinning read from FBX</li><li>IK and foot planting</li></ul></div></div>
+      <div class="box"><h3>USD and mocap</h3><div class="in"><ul><li>Normal and roughness maps in the viewport</li><li>USD cameras, animation, skinning, instancing, references to other files</li><li>IK and foot planting</li></ul></div></div>
     </div>
     <h3 style="font-family:var(--display);font-weight:400;font-size:30px;text-transform:uppercase;margin:30px 0 14px">More screens</h3>
     <div class="gallery">

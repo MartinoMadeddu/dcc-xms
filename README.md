@@ -18,7 +18,7 @@ Nothing is baked. A mesh is a cube node followed by the operations that shaped i
 
 ![Twelve of the built-in templates](docs/xms_templates.png)
 
-Twenty-three templates ship with the program, one for each area of it. Each loads a working graph and tells you what to try.
+Twenty-four templates ship with the program, one for each area of it. Each loads a working graph and tells you what to try.
 
 ## Polygon modelling in a single node
 
@@ -72,6 +72,14 @@ Load a folder of FBX takes, split the characters, fix the pose, skin a proxy and
 ![Retarget: a captured character driving a skeleton with another rest pose](docs/xms_retarget.png)
 
 ![The timeline follows the selected node: here a trimmed range over the incoming clip](docs/xms_anim_timeline.png)
+
+## Ragdoll: a capture that respects the set
+
+The actor sat on a box. The character sits in a car, with its hips in the cushion and its feet under the floor. Wire the take and the set into a Ragdoll node and press Solve: the character is kept out of the set and out of itself, joints give way as far as each may, and no bone changes length. Where the capture walks the character through a door that was not there on the day, it follows the capture through and is caught again on the other side.
+
+A take of 12,227 frames against a car of 1.7 million triangles solves in under five minutes on two cores, a chunk of frames at a time. See [docs/ragdoll.md](docs/ragdoll.md).
+
+![Ragdoll: a walk kept on top of a block](docs/xms_ragdoll.png)
 
 ## An interface that gets out of the way
 
@@ -129,7 +137,6 @@ On Ubuntu or Debian, first:
 - USD: normal and roughness maps in the viewport, cameras, animation and skinning, references to other files, instancing, writing USD
 - UV: editing single UV vertices and edges, a checker in the viewport, UVs kept through Edit Poly and Copy To Points, UVs in FBX files. Unwrapping is LSCM only: ABF++, SLIM and BFF are not implemented
 - Mocap: IK, foot planting, characterization
-- Meshes and skinning read from FBX
 - Timeline zoom and pan
 - Curve cleanup
 - ICE subnet contents in saved graphs

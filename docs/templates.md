@@ -49,6 +49,7 @@ The Templates menu in the node graph header holds ready-made graphs. Picking one
 | T-pose and export | Auto T-Pose, Fix Pose lowering the arms, Proxy Skin and Write FBX |
 | Mocap tools | A character of the example take through the clip tool nodes |
 | Retarget | A character of the example take driving the test skeleton, which rests in another pose |
+| Ragdoll | A walk with a block where its feet go. Press Solve: the feet land on the block. See [Ragdoll](ragdoll.md) |
 | Mocap split (example takes) | The mocap split graph on the example folder: one take of two characters |
 | Mocap split | The same graph with no folder set |
 
