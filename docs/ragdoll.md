@@ -29,16 +29,16 @@ The node solves nothing by itself. Until Solve has run for exactly the clip, col
 
 ## The template
 
-**Ragdoll: into the car** is the take this was built on: an actor who walks through a car and sits in it for six minutes. It loads two files from `examples/ragdoll`:
+**Ragdoll: into the car** is the take this was built on: an actor who walks through a car and sits in it for six minutes. The take, the car and the solved result ship with the program, in `examples/ragdoll`, and the template opens solved, with no wait. Change a setting and it has to be solved again.
 
-| File | Size |
-|---|---|
-| `character_with_motion_and_mesh.fbx` | 205 MB |
-| `car_for_collision.fbx` | 99 MB |
+As FBX the take is 205 MB and the car 99 MB, more than GitHub takes in one file. They ship in two compact formats of the program's own:
 
-GitHub takes no file over 100 MB, so they are not in the repository and not in the downloads. Copy them into `examples/ragdoll`; Git ignores them there. Without them the template says where they go.
+| File | Holds | Size |
+|---|---|---|
+| `.xmsclip` | Skeleton, every frame, and the skin with its weights. What never moves is written once, rotations in 16 bits a component | 4 MB for the take |
+| `.xmsmesh` | Positions and triangles | 15 MB for the car |
 
-The result of solving that take with the default settings ships in `examples/ragdoll/solved`, 4 MB. With the two files in place the template opens solved, with no wait. Change a setting and it has to be solved again.
+Load FBX reads `.xmsclip` and Load FBX Mesh reads `.xmsmesh`, by the extension. The take loads in a sixth of a second this way, against five seconds as FBX. Joint positions differ from the FBX by less than a tenth of a millimetre.
 
 ## What it does
 

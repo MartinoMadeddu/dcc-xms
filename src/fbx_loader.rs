@@ -160,7 +160,10 @@ pub fn load_meshes_cached(path: &str) -> Result<Vec<(String, Arc<MeshData>)>, St
     if let Some((t, r)) = cache.lock().unwrap().get(path) {
         if *t == mtime { return r.clone(); }
     }
-    let result = if mtime.is_none() { Err("file not found".to_string()) } else { load_meshes(path) };
+    let result = if mtime.is_none() { Err("file not found".to_string()) }
+        else if crate::packed::is_mesh(path) {
+            crate::packed::read_mesh(path).map(|m| vec![(std::path::Path::new(path).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default(), Arc::new(m))])
+        } else { load_meshes(path) };
     let mut cache = cache.lock().unwrap();
     if cache.len() > 3 { cache.clear(); }
     cache.insert(path.to_string(), (mtime, result.clone()));
@@ -327,7 +330,9 @@ pub fn load_fbx_cached(path: &str, take: u32) -> Result<LoadedFbx, String> {
     let result = if mtime.is_none() {
         Err("file not found".to_string())
     } else {
-        let r = load_fbx(path, take);
+        let r = if crate::packed::is_clip(path) {
+            crate::packed::read_clip(path).map(|c| LoadedFbx { takes: Arc::new(vec![c.name.clone()]), anim: Arc::new(c) })
+        } else { load_fbx(path, take) };
         if let Err(e) = &r { eprintln!("[LoadFbx] failed to load '{path}': {e}"); }
         r
     };

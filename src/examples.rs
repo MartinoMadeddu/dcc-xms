@@ -17,10 +17,10 @@ pub const TABLE_USD:  &str = "table.usda";
 /// By VTX (https://sketchfab.com/VTX_car), CC BY-NC-SA 4.0.
 pub const DELOREAN_USD: &str = "DeLorean.usdz";
 
-/// The take and the set of the Ragdoll template. Too large for the
-/// repository: they are copied into `examples/ragdoll` by hand.
-pub const RAGDOLL_TAKE: &str = "ragdoll/character_with_motion_and_mesh.fbx";
-pub const RAGDOLL_SET:  &str = "ragdoll/car_for_collision.fbx";
+/// The take and the set of the Ragdoll template, in the program's own
+/// compact formats: as FBX they are too large for the repository.
+pub const RAGDOLL_TAKE: &str = "ragdoll/into_the_car.xmsclip";
+pub const RAGDOLL_SET:  &str = "ragdoll/car.xmsmesh";
 /// Solved results that ship with the examples.
 pub const RAGDOLL_SOLVED: &str = "ragdoll/solved";
 

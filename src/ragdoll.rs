@@ -864,11 +864,9 @@ mod real {
 
 #[cfg(test)]
 mod shipped {
-    /// With the take and the car in place, the template opens solved from
-    /// the result that ships with the examples.
+    /// The template opens solved, from the result that ships with the examples.
     #[test]
     fn the_template_opens_solved_when_its_files_are_there() {
-        if !crate::templates::ragdoll_files() { return; }
         std::env::set_var("XMS_CACHE_DIR", std::env::temp_dir().join("xms_ragdoll_none"));
         let mut g = crate::node_graph::NodeGraphState::default();
         let mut subnets = crate::ice::SubnetStore::default();

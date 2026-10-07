@@ -23,6 +23,7 @@ mod uv_canvas;
 mod examples;
 mod templates;
 mod ragdoll;
+mod packed;
 
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts, EguiPlugin};

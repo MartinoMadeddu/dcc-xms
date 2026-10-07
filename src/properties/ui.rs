@@ -257,7 +257,7 @@ pub fn draw_properties(
             NodeType::LoadFbx { path, take } => {
                 section_label(ui, "FBX File");
                 section(ui, |ui| {
-                    path_row(ui, path, "/path/to/take.fbx", io, sel_id, BrowseMode::File, "Open FBX", &["fbx"]);
+                    path_row(ui, path, "/path/to/take.fbx", io, sel_id, BrowseMode::File, "Open FBX", &["fbx", crate::packed::CLIP_EXT]);
                     match crate::fbx_loader::load_fbx_cached(path, *take) {
                         Ok(loaded) => {
                             ui.label(egui::RichText::new("✔ Loaded").color(egui::Color32::from_rgb(140, 200, 140)));
@@ -718,7 +718,7 @@ pub fn draw_properties(
             NodeType::LoadFbxMesh { path } => {
                 section_label(ui, "FBX File");
                 section(ui, |ui| {
-                    path_row(ui, path, "/path/to/set.fbx", io, sel_id, BrowseMode::File, "Open FBX", &["fbx"]);
+                    path_row(ui, path, "/path/to/set.fbx", io, sel_id, BrowseMode::File, "Open FBX", &["fbx", crate::packed::MESH_EXT]);
                     match crate::fbx_loader::load_meshes_cached(path) {
                         Ok(meshes) => {
                             let tris: usize = meshes.iter().map(|m| m.1.indices.len() / 3).sum();

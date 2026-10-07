@@ -49,7 +49,7 @@ The Templates menu in the node graph header holds ready-made graphs. Picking one
 | T-pose and export | Auto T-Pose, Fix Pose lowering the arms, Proxy Skin and Write FBX |
 | Mocap tools | A character of the example take through the clip tool nodes |
 | Retarget | A character of the example take driving the test skeleton, which rests in another pose |
-| Ragdoll: into the car | A captured actor walks through a car and sits in it, kept out of the seat, the floor and himself. Needs two files copied into `examples/ragdoll`. See [Ragdoll](ragdoll.md) |
+| Ragdoll: into the car | A captured actor walks through a car and sits in it, kept out of the seat, the floor and himself. Opens solved. See [Ragdoll](ragdoll.md) |
 | Mocap split (example takes) | The mocap split graph on the example folder: one take of two characters |
 | Mocap split | The same graph with no folder set |
 

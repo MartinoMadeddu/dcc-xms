@@ -1,12 +1,13 @@
-# Files for the Ragdoll template
-
-The template loads two files from this folder:
+# Files of the Ragdoll template
 
 | File | What |
 |---|---|
-| `character_with_motion_and_mesh.fbx` | The take: a skinned character, 12,227 frames |
-| `car_for_collision.fbx` | The set: the car, 1,743,007 triangles |
+| `into_the_car.xmsclip` | The take: a skinned character of 342 joints and 32,334 vertices, 12,227 frames at 30 fps. An actor walks through a car and sits in it |
+| `car.xmsmesh` | The set: the car, 1,743,007 triangles |
+| `solved/` | The take solved against the car with the default settings |
 
-They are 205 MB and 99 MB. GitHub takes no file over 100 MB, so they are not in the repository: copy them here. Git ignores `*.fbx` in this folder.
+The take and the car are Simon Legrand's. As FBX they are 205 MB and 99 MB, more than GitHub takes in one file. Here they are in the program's own compact formats, 4 MB and 15 MB. Joint positions differ from the FBX by less than a tenth of a millimetre.
 
-`solved/` holds the result of solving that take against that car with the default settings, 4 MB. With the two files in place the template opens already solved.
+To make them again from the FBX files:
+
+    XMS_PACK_CLIP=take.fbx XMS_PACK_SET=set.fbx cargo test pack_ragdoll_example -- --ignored --nocapture
