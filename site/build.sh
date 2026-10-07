@@ -1,5 +1,5 @@
 #!/bin/sh
-# Assemble the website into a folder: the page, the program's splash and
+# Assemble the website into a folder: the page, its fonts, the program's splash and
 # icon, and the screenshots from docs/. Run from the root of the repository:
 #
 #     sh site/build.sh _site
@@ -10,6 +10,7 @@ out="${1:-_site}"
 rm -rf "$out"
 mkdir -p "$out/shots"
 cp site/index.html "$out/"
+cp -r site/fonts "$out/"
 cp assets/splash.png assets/icon.png "$out/"
 cp docs/*.png "$out/shots/"
 # No Jekyll processing: files are served as they are.

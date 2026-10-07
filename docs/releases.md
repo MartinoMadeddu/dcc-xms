@@ -31,7 +31,7 @@ The page at https://srlegrand.github.io/dcc-xms/ is the `site/` folder of the re
 
 Its download buttons point at `releases/latest/download/<file>`, so they always fetch the newest build without the page being touched. The page also names the newest build, from GitHub's public record of it.
 
-The page is laid out as a magazine: a cover with the downloads, the numbers, an article for each area of the program, a reference card with the keys, the file formats and all 38 nodes, the build instructions as a type-in listing, and the known gaps.
+The page is laid out as a 3D magazine of the 1990s: a cover, a contents page with the downloads on a cover disk, then a double page in its own colours for each area of the program, a reference card with the keys, the file formats and all 38 nodes, the build instructions as a type-in listing, and the known gaps. Its fonts are in `site/fonts/` and are served with it.
 
 ![The website](xms_site.png)
 
