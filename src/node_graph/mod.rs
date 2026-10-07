@@ -33,6 +33,8 @@ pub struct GraphNode {
     pub position:  egui::Pos2,
     pub inputs:    Vec<InputSocket>,
     pub outputs:   Vec<OutputSocket>,
+    /// A bypassed node hands its first input on unchanged.
+    pub bypassed:  bool,
 }
 
 #[derive(Clone)]
@@ -116,6 +118,7 @@ impl NodeGraphState {
             let _ = serde_json::to_writer(&mut w, &n.node_type);
             for i in &n.inputs { i.connected_output.map(|(id, out)| (id.0, out)).hash(&mut w.0); }
             n.outputs.len().hash(&mut w.0);
+            n.bypassed.hash(&mut w.0);
         }
         for c in &self.connections { (c.from_node.0, c.from_output, c.to_node.0, c.to_input).hash(&mut w.0); }
         self.view_flag.map(|n| n.0).hash(&mut w.0);
@@ -133,7 +136,7 @@ impl NodeGraphState {
         let id = NodeId(self.next_node_id);
         self.next_node_id += 1;
         let (inputs, outputs) = Self::create_sockets(&node_type);
-        self.nodes.push(GraphNode { id, name, node_type, position: pos, inputs, outputs });
+        self.nodes.push(GraphNode { id, name, node_type, position: pos, inputs, outputs, bypassed: false });
         self.mark_dirty();
         id
     }
@@ -261,6 +264,14 @@ impl NodeGraphState {
     }
 
     /// Check if a specific node has the view flag
+    pub fn toggle_bypass(&mut self, node_id: NodeId) {
+        if let Some(n) = self.nodes.iter_mut().find(|n| n.id == node_id) {
+            if matches!(n.node_type, NodeType::Output) { return; }
+            n.bypassed = !n.bypassed;
+        }
+        self.mark_dirty();
+    }
+
     pub fn has_view_flag(&self, node_id: NodeId) -> bool {
         self.view_flag == Some(node_id)
     }
@@ -354,6 +365,10 @@ impl NodeGraphState {
     ) -> Option<EvalResult> {
         let node = self.nodes.iter().find(|n| n.id == id)?;
         match &node.node_type {
+            _ if node.bypassed => {
+                let (src, out) = node.inputs.first()?.connected_output?;
+                self.eval_anim_node(src, out, cache, eval_subnet)
+            }
             t if t.is_anim() => self.eval_node_out(id, output, cache, eval_subnet),
             NodeType::Output => {
                 let (src, out) = node.inputs.first()?.connected_output?;
@@ -391,7 +406,13 @@ impl NodeGraphState {
                 .and_then(|(src, out)| self.eval_node_out(src, out, cache, eval_subnet)))
             .collect();
 
-        let result = evaluate_node_type(&node.node_type, &inputs, eval_subnet, output);
+        let result = if node.bypassed {
+            node.inputs.first()
+                .and_then(|s| s.connected_output)
+                .and_then(|(src, out)| self.eval_node_out(src, out, cache, eval_subnet))
+        } else {
+            evaluate_node_type(&node.node_type, &inputs, eval_subnet, output)
+        };
         cache.insert((id, output), result.clone());
         result
     }

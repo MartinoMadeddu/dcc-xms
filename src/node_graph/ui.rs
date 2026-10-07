@@ -34,6 +34,8 @@ mod xsi {
     pub fn SEL_RECT() -> Color32 { Color32::from_rgba_premultiplied(100, 140, 200, 40) }
     pub fn SEL_RECT_BORDER() -> Color32 { crate::theme::c(120, 160, 220) }
     pub fn VIEW_FLAG() -> Color32 { crate::theme::c(100, 180, 255) } // 👁️ NEW - Blue for active view flag
+    pub fn BYPASS() -> Color32 { crate::theme::c(235, 170, 60) }
+    pub fn BYPASS_VEIL() -> Color32 { Color32::from_rgba_unmultiplied(128, 128, 128, 120) }
     pub fn VIEW_FLAG_HOV() -> Color32 { crate::theme::c(150, 210, 255) } // 👁️ NEW - Lighter blue on hover
 }
 
@@ -370,7 +372,9 @@ fn draw_node(
     );
     
 // Handle click - toggle view flag
-    if eye_response.clicked() {
+    let click_at = if dr.clicked() { dr.interact_pointer_pos() } else { None };
+    let on_eye = click_at.map(|p| eye_rect.contains(p)).unwrap_or(false);
+    if eye_response.clicked() || on_eye {
         graph.toggle_view_flag(id);
     }
     
@@ -386,6 +390,35 @@ fn draw_node(
     // ============================================================================
     // END VIEW_FLAG_BUTTON
     // ============================================================================
+
+    // ── Bypass button, left of the title ─────────────────────────────────────
+    let mut on_bypass = false;
+    if !matches!(node.node_type, NodeType::Output) {
+        let by_rect = egui::Rect::from_min_size(
+            egui::pos2(np.x + 4.0 * zoom, np.y + 8.0 * zoom), egui::vec2(eye_size, eye_size));
+        let by = ui.allocate_rect(by_rect, egui::Sense::click());
+        let over = ui.input(|i| i.pointer.hover_pos()).map(|p| by_rect.contains(p)).unwrap_or(false);
+        let col = if node.bypassed { xsi::BYPASS() }
+                  else if over { xsi::TEXT() } else { xsi::TEXT_DIM() };
+        // Drawn by hand: a ring, with a bar through it when bypassed.
+        let c = by_rect.center();
+        let r = 4.5 * zoom;
+        painter.circle_stroke(c, r, egui::Stroke::new(1.3 * zoom, col));
+        if node.bypassed {
+            let d = egui::vec2(r, -r) * 1.25;
+            painter.line_segment([c - d, c + d], egui::Stroke::new(1.6 * zoom, col));
+        }
+        on_bypass = click_at.map(|p| by_rect.contains(p)).unwrap_or(false);
+        if by.clicked() || on_bypass { graph.toggle_bypass(id); }
+        by.on_hover_text(if node.bypassed {
+            "Bypassed: the first input passes through unchanged. Click to turn the node back on"
+        } else {
+            "Bypass this node"
+        });
+    }
+    if node.bypassed {
+        painter.rect_filled(rect, NODE_ROUNDING * zoom, xsi::BYPASS_VEIL());
+    }
 
     // ── Output sockets ────────────────────────────────────────────────────────
     for (i, out) in node.outputs.iter().enumerate() {
@@ -461,7 +494,7 @@ fn draw_node(
     }
 
     // ── Title bar drag / click ────────────────────────────────────────────────
-    if dr.clicked() {
+    if dr.clicked() && !on_eye && !on_bypass {
         // Clicking a node: select it. If not shift-held, clear multi-selection.
         if !ui.input(|i| i.modifiers.shift) {
             graph.selected_nodes.clear();

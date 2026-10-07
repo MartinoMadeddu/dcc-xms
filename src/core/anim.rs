@@ -298,13 +298,16 @@ impl AnimData {
 
     /// Rename joints. Samples are shared with the input.
     pub fn renamed(&self, find: &str, replace: &str, strip_namespace: bool, prefix: &str) -> AnimData {
+        // `find` is one regular expression, case ignored. `replace` may use
+        // $1, $2 for its groups.
+        let find = (!find.trim().is_empty()).then(|| crate::core::pattern::compile(find.trim()));
         let mut out = self.clone();
         for j in &mut out.joints {
             let mut n = j.name.clone();
             if strip_namespace {
                 if let Some(i) = n.rfind(':') { n = n[i + 1..].to_string(); }
             }
-            if !find.is_empty() { n = n.replace(find, replace); }
+            if let Some(re) = &find { n = re.replace_all(&n, replace).into_owned(); }
             if !prefix.is_empty() { n = format!("{prefix}{n}"); }
             j.name = n;
         }
@@ -461,16 +464,26 @@ impl AnimData {
     pub fn pose_fixed(&self, edits: &[PoseEdit]) -> AnimData {
         let mut tracks: Vec<Track> = (*self.tracks).clone();
         for e in edits {
-            let Some(j) = self.joints.iter().position(|x| x.name == e.joint) else { continue };
+            // A joint of exactly that name wins. Otherwise the text is a
+            // pattern and the edit goes to every joint it matches.
+            let targets: Vec<usize> = match self.joints.iter().position(|x| x.name == e.joint) {
+                Some(j) => vec![j],
+                None => {
+                    let p = crate::core::pattern::NamePattern::new(&e.joint);
+                    (0..self.joints.len()).filter(|j| p.matches(&self.joints[*j].name)).collect()
+                }
+            };
             let rot = Quat::from_euler(
                 EulerRot::ZYX,
                 e.rotation[2].to_radians(), e.rotation[1].to_radians(), e.rotation[0].to_radians(),
             );
             let tr = Vec3::from_array(e.translation) * 0.01;
-            if tracks[j].is_empty() { tracks[j] = vec![self.joints[j].rest; self.frames.max(1)]; }
-            for t in tracks[j].iter_mut() {
-                t.rotation     = (rot * t.rotation).normalize();
-                t.translation += tr;
+            for j in targets {
+                if tracks[j].is_empty() { tracks[j] = vec![self.joints[j].rest; self.frames.max(1)]; }
+                for t in tracks[j].iter_mut() {
+                    t.rotation     = (rot * t.rotation).normalize();
+                    t.translation += tr;
+                }
             }
         }
         AnimData { tracks: Arc::new(tracks), skin: None, ..self.clone() }
@@ -808,6 +821,28 @@ mod tests {
         assert_eq!(r.joints[0].name, "mx_Hips");
         assert_eq!(r.joints[5].name, "mx_L_UpLeg");
         assert!(Arc::ptr_eq(&r.tracks, &c.tracks));
+    }
+
+    #[test]
+    fn rename_with_groups() {
+        let c = create_test_clip(1.0, FrameRate::new(30, 1));
+        let r = c.renamed("^(left|right)(.+)$", "${2}_$1", true, "");
+        assert_eq!(r.joints[5].name, "UpLeg_Left");
+        assert_eq!(r.joints[0].name, "Hips");
+    }
+
+    #[test]
+    fn fix_pose_by_pattern_reaches_every_match() {
+        let c = create_test_clip(1.0, FrameRate::new(30, 1));
+        let edit = |joint: &str| PoseEdit { joint: joint.into(), rotation: [0.0; 3], translation: [0.0, 10.0, 0.0] };
+        let moved = |a: &AnimData| (0..a.joints.len())
+            .filter(|j| a.tracks[*j].first().map(|t| t.translation) != c.tracks[*j].first().map(|t| t.translation)
+                        && !a.tracks[*j].is_empty())
+            .count();
+        let one  = c.pose_fixed(&[edit("LeftUpLeg")]);
+        let many = c.pose_fixed(&[edit("UpLeg$")]);
+        assert_eq!(moved(&one), 1);
+        assert_eq!(moved(&many), 2);
     }
 
     #[test]

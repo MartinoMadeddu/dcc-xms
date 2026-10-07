@@ -528,6 +528,7 @@ dependencies = [
  "egui_dock",
  "flate2",
  "openusd",
+ "regex",
  "serde",
  "serde_json",
  "ufbx",

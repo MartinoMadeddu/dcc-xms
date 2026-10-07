@@ -17,6 +17,8 @@ struct SavedNode {
     name:      String,
     position:  [f32; 2],
     node_type: NodeType,
+    #[serde(default)]
+    bypassed:  bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -36,6 +38,7 @@ pub fn to_json(graph: &NodeGraphState) -> String {
             name:      n.name.clone(),
             position:  [n.position.x, n.position.y],
             node_type: n.node_type.clone(),
+            bypassed:  n.bypassed,
         }).collect(),
         connections: graph.connections.iter()
             .map(|c| [c.from_node.0, c.from_output, c.to_node.0, c.to_input])
@@ -59,7 +62,7 @@ pub fn from_json(graph: &mut NodeGraphState, json: &str) -> Result<(), String> {
         if let NodeType::Subnet { id, .. } = &mut node_type { *id = SubnetId(usize::MAX); }
         let id = graph.add_node(n.name, node_type, egui::pos2(n.position[0], n.position[1]));
         // Keep the saved ids so connections can be restored as written.
-        if let Some(node) = graph.nodes.iter_mut().find(|x| x.id == id) { node.id = NodeId(n.id); }
+        if let Some(node) = graph.nodes.iter_mut().find(|x| x.id == id) { node.id = NodeId(n.id); node.bypassed = n.bypassed; }
         graph.next_node_id = graph.next_node_id.max(n.id + 1);
     }
     for [from, out, to, input] in saved.connections {
@@ -141,6 +144,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn bypass_passes_the_first_input_through() {
+        let mut g = NodeGraphState::default();
+        let cube = g.add_node("Cube".into(), NodeType::CreateCube { size: 2.0 }, egui::pos2(0.0, 0.0));
+        let xf = g.add_node("Xf".into(), NodeType::Transform {
+            translation: bevy::math::Vec3::new(5.0, 0.0, 0.0),
+            rotation: bevy::math::Vec3::ZERO, scale: bevy::math::Vec3::ONE,
+        }, egui::pos2(0.0, 0.0));
+        g.add_connection(cube, 0, xf, 0);
+        let pass = |_: crate::types::SubnetId, m: &crate::types::MeshData, _: Option<&crate::types::MeshData>| m.clone();
+        let max_x = |g: &NodeGraphState| g.eval_node(xf, &mut Default::default(), &pass).unwrap().into_mesh()
+            .vertices.iter().map(|p| p[0]).fold(f32::MIN, f32::max);
+        assert!((max_x(&g) - 6.0).abs() < 1e-5);
+        let before = g.content_hash();
+        g.toggle_bypass(xf);
+        assert_ne!(before, g.content_hash());
+        assert!((max_x(&g) - 1.0).abs() < 1e-5);
+        // Output cannot be bypassed, and a bypassed node with nothing wired gives nothing.
+        let out = g.nodes.iter().find(|n| matches!(n.node_type, NodeType::Output)).unwrap().id;
+        g.toggle_bypass(out);
+        assert!(!g.nodes.iter().find(|n| n.id == out).unwrap().bypassed);
+        g.toggle_bypass(cube);
+        assert!(g.eval_node(cube, &mut Default::default(), &pass).is_none());
+    }
+
+    #[test]
     fn graph_survives_save_and_load() {
         let mut g = NodeGraphState::default();
         mocap_split_template(&mut g);
@@ -150,6 +178,7 @@ mod tests {
             rotation: bevy::math::Vec3::ZERO, scale: bevy::math::Vec3::ONE,
         }, egui::pos2(5.0, 6.0));
         g.add_connection(cube, 0, xf, 0);
+        g.toggle_bypass(xf);
         // An Edit Poly node with an operation, a rule-based and a picked selection.
         use crate::core::poly::{ExtrudeMode, PolyOp, PolyOpKind, PolySelection, SelSource, SubLevel};
         let ep = g.add_node("EditPoly".into(), NodeType::EditPoly {
@@ -177,6 +206,7 @@ mod tests {
         assert_eq!(h.nodes.len(), g.nodes.len());
         assert_eq!(h.connections.len(), g.connections.len());
         assert_eq!(h.view_flag, g.view_flag);
+        assert!(h.nodes.iter().any(|n| n.bypassed));
         assert_eq!(to_json(&h), json);
         // Split keeps both outputs and their wires.
         let split = h.nodes.iter().find(|n| matches!(n.node_type, NodeType::SplitSkeleton { .. })).unwrap();

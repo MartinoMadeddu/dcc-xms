@@ -248,8 +248,12 @@ pub fn draw_properties(
                 section_label(ui, "Rename");
                 section(ui, |ui| {
                     ui.checkbox(strip_namespace, "Strip namespace (text before last ':')");
-                    ui.horizontal(|ui| { ui.colored_label(xsi::LABEL(), "Find:");    ui.text_edit_singleline(find); });
+                    let names: Vec<String> = anim.input.as_ref()
+                        .map(|c| c.joints.iter().map(|j| j.name.clone()).collect()).unwrap_or_default();
+                    pattern_field(ui, "rename_find", "Find:", find, &names, true);
                     ui.horizontal(|ui| { ui.colored_label(xsi::LABEL(), "Replace:"); ui.text_edit_singleline(replace); });
+                    ui.colored_label(xsi::DIM(), egui::RichText::new(
+                        "Find is a regular expression, case ignored. Replace may use $1, $2 for its groups.").small());
                     ui.horizontal(|ui| { ui.colored_label(xsi::LABEL(), "Prefix:");  ui.text_edit_singleline(prefix); });
                 });
                 if let (Some(i), Some(o)) = (&anim.input, &anim.output) {
@@ -471,15 +475,8 @@ pub fn draw_properties(
                 let mut remove = None;
                 for (n, e) in edits.iter_mut().enumerate() {
                     section(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            egui::ComboBox::from_id_source(("fix_joint", n))
-                                .width(170.0)
-                                .selected_text(if e.joint.is_empty() { "pick a joint".to_string() } else { e.joint.clone() })
-                                .show_ui(ui, |ui| {
-                                    for j in &joints { ui.selectable_value(&mut e.joint, j.clone(), j); }
-                                });
-                            if ui.small_button("x").on_hover_text("Remove").clicked() { remove = Some(n); }
-                        });
+                        pattern_field(ui, &format!("fix_joint{n}"), "Joints:", &mut e.joint, &joints, false);
+                        if ui.small_button("x").on_hover_text("Remove this correction").clicked() { remove = Some(n); }
                         ui.horizontal(|ui| {
                             ui.colored_label(xsi::LABEL(), "Rot");
                             for v in e.rotation.iter_mut() {
@@ -650,9 +647,11 @@ pub fn draw_properties(
             NodeType::PruneJoints { words } => {
                 section_label(ui, "Prune joints");
                 section(ui, |ui| {
-                    ui.horizontal(|ui| { ui.colored_label(xsi::LABEL(), "Names containing:"); ui.text_edit_singleline(words); });
+                    let names: Vec<String> = anim.input.as_ref()
+                        .map(|c| c.joints.iter().map(|j| j.name.clone()).collect()).unwrap_or_default();
+                    pattern_field(ui, "prune_words", "Joints:", words, &names, false);
                     ui.colored_label(xsi::DIM(), egui::RichText::new(
-                        "Comma-separated words, for example: finger, thumb, toe. Each matching joint goes, with everything below it.").small());
+                        "Each matching joint goes, with everything below it.").small());
                     if let (Some(i), Some(o)) = (&anim.input, &anim.output) {
                         ui.colored_label(xsi::LABEL(), format!("{} joints in, {} out", i.joints.len(), o.joints.len()));
                     }
@@ -1231,6 +1230,56 @@ fn section(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
         .inner_margin(egui::vec2(8.0, 6.0))
         .rounding(4.0)
         .show(ui, add);
+}
+
+/// A name pattern: comma-separated regular expressions (see
+/// `core::pattern`), with a picker of the names coming in and a match count.
+/// With `single`, the field holds one expression and picking replaces it.
+fn pattern_field(ui: &mut egui::Ui, id: &str, label: &str, text: &mut String, names: &[String], single: bool) {
+    use crate::core::pattern;
+    ui.horizontal(|ui| {
+        ui.colored_label(xsi::LABEL(), label);
+        let w = (ui.available_width() - 48.0).max(60.0);
+        ui.add(egui::TextEdit::singleline(text).desired_width(w).hint_text("regex, regex"));
+        ui.add_enabled_ui(!names.is_empty(), |ui| {
+            ui.menu_button("Pick", |ui| {
+                let filter_id = ui.id().with(id).with("filter");
+                let mut filter: String = ui.data(|d| d.get_temp(filter_id)).unwrap_or_default();
+                ui.add(egui::TextEdit::singleline(&mut filter).desired_width(200.0).hint_text("filter the list"));
+                let shown = pattern::NamePattern::new(&filter);
+                let current = pattern::NamePattern::new(text);
+                egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
+                    for n in names {
+                        if !shown.is_empty() && !shown.matches(n) { continue; }
+                        if single {
+                            if ui.selectable_label(false, n).clicked() { *text = regex::escape(n); ui.close_menu(); }
+                        } else if ui.selectable_label(current.matches(n), n).clicked() {
+                            pattern::toggle(text, n);
+                        }
+                    }
+                });
+                if !single && !filter.trim().is_empty() && ui.button("Use the filter as a pattern").clicked() {
+                    let mut list: Vec<String> = pattern::parts(text).into_iter().map(String::from).collect();
+                    list.extend(pattern::parts(&filter).into_iter().map(String::from));
+                    *text = list.join(", ");
+                    filter.clear();
+                }
+                ui.data_mut(|d| d.insert_temp(filter_id, filter));
+            }).response.on_hover_text("Pick from the names coming in");
+        });
+    });
+    if !names.is_empty() && !text.trim().is_empty() {
+        let p = pattern::NamePattern::new(text);
+        let n = names.iter().filter(|x| p.matches(x)).count();
+        ui.colored_label(xsi::DIM(), egui::RichText::new(format!("matches {n} of {}", names.len())).small());
+    }
+    if let Some(e) = pattern::error(text) {
+        ui.colored_label(egui::Color32::from_rgb(210, 120, 60), egui::RichText::new(e).small());
+    }
+    if !single {
+        ui.colored_label(xsi::DIM(), egui::RichText::new(
+            "Comma-separated regular expressions, case ignored. A plain word matches names containing it.").small());
+    }
 }
 
 fn section_label(ui: &mut egui::Ui, label: &str) {

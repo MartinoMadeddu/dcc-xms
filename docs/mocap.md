@@ -13,13 +13,13 @@ The timeline has no range of its own. It takes range, rate and timecode from the
 | Load FBX | Reads the hierarchy and one take from an FBX file, baked per frame, converted to Y-up metres |
 | Load FBX Folder | One file out of a folder, picked by index or from a dropdown of file names |
 | Test Clip | A generated clip for trying things out |
-| Rename Joints | Renames joints |
+| Rename Joints | Renames joints. Find is a regular expression, picked from the joint list or typed. Replace may use `$1`, `$2` for its groups |
 | Trim Clip | Cuts the clip to a range |
 | Retime | Changes the frame rate |
 | Set Timecode | Sets the start timecode |
 | Split Characters | One output per character, by position or by root joint |
 | Auto T-Pose | Rotations zeroed, root at the origin, optional hip height |
-| Fix Pose | Manual per-joint rotation and position corrections |
+| Fix Pose | Manual rotation and position corrections. Each correction takes a joint pattern and applies to every joint it matches. An exact joint name applies to that joint only |
 | Proxy Skin | A sphere per bone and a cylinder per link, bound to the skeleton |
 | Write FBX | Binary FBX with skeleton, animation, mesh, skin and bind pose |
 
@@ -37,7 +37,7 @@ In the "Mocap tools" section of the same sub-menu.
 | Loop | Blends the end of a clip into its start |
 | Retarget | Puts the motion of the first input on the skeleton of the second. Joints are matched by name, ignoring prefixes and namespaces. Bones are aligned in the rest pose, so the two skeletons may rest differently |
 | Time Warp | Changes speed, or reverses |
-| Prune Joints | Removes joints whose names contain given words |
+| Prune Joints | Removes joints whose names match a pattern, with everything below them |
 | Floor | Moves the clip so its lowest point sits at a height |
 
 ![The Mocap tools template, with the Joint tab of the Primitive Inspector](xms_mocap_tools.png)
@@ -45,6 +45,10 @@ In the "Mocap tools" section of the same sub-menu.
 ![Retarget onto the test skeleton](xms_retarget.png)
 
 Retarget copies rotations and root motion. It has no IK, so feet can slide when proportions differ.
+
+## Choosing joints
+
+Joint fields take patterns, described in [Interface](interface.md#name-patterns): comma-separated regular expressions with a picker of the joints coming in. For example `thumb, index, middle, ring, pinky` or `^Left.*(Arm|Hand)$`.
 
 ## Joints and bones
 

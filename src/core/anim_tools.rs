@@ -427,15 +427,14 @@ impl AnimData {
 
     // ── Prune ────────────────────────────────────────────────────────────────
 
-    /// Remove every joint whose name contains one of the comma-separated
-    /// words, and everything below it. Case is ignored.
+    /// Remove every joint whose name matches the pattern (comma-separated
+    /// regular expressions, see `core::pattern`), and everything below it.
     pub fn pruned(&self, words: &str) -> AnimData {
-        let words: Vec<String> = words.split(',').map(|w| w.trim().to_lowercase()).filter(|w| !w.is_empty()).collect();
-        if words.is_empty() { return self.clone(); }
+        let pattern = crate::core::pattern::NamePattern::new(words);
+        if pattern.is_empty() { return self.clone(); }
         let mut gone = vec![false; self.joints.len()];
         for (j, joint) in self.joints.iter().enumerate() {
-            let name = joint.name.to_lowercase();
-            gone[j] = joint.parent.map(|p| gone[p]).unwrap_or(false) || words.iter().any(|w| name.contains(w));
+            gone[j] = joint.parent.map(|p| gone[p]).unwrap_or(false) || pattern.matches(&joint.name);
         }
         // Never remove everything.
         if gone.iter().all(|g| *g) { return self.clone(); }
@@ -705,6 +704,16 @@ mod tests {
         assert_eq!(back.frames, 60);
         assert!(close(pos(&back, 0, "LeftHand"), pos(&c, 59, "LeftHand"), 1e-5));
         assert!(close(pos(&back, 59, "LeftHand"), pos(&c, 0, "LeftHand"), 1e-5));
+    }
+
+    #[test]
+    fn prune_takes_regular_expressions() {
+        let c = clip();
+        // Left side only, anchored at the end so "LeftToeBase" style names would stay.
+        let p = c.pruned(":Left.*Arm$");
+        assert!(p.joints.iter().all(|j| !(j.name.contains("Left") && j.name.contains("Arm"))));
+        assert!(p.joints.iter().any(|j| j.name.contains("Right") && j.name.contains("Arm")));
+        assert!(p.joints.len() < c.joints.len());
     }
 
     #[test]

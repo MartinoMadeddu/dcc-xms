@@ -43,6 +43,7 @@ Load a folder of FBX takes, split the characters, fix the pose, skin a proxy and
 - **Real frame rates and timecode:** rational rates, drop-frame, and a timeline that takes its range from whichever node is selected
 - **Clip nodes:** rename joints, trim, retime, set timecode
 - **Clip tools:** mirror, smooth, in place, transform, blend, loop, retarget, time warp, prune joints, floor
+- **Name patterns, not typing:** nodes that work on joints by name take comma-separated regular expressions, with a picker listing the joints coming in and a live match count
 - **Batch nodes:** split characters, auto T-pose, fix pose, proxy skin, write FBX
 - **Write FBX:** skeleton, animation, mesh, skin and bind pose, for one file or the whole folder, in the background
 
@@ -54,6 +55,8 @@ Load a folder of FBX takes, split the characters, fix the pose, skin a proxy and
 
 ## An interface that gets out of the way
 
+- **Bypass any node:** the ring at the left of a node switches it off and passes its input through
+
 - **Dock anything anywhere:** every pane is a tab. Drag it beside another pane, stack it, float it, or drop it on a side of the window to span that whole side
 - **Lock it:** one padlock freezes the layout once you are happy. Dividers still resize
 - **Frame it:** F, G, Z or . frames the selection, down to selected vertices, edges and polygons. A or H frames everything
@@ -61,6 +64,8 @@ Load a folder of FBX takes, split the characters, fix the pose, skin a proxy and
 - **Remembered:** layout, floating windows, theme and navigation style come back at the next start
 - **Fast:** the graph is cooked when its content changes, not on every frame
 - **Light and dark themes**
+
+![A bypassed node, and the joint picker of Prune Joints](docs/xms_bypass_pick.png)
 
 ![The default layout, with the top bar](docs/xms_layout.png)
 

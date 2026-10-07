@@ -36,6 +36,31 @@ The layout, the lock and the place of every floating window are saved when they 
 
 When the Viewport pane is closed or hidden behind another tab, the 3D view is not drawn.
 
+## Node buttons
+
+Each node in the graph has two buttons in its title.
+
+| Button | Where | Does |
+|---|---|---|
+| Bypass | Left, a ring | Switches the node off. Its first input passes through unchanged. The ring turns orange with a bar through it and the node is greyed. A bypassed node with nothing wired to it gives nothing. Output cannot be bypassed |
+| View | Right | Shows that node in the viewport |
+
+Bypass is saved with the graph.
+
+![Smooth is bypassed. Prune Joints shows its picker](xms_bypass_pick.png)
+
+## Name patterns
+
+Fields that choose things by name take patterns instead of exact names:
+
+- Comma-separated regular expressions. Case is ignored
+- A pattern matches anywhere in the name, so a plain word means "contains this word". Use `^` and `$` to anchor
+- Text that is not a valid expression is matched as plain text, and the field says so
+- "Pick" lists the names coming into the node, with a filter box. Clicking a name adds or removes it. Names the pattern already matches are highlighted. "Use the filter as a pattern" adds what you typed in the filter
+- Under the field: how many names match
+
+Used by Prune Joints, Fix Pose and the Find field of Rename Joints.
+
 ## Framing
 
 With the cursor over the viewport:
