@@ -63,8 +63,8 @@ pub const TEMPLATES: &[Template] = &[
         hint: "The example take split, pruned, smoothed, held in place, mirrored and looped" },
     Template { group: "Animation & Mocap", name: "Retarget", build: retarget,
         hint: "A character of the example take driving the test skeleton, which rests in another pose" },
-    Template { group: "Animation & Mocap", name: "Ragdoll", build: ragdoll,
-        hint: "A walk with a block where its feet go. Press Solve on the Ragdoll node and the feet land on the block" },
+    Template { group: "Animation & Mocap", name: "Ragdoll: into the car", build: ragdoll,
+        hint: "A captured actor walks through a car and sits in it, kept out of the seat, the floor and himself. Needs the two files named in examples/ragdoll" },
     Template { group: "Animation & Mocap", name: "Mocap split (example takes)", build: mocap_example,
         hint: "The mocap split graph, pointed at the example folder with a two-character take" },
     Template { group: "Animation & Mocap", name: "Mocap split", build: mocap_blank,
@@ -547,25 +547,27 @@ fn retarget(g: &mut NodeGraphState, _: &mut SubnetStore) -> String {
     format!("Retarget: a captured performance on the 19-joint test skeleton, which rests with its arms down. Space plays.{}", missing_examples())
 }
 
+/// Are the take and the set of the Ragdoll template in the examples folder?
+pub fn ragdoll_files() -> bool {
+    [examples::RAGDOLL_TAKE, examples::RAGDOLL_SET].iter().all(|f| std::path::Path::new(&examples::path(f)).is_file())
+}
+
 fn ragdoll(g: &mut NodeGraphState, _: &mut SubnetStore) -> String {
     crate::graph_io::clear(g);
-    let walk  = g.add_node("Walk".into(), NodeType::TestClip { seconds: 4.0, fps_num: 30, fps_den: 1 }, p(40.0, 20.0));
-    let skin  = g.add_node("ProxySkin".into(), NodeType::ProxySkin { thickness: 3.0 }, p(40.0, 110.0));
-    let cube  = g.add_node("Block".into(), NodeType::CreateCube { size: 1.0 }, p(300.0, 20.0));
-    // Its top at 12 cm: the feet of the walk come down to 5.
-    let place = g.add_node("Place".into(), NodeType::Transform {
-        translation: Vec3::new(0.0, -0.38, 0.0), rotation: Vec3::ZERO, scale: Vec3::new(1.2, 1.0, 1.2) }, p(300.0, 110.0));
-    let rag   = g.add_node("Ragdoll".into(), NodeType::Ragdoll { settings: Default::default() }, p(170.0, 220.0));
-    let hulls = g.add_node("Hulls".into(), NodeType::Calamari { hulls: true, detail: 1 }, p(170.0, 320.0));
-    g.add_connection(walk, 0, skin, 0);
-    g.add_connection(cube, 0, place, 0);
-    g.add_connection(skin, 0, rag, 0);
-    g.add_connection(place, 0, rag, 1);
+    let take  = g.add_node("Take".into(), NodeType::LoadFbx { path: examples::path(examples::RAGDOLL_TAKE), take: 0 }, p(40.0, 20.0));
+    let car   = g.add_node("Car".into(), NodeType::LoadFbxMesh { path: examples::path(examples::RAGDOLL_SET) }, p(300.0, 20.0));
+    let rag   = g.add_node("Ragdoll".into(), NodeType::Ragdoll { settings: Default::default() }, p(170.0, 130.0));
+    let hulls = g.add_node("Hulls".into(), NodeType::Calamari { hulls: true, detail: 1 }, p(170.0, 230.0));
+    g.add_connection(take, 0, rag, 0);
+    g.add_connection(car, 0, rag, 1);
     g.add_connection(rag, 0, hulls, 0);
-    view(g, rag, p(170.0, 430.0));
+    view(g, rag, p(170.0, 340.0));
     g.selected_node  = Some(rag);
     g.selected_nodes = vec![rag];
-    "Ragdoll: the walk has a block where its feet go. Press Solve in the properties of the Ragdoll node: the feet land on the block and the knees bend for it. Put the view flag on Hulls to see the shapes that collide. For a real take, load it with Load FBX, the set with Load FBX Mesh, and wire both to a Ragdoll node.".into()
+    if !ragdoll_files() {
+        return format!("Ragdoll: the take and the car are too large for the repository. Copy character_with_motion_and_mesh.fbx and car_for_collision.fbx into {} and load this template again.", examples::path("ragdoll"));
+    }
+    "Ragdoll: the actor walks through the car at frame 1341 and is seated by 1473. Scrub to frame 3000: hips on the seat, feet in the footwell. Bypass the Ragdoll node to see the capture. Put the view flag on Hulls for the shapes that collide. The properties of the Ragdoll node show the solve, or a Solve button.".into()
 }
 
 fn mocap_example(g: &mut NodeGraphState, _: &mut SubnetStore) -> String {
@@ -647,6 +649,8 @@ mod tests {
             for n in &g.nodes {
                 // The blank mocap template has no folder yet.
                 if t.name == "Mocap split" { break; }
+                // The take and the car of the Ragdoll template are not in the repository.
+                if t.name.starts_with("Ragdoll") && !ragdoll_files() { break; }
                 if matches!(n.node_type, NodeType::Output | NodeType::WriteFbx { .. }) { continue; }
                 let clip = (0..n.outputs.len().max(1)).any(|o| g.eval_anim_out(n.id, o).is_some());
                 let mesh = g.eval_node(n.id, &mut std::collections::HashMap::new(), &eval)

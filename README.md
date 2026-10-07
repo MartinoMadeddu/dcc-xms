@@ -79,7 +79,7 @@ The actor sat on a box. The character sits in a car, with its hips in the cushio
 
 A take of 12,227 frames against a car of 1.7 million triangles solves in under five minutes on two cores, a chunk of frames at a time. See [docs/ragdoll.md](docs/ragdoll.md).
 
-![Ragdoll: a walk kept on top of a block](docs/xms_ragdoll.png)
+![Ragdoll: the take in the car](docs/xms_ragdoll.png)
 
 ## An interface that gets out of the way
 

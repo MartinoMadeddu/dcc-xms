@@ -17,6 +17,13 @@ pub const TABLE_USD:  &str = "table.usda";
 /// By VTX (https://sketchfab.com/VTX_car), CC BY-NC-SA 4.0.
 pub const DELOREAN_USD: &str = "DeLorean.usdz";
 
+/// The take and the set of the Ragdoll template. Too large for the
+/// repository: they are copied into `examples/ragdoll` by hand.
+pub const RAGDOLL_TAKE: &str = "ragdoll/character_with_motion_and_mesh.fbx";
+pub const RAGDOLL_SET:  &str = "ragdoll/car_for_collision.fbx";
+/// Solved results that ship with the examples.
+pub const RAGDOLL_SOLVED: &str = "ragdoll/solved";
+
 /// The examples folder: the one named by XMS_EXAMPLES, next to the program,
 /// at the root of the source tree when run through cargo, or in the working
 /// folder.

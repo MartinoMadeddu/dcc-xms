@@ -2,7 +2,7 @@
 
 A captured performance does not know about the set. The actor sat on a box, the character sits in a car, and the hips are in the cushion, the feet under the floor and a forearm through a thigh. The Ragdoll node keeps the character out of a collider mesh and out of itself, and changes the capture as little as that takes.
 
-![The Ragdoll template, solved](xms_ragdoll.png)
+![The Ragdoll template: the take in the car, the set see-through, the report in the panel](xms_ragdoll.png)
 
 ## The three nodes
 
@@ -27,7 +27,18 @@ Any mesh can be the collider: a model from Load FBX Mesh or Load USD, a cube, an
 
 The node solves nothing by itself. Until Solve has run for exactly the clip, collider and settings it has, the clip passes through as it came, and the panel says so. Change a setting and the panel says "not solved" again.
 
-The **Ragdoll** template shows it with no files: a walk, a block where its feet go, and a Solve button.
+## The template
+
+**Ragdoll: into the car** is the take this was built on: an actor who walks through a car and sits in it for six minutes. It loads two files from `examples/ragdoll`:
+
+| File | Size |
+|---|---|
+| `character_with_motion_and_mesh.fbx` | 205 MB |
+| `car_for_collision.fbx` | 99 MB |
+
+GitHub takes no file over 100 MB, so they are not in the repository and not in the downloads. Copy them into `examples/ragdoll`; Git ignores them there. Without them the template says where they go.
+
+The result of solving that take with the default settings ships in `examples/ragdoll/solved`, 4 MB. With the two files in place the template opens solved, with no wait. Change a setting and it has to be solved again.
 
 ## What it does
 
@@ -94,8 +105,6 @@ On a take of 12,227 frames at 30 fps (a MetaHuman body, 342 joints, 32,334 verti
 | Bodies put back on the capture | 0 |
 
 In the frames before the character reaches the car, the result is the capture to the last digit.
-
-![The take in the car: the set see-through, the report in the panel](xms_ragdoll_car.png)
 
 ## A take of your own, from the command line
 
