@@ -29,7 +29,7 @@ On Ubuntu or Debian, first:
 
 The page at https://srlegrand.github.io/xms-imago/ is the `site/` folder of the repository, published by `.github/workflows/pages.yml` on every push to `main` that touches the site, the screenshots in `docs/` or the artwork in `assets/`.
 
-Its download buttons point at `releases/latest/download/<file>`, so they always fetch the newest build without the page being touched. The page also names the newest build, from GitHub's public record of it.
+The downloads are in four places: a bar that stays at the top of the window, whose button fetches the build for the visitor's machine, a band of four large buttons under the cover, the cover disk, and a second band at the end. Its download buttons point at `releases/latest/download/<file>`, so they always fetch the newest build without the page being touched. The page also names the newest build, from GitHub's public record of it.
 
 The page is laid out as a 3D magazine of the 1990s: a cover, a contents page with the downloads on a cover disk, then a double page in its own colours for each area of the program, a reference card with the keys, the file formats and all 38 nodes, the build instructions as a type-in listing, and the known gaps. Its fonts are in `site/fonts/` and are served with it.
 
