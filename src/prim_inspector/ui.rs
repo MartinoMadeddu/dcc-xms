@@ -490,7 +490,7 @@ mod tests {
         // No UVs: nothing per corner. With UVs: one row per triangle corner.
         assert!(mesh_table(&cube, &PrimInspectorTab::FaceVarying).cols.is_empty());
         let mut grid = create_grid(2, 2, 2.0);
-        grid.uvs = crate::core::uv::unwrap(&grid, crate::core::uv::UvMethod::Planar, 0.0, 0.0, 1);
+        grid.uvs = crate::core::uv::unwrap(&grid, crate::core::uv::UvMethod::Planar, 0.0, 0.0, 1, 1);
         let fv = mesh_table(&grid, &PrimInspectorTab::FaceVarying);
         assert_eq!(fv.rows, 24);
         assert_eq!(col(&fv, "uv").len(), 24);

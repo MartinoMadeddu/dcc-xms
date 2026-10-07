@@ -145,9 +145,9 @@ pub fn evaluate_node_type(
         NodeType::Retarget => anim_op2(node_type, inputs, |a, b| a.retargeted(b).0),
 
         // ── UV ───────────────────────────────────────────────────────────────
-        NodeType::UvUnwrap { method, angle, margin, axis } => inputs.first().map(|r| {
+        NodeType::UvUnwrap { method, angle, margin, axis, tiles } => inputs.first().map(|r| {
             let mut mesh = r.as_mesh();
-            mesh.uvs = (*crate::core::uv::unwrap_cached(&mesh, *method, *angle, *margin, *axis)).clone();
+            mesh.uvs = (*crate::core::uv::unwrap_cached(&mesh, *method, *angle, *margin, *axis, *tiles)).clone();
             EvalResult::Single(mesh)
         }),
         NodeType::UvTransform { offset, rotate, scale } => inputs.first().map(|r| {

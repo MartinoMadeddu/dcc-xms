@@ -16,7 +16,7 @@ Nothing is baked. A mesh is a cube node followed by the operations that shaped i
 
 ![Twelve of the built-in templates](docs/xms_templates.png)
 
-Nineteen templates ship with the program, one for each area of it. Each loads a working graph and tells you what to try.
+Twenty templates ship with the program, one for each area of it. Each loads a working graph and tells you what to try.
 
 ## Polygon modelling in a single node
 
@@ -33,10 +33,13 @@ Edit Poly keeps a whole modelling session in one node, modelled on the Edit Poly
 ## UV unwrapping
 
 - **UV Unwrap:** cuts the mesh into charts where the surface bends past an angle, flattens each chart with least squares conformal maps (Lévy, Petitjean, Ray and Maillot, 2002) and packs the charts into the unit square. Box and planar projection are there too
+- **UDIM tiles:** set a tile count and the separate pieces of the mesh are spread over them. Pieces close together share a tile, and the most surface goes to 1001
 - **UV Transform and UV Edit:** move, turn, scale and flip the whole layout or single islands
 - **UV Editor pane:** the layout of the selected node, with zoom, pan and island dragging
 
 ![The sea mine unwrapped: 339 islands in the UV Editor](docs/xms_uv_editor.png)
+
+![Nine separate pieces spread over three UDIM tiles](docs/xms_udim.png)
 
 ## Motion capture, from take to engine
 

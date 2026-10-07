@@ -29,6 +29,7 @@ The Templates menu in the node graph header holds ready-made graphs. Picking one
 | Template | Shows |
 |---|---|
 | Unwrap the sea mine | UV Unwrap on the sea mine, shown in the UV Editor |
+| UDIM tiles | A body and two hands made of separate pieces, unwrapped over three tiles |
 | Edit UV islands | A box unwrapped, the layout scaled with UV Transform, two islands moved with UV Edit |
 
 ## Animation & Mocap

@@ -660,7 +660,7 @@ fn add_node_menu(ui: &mut egui::Ui, graph: &mut NodeGraphState, cp: egui::Pos2) 
         ui.set_min_width(170.0);
         if ui.button("🗺  UV Unwrap").clicked() {
             graph.add_node("UVUnwrap".into(), NodeType::UvUnwrap {
-                method: crate::core::uv::UvMethod::Conformal, angle: 66.0, margin: 0.02, axis: 1 }, cp); added = true;
+                method: crate::core::uv::UvMethod::Conformal, angle: 66.0, margin: 0.02, axis: 1, tiles: 1 }, cp); added = true;
         }
         if ui.button("📌  UV Transform").clicked() {
             graph.add_node("UVTransform".into(), NodeType::UvTransform { offset: [0.0; 2], rotate: 0.0, scale: [1.0; 2] }, cp); added = true;

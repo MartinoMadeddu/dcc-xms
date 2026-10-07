@@ -672,7 +672,7 @@ pub fn draw_properties(
             }
 
             // ── UV ───────────────────────────────────────────────────────────
-            NodeType::UvUnwrap { method, angle, margin, axis } => {
+            NodeType::UvUnwrap { method, angle, margin, axis, tiles } => {
                 use crate::core::uv::UvMethod;
                 section_label(ui, "UV unwrap");
                 section(ui, |ui| {
@@ -691,6 +691,14 @@ pub fn draw_properties(
                         UvMethod::Box => {}
                     }
                     labeled_slider(ui, "Margin", margin, 0.0..=0.1);
+                    ui.horizontal(|ui| {
+                        ui.colored_label(xsi::LABEL(), "UDIM tiles:");
+                        ui.add(egui::DragValue::new(tiles).range(1..=100).speed(0.05));
+                        if *tiles > 1 {
+                            ui.colored_label(xsi::DIM(), format!("1001 to {}", 1000 + *tiles));
+                        }
+                    }).response.on_hover_text(
+                        "Spreads the separate pieces of the mesh over this many tiles. Pieces close together share a tile. The group with the most surface takes 1001, the smallest the last tile. With fewer pieces than tiles, the rest stay empty.");
                     ui.colored_label(xsi::DIM(), egui::RichText::new(
                         "Open the UV Editor pane (Panes menu) to see the layout. A smaller chart angle gives more charts with less distortion.").small());
                 });

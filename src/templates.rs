@@ -45,6 +45,8 @@ pub const TEMPLATES: &[Template] = &[
         hint: "Conformal (LSCM) unwrap of ten thousand polygons. Open the UV Editor pane to see the charts" },
     Template { group: "UV", name: "Edit UV islands", build: uv_edit,
         hint: "A box unwrapped, then islands moved, turned and scaled in a UV Edit node" },
+    Template { group: "UV", name: "UDIM tiles", build: uv_udim,
+        hint: "A body and two hands made of separate pieces, unwrapped over three UDIM tiles: each hand keeps its fingers on its own tile" },
     Template { group: "Animation & Mocap", name: "Clip basics", build: clip_basics,
         hint: "Test clip renamed, trimmed, retimed and given a start timecode. Select each node to see the timeline follow" },
     Template { group: "Animation & Mocap", name: "FBX import", build: fbx_import,
@@ -345,10 +347,46 @@ fn uv_mine(g: &mut NodeGraphState, store: &mut SubnetStore) -> String {
     sea_mine(g, store);
     let ep = g.nodes.iter().find(|n| matches!(n.node_type, NodeType::EditPoly { .. })).map(|n| n.id).expect("sea mine has an Edit Poly node");
     let uv = g.add_node("Unwrap".into(), NodeType::UvUnwrap {
-        method: crate::core::uv::UvMethod::Conformal, angle: 50.0, margin: 0.01, axis: 1 }, p(180.0, 240.0));
+        method: crate::core::uv::UvMethod::Conformal, angle: 50.0, margin: 0.01, axis: 1, tiles: 1 }, p(180.0, 240.0));
     g.add_connection(ep, 0, uv, 0);
     finish(g, uv, uv, p(180.0, 350.0));
     "UV unwrap: open the UV Editor pane from the Panes menu. Lower the chart angle for more charts with less distortion.".into()
+}
+
+fn uv_udim(g: &mut NodeGraphState, _: &mut SubnetStore) -> String {
+    crate::graph_io::clear(g);
+    let cube   = g.add_node("Box".into(), NodeType::CreateCube { size: 1.0 }, p(260.0, 20.0));
+    let sphere = g.add_node("Ball".into(), NodeType::CreateSphere { radius: 0.5, segments: 16 }, p(40.0, 20.0));
+    let body   = g.add_node("Body".into(), transform([0.0, 1.5, 0.0], [0.0; 3], [1.6, 3.0, 1.0]), p(480.0, 110.0));
+    g.add_connection(cube, 0, body, 0);
+    let mut last = body;
+    // Two hands: a palm with three fingers beside it, well away from the body.
+    for (h, side) in [-1.0f32, 1.0].into_iter().enumerate() {
+        let x = side * 3.0;
+        let col = 40.0 + h as f32 * 220.0;
+        let palm = g.add_node(format!("Palm{}", h + 1), transform([x, 1.5, 0.0], [0.0; 3], [1.0, 1.0, 0.5]), p(col, 110.0));
+        g.add_connection(sphere, 0, palm, 0);
+        let mut hand = palm;
+        for f in 0..3 {
+            let row = 200.0 + f as f32 * 90.0;
+            let finger = g.add_node(format!("Finger{}_{}", h + 1, f + 1),
+                transform([x - 0.3 + f as f32 * 0.3, 2.35, 0.0], [0.0; 3], [0.2, 0.7, 0.2]), p(col + 110.0, row));
+            let merge = g.add_node(format!("Hand{}_{}", h + 1, f + 1), NodeType::Merge, p(col, row + 45.0));
+            g.add_connection(cube, 0, finger, 0);
+            g.add_connection(hand, 0, merge, 0);
+            g.add_connection(finger, 0, merge, 1);
+            hand = merge;
+        }
+        let join = g.add_node(format!("Join{}", h + 1), NodeType::Merge, p(480.0, 300.0 + h as f32 * 100.0));
+        g.add_connection(last, 0, join, 0);
+        g.add_connection(hand, 0, join, 1);
+        last = join;
+    }
+    let uv = g.add_node("Unwrap".into(), NodeType::UvUnwrap {
+        method: crate::core::uv::UvMethod::Conformal, angle: 60.0, margin: 0.02, axis: 1, tiles: 3 }, p(480.0, 500.0));
+    g.add_connection(last, 0, uv, 0);
+    finish(g, uv, uv, p(480.0, 590.0));
+    "UDIM tiles: nine separate pieces over three tiles. The body has the most surface and takes 1001. Each hand keeps its palm and fingers together. Change the tile count on the Unwrap node.".into()
 }
 
 fn uv_edit(g: &mut NodeGraphState, _: &mut SubnetStore) -> String {
@@ -356,7 +394,7 @@ fn uv_edit(g: &mut NodeGraphState, _: &mut SubnetStore) -> String {
     crate::graph_io::clear(g);
     let cube = g.add_node("Box".into(), NodeType::CreateCube { size: 1.0 }, p(180.0, 20.0));
     let size = g.add_node("Stretch".into(), transform([0.0, 0.5, 0.0], [0.0, 0.0, 0.0], [2.0, 1.0, 1.0]), p(180.0, 110.0));
-    let uv   = g.add_node("Unwrap".into(), NodeType::UvUnwrap { method: UvMethod::Conformal, angle: 45.0, margin: 0.03, axis: 1 }, p(180.0, 200.0));
+    let uv   = g.add_node("Unwrap".into(), NodeType::UvUnwrap { method: UvMethod::Conformal, angle: 45.0, margin: 0.03, axis: 1, tiles: 1 }, p(180.0, 200.0));
     let edit = g.add_node("Arrange".into(), NodeType::UvEdit { edits: vec![
         IslandEdit { island: 0, offset: [0.0, 0.0], rotate: 90.0, scale: [1.0, 1.0] },
         IslandEdit { island: 3, offset: [0.05, 0.1], rotate: 0.0, scale: [0.6, 0.6] },

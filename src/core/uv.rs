@@ -226,7 +226,7 @@ fn uv_area(t: &[Vec2; 3]) -> f32 { (t[1] - t[0]).perp_dot(t[2] - t[0]) * 0.5 }
 
 /// UVs for a mesh, one per triangle corner. `margin` is the gap between
 /// charts as a fraction of the square.
-pub fn unwrap(mesh: &MeshData, method: UvMethod, angle_deg: f32, margin: f32, axis: usize) -> Vec<[f32; 2]> {
+pub fn unwrap(mesh: &MeshData, method: UvMethod, angle_deg: f32, margin: f32, axis: usize, tiles: u32) -> Vec<[f32; 2]> {
     let nt = tri_count(mesh);
     if nt == 0 { return vec![]; }
     let mut charts: Vec<Chart> = vec![];
@@ -290,7 +290,33 @@ pub fn unwrap(mesh: &MeshData, method: UvMethod, angle_deg: f32, margin: f32, ax
             }
         }
     }
-    pack(&mut charts, margin);
+    if tiles <= 1 {
+        pack(&mut charts, margin);
+    } else {
+        // One packing per UDIM tile. A chart that spans elements of
+        // different tiles is cut along the tile boundary first.
+        let (element_of, infos) = elements(mesh);
+        let tile_of = assign_tiles(&infos, tiles as usize);
+        let used = tile_of.iter().copied().max().map(|m| m + 1).unwrap_or(1);
+        let mut per_tile: Vec<Vec<Chart>> = (0..used).map(|_| vec![]).collect();
+        for c in charts.drain(..) {
+            let mut parts: HashMap<usize, Chart> = HashMap::new();
+            for (t, uv) in c.tris.iter().zip(&c.uv) {
+                let part = parts.entry(tile_of[element_of[*t]]).or_insert_with(|| Chart { tris: vec![], uv: vec![] });
+                part.tris.push(*t);
+                part.uv.push(*uv);
+            }
+            for (tile, part) in parts { per_tile[tile].push(part); }
+        }
+        for (tile, mut group) in per_tile.into_iter().enumerate() {
+            // Charts in a fixed order, whatever order the map gave them.
+            group.sort_by_key(|c| c.tris[0]);
+            pack(&mut group, margin);
+            let offset = tile_offset(tile);
+            for c in &mut group { for t in &mut c.uv { for p in t.iter_mut() { *p += offset; } } }
+            charts.extend(group);
+        }
+    }
     let mut out = vec![[0.0f32; 2]; nt * 3];
     for c in &charts {
         for (t, uv) in c.tris.iter().zip(&c.uv) {
@@ -298,6 +324,155 @@ pub fn unwrap(mesh: &MeshData, method: UvMethod, angle_deg: f32, margin: f32, ax
         }
     }
     out
+}
+
+// ============================================================================
+// UDIM TILES
+// ============================================================================
+
+/// Tiles per row in the UDIM numbering.
+pub const UDIM_ROW: usize = 10;
+
+/// Where a tile sits in UV space: ten to a row, then up.
+pub fn tile_offset(tile: usize) -> Vec2 { Vec2::new((tile % UDIM_ROW) as f32, (tile / UDIM_ROW) as f32) }
+
+/// The UDIM number of the tile a UV falls in: 1001 is the unit square.
+pub fn udim(u: i32, v: i32) -> i32 { 1001 + u + UDIM_ROW as i32 * v }
+
+/// One connected piece of the mesh.
+#[derive(Clone, Debug)]
+pub struct ElementInfo {
+    pub area: f32,
+    pub lo:   Vec3,
+    pub hi:   Vec3,
+}
+
+/// Elements of the mesh: triangles joined through vertices at the same
+/// place, whether or not they share an index. Returns the element of each
+/// triangle and, per element, its surface area and bounding box. Elements
+/// are numbered by their first triangle.
+pub fn elements(mesh: &MeshData) -> (Vec<usize>, Vec<ElementInfo>) {
+    let nt = tri_count(mesh);
+    // Vertices at the same place count as one.
+    let mut place: HashMap<[i64; 3], usize> = HashMap::new();
+    let welded: Vec<usize> = mesh.vertices.iter().map(|v| {
+        let key = [(v[0] * 1.0e5).round() as i64, (v[1] * 1.0e5).round() as i64, (v[2] * 1.0e5).round() as i64];
+        let next = place.len();
+        *place.entry(key).or_insert(next)
+    }).collect();
+    let mut parent: Vec<usize> = (0..place.len()).collect();
+    fn find(parent: &mut [usize], mut x: usize) -> usize {
+        while parent[x] != x { parent[x] = parent[parent[x]]; x = parent[x]; }
+        x
+    }
+    for t in 0..nt {
+        let v = tri(mesh, t).map(|i| welded[i as usize]);
+        let a = find(&mut parent, v[0]);
+        for k in 1..3 { let b = find(&mut parent, v[k]); if a != b { parent[b] = a; } }
+    }
+    let mut number: HashMap<usize, usize> = HashMap::new();
+    let mut infos: Vec<ElementInfo> = vec![];
+    let mut element_of = vec![0usize; nt];
+    for t in 0..nt {
+        let root = find(&mut parent, welded[tri(mesh, t)[0] as usize]);
+        let e = *number.entry(root).or_insert_with(|| {
+            infos.push(ElementInfo { area: 0.0, lo: Vec3::splat(f32::MAX), hi: Vec3::splat(f32::MIN) });
+            infos.len() - 1
+        });
+        element_of[t] = e;
+        infos[e].area += tri_normal_area(mesh, t).1;
+        for i in tri(mesh, t) { let p = pos(mesh, i); infos[e].lo = infos[e].lo.min(p); infos[e].hi = infos[e].hi.max(p); }
+    }
+    (element_of, infos)
+}
+
+/// Empty space between two bounding boxes. Zero when they touch or overlap.
+fn box_gap(a: &ElementInfo, b: &ElementInfo) -> f32 {
+    (a.lo - b.hi).max(b.lo - a.hi).max(Vec3::ZERO).length()
+}
+
+/// Most elements the grouping looks at pair by pair. Past this the smallest
+/// ones simply join their nearest large neighbour.
+const MAX_GROUPED: usize = 256;
+/// How much an over-full tile weighs against closeness when groups merge.
+const BALANCE: f32 = 0.5;
+
+/// Spread elements over at most `tiles` UDIM tiles. Returns the tile of each
+/// element, tiles numbered from zero.
+///
+/// Elements that sit close together share a tile: groups are merged nearest
+/// first, with a penalty for a group growing past its share of the surface,
+/// until there is one group per tile. The groups then take the tiles in
+/// order of surface area, so the largest lands on the first tile and the
+/// small ones on the last. With fewer elements than tiles, each element has
+/// a tile to itself and the rest stay empty.
+pub fn assign_tiles(infos: &[ElementInfo], tiles: usize) -> Vec<usize> {
+    let n = infos.len();
+    let tiles = tiles.max(1);
+    if n == 0 { return vec![]; }
+    if tiles == 1 { return vec![0; n]; }
+    let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+    for e in infos { lo = lo.min(e.lo); hi = hi.max(e.hi); }
+    let diagonal = (hi - lo).length().max(1e-6);
+    let total: f32 = infos.iter().map(|e| e.area).sum();
+    let share = (total / tiles as f32).max(1e-12);
+
+    // Largest first; ties keep mesh order so the result is repeatable.
+    let mut order: Vec<usize> = (0..n).collect();
+    order.sort_by(|a, b| infos[*b].area.total_cmp(&infos[*a].area).then(a.cmp(b)));
+    let seeds = &order[..n.min(MAX_GROUPED)];
+
+    // Each group: its elements, and its area.
+    let mut groups: Vec<(Vec<usize>, f32)> = seeds.iter().map(|e| (vec![*e], infos[*e].area)).collect();
+    for e in &order[seeds.len()..] {
+        let nearest = (0..seeds.len()).min_by(|a, b| box_gap(&infos[*e], &infos[seeds[*a]]).total_cmp(&box_gap(&infos[*e], &infos[seeds[*b]]))).unwrap_or(0);
+        groups[nearest].0.push(*e);
+        groups[nearest].1 += infos[*e].area;
+    }
+    // Gap between groups: the smallest gap between any two of their
+    // elements, kept up to date as groups merge.
+    let m = groups.len();
+    let mut gap = vec![0.0f32; m * m];
+    for a in 0..m { for b in 0..a {
+        let g = box_gap(&infos[seeds[a]], &infos[seeds[b]]) / diagonal;
+        gap[a * m + b] = g; gap[b * m + a] = g;
+    } }
+    let mut alive = vec![true; m];
+    let mut count = m;
+    while count > tiles {
+        let mut best: Option<(f32, usize, usize)> = None;
+        for a in 0..m { if !alive[a] { continue; } for b in 0..a { if !alive[b] { continue; }
+            let over = ((groups[a].1 + groups[b].1) / share - 1.0).max(0.0);
+            let cost = gap[a * m + b] + BALANCE * over;
+            if best.map(|x| cost < x.0).unwrap_or(true) { best = Some((cost, a, b)); }
+        } }
+        let Some((_, a, b)) = best else { break };
+        // b joins a.
+        let moved = std::mem::take(&mut groups[b].0);
+        groups[a].0.extend(moved);
+        groups[a].1 += groups[b].1;
+        alive[b] = false;
+        count -= 1;
+        for k in 0..m { if alive[k] && k != a {
+            let g = gap[a * m + k].min(gap[b * m + k]);
+            gap[a * m + k] = g; gap[k * m + a] = g;
+        } }
+    }
+    let mut left: Vec<(Vec<usize>, f32)> = groups.into_iter().zip(alive).filter(|(_, a)| *a).map(|(g, _)| g).collect();
+    left.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.iter().min().cmp(&b.0.iter().min())));
+    let mut tile_of = vec![0usize; n];
+    for (tile, (members, _)) in left.iter().enumerate() { for e in members { tile_of[*e] = tile; } }
+    tile_of
+}
+
+/// The tiles a layout uses, as (u, v) of each tile's corner, in UDIM order.
+pub fn used_tiles(mesh: &MeshData) -> Vec<(i32, i32)> {
+    let mut set: std::collections::BTreeSet<(i32, i32)> = Default::default();
+    for t in mesh.uvs.chunks_exact(3) {
+        let c = (Vec2::from_array(t[0]) + Vec2::from_array(t[1]) + Vec2::from_array(t[2])) / 3.0;
+        set.insert((c.y.floor() as i32, c.x.floor() as i32));
+    }
+    set.into_iter().map(|(v, u)| (u, v)).collect()
 }
 
 /// In-plane axes for a projection along an axis, so the image is not mirrored.
@@ -452,17 +627,17 @@ static CACHE: std::sync::Mutex<Vec<(u64, std::sync::Arc<Vec<[f32; 2]>>)>> = std:
 
 /// `unwrap` with a memory: the same mesh and settings give the stored
 /// result, so the several panes that cook a node do the work once.
-pub fn unwrap_cached(mesh: &MeshData, method: UvMethod, angle_deg: f32, margin: f32, axis: usize) -> std::sync::Arc<Vec<[f32; 2]>> {
+pub fn unwrap_cached(mesh: &MeshData, method: UvMethod, angle_deg: f32, margin: f32, axis: usize, tiles: u32) -> std::sync::Arc<Vec<[f32; 2]>> {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
     for v in &mesh.vertices { for c in v { c.to_bits().hash(&mut h); } }
     mesh.indices.hash(&mut h);
-    (method as u8, angle_deg.to_bits(), margin.to_bits(), axis).hash(&mut h);
+    (method as u8, angle_deg.to_bits(), margin.to_bits(), axis, tiles).hash(&mut h);
     let key = h.finish();
     if let Ok(c) = CACHE.lock() {
         if let Some((_, uv)) = c.iter().find(|(k, _)| *k == key) { return uv.clone(); }
     }
-    let uv = std::sync::Arc::new(unwrap(mesh, method, angle_deg, margin, axis));
+    let uv = std::sync::Arc::new(unwrap(mesh, method, angle_deg, margin, axis, tiles));
     if let Ok(mut c) = CACHE.lock() {
         if c.len() >= 8 { c.remove(0); }
         c.push((key, uv.clone()));
@@ -476,7 +651,7 @@ mod tests {
     use crate::node_graph::nodes::{create_cube, create_grid, create_sphere};
 
     fn with_uvs(mut m: MeshData, method: UvMethod, angle: f32) -> MeshData {
-        m.uvs = unwrap(&m, method, angle, 0.02, 1);
+        m.uvs = unwrap(&m, method, angle, 0.02, 1, 1);
         m
     }
     fn in_unit_square(m: &MeshData) -> bool {
@@ -498,6 +673,105 @@ mod tests {
             }
         }
         worst
+    }
+
+    /// Several meshes as one, each scaled then moved.
+    fn joined(parts: &[(MeshData, f32, [f32; 3])]) -> MeshData {
+        let mut out = MeshData::default();
+        for (m, scale, at) in parts {
+            let base = out.vertices.len() as u32;
+            out.vertices.extend(m.vertices.iter().map(|v| [v[0] * scale + at[0], v[1] * scale + at[1], v[2] * scale + at[2]]));
+            out.indices.extend(m.indices.iter().map(|i| i + base));
+        }
+        out
+    }
+    /// A palm with three fingers beside it.
+    fn hand(x: f32) -> Vec<(MeshData, f32, [f32; 3])> {
+        let mut parts = vec![(create_sphere(0.5, 12), 1.0, [x, 0.0, 0.0])];
+        for k in 0..3 { parts.push((create_cube(1.0), 0.25, [x - 0.4 + k as f32 * 0.4, 0.0, 0.9])); }
+        parts
+    }
+    fn tiles_of(mesh: &MeshData, tiles: usize) -> Vec<usize> {
+        let (_, infos) = elements(mesh);
+        assign_tiles(&infos, tiles)
+    }
+
+    #[test]
+    fn elements_are_the_separate_pieces() {
+        // A cube has its own vertices per face: still one element.
+        let (of, infos) = elements(&create_cube(2.0));
+        assert_eq!(infos.len(), 1);
+        assert!(of.iter().all(|e| *e == 0));
+        assert!((infos[0].area - 24.0).abs() < 1e-3, "{}", infos[0].area);
+        let two = joined(&[(create_cube(1.0), 1.0, [0.0; 3]), (create_cube(1.0), 1.0, [5.0, 0.0, 0.0])]);
+        assert_eq!(elements(&two).1.len(), 2);
+    }
+
+    #[test]
+    fn neighbours_share_a_tile_and_the_largest_goes_first() {
+        // A torso, and a hand on each side made of a palm and three fingers.
+        let mut parts = vec![(create_cube(1.0), 3.0, [0.0, 0.0, 0.0])];
+        parts.extend(hand(10.0));
+        parts.extend(hand(-10.0));
+        let tile = tiles_of(&joined(&parts), 3);
+        assert_eq!(tile.len(), 9);
+        assert_eq!(tile[0], 0, "the torso has the most surface");
+        assert!(tile[1..5].iter().all(|t| *t == tile[1]), "one hand, one tile: {tile:?}");
+        assert!(tile[5..9].iter().all(|t| *t == tile[5]), "{tile:?}");
+        assert!(tile[1] != 0 && tile[5] != 0 && tile[1] != tile[5], "{tile:?}");
+    }
+
+    #[test]
+    fn tiles_run_from_the_most_surface_to_the_least() {
+        let m = joined(&[
+            (create_cube(1.0), 1.0, [0.0, 0.0, 0.0]),
+            (create_cube(1.0), 4.0, [20.0, 0.0, 0.0]),
+            (create_cube(1.0), 2.0, [-20.0, 0.0, 0.0]),
+        ]);
+        assert_eq!(tiles_of(&m, 3), vec![2, 0, 1]);
+        // More tiles than pieces: one each, the rest stay empty.
+        assert_eq!(tiles_of(&m, 8), vec![2, 0, 1]);
+        // One tile, or a mesh in one piece: everything on the first.
+        assert_eq!(tiles_of(&m, 1), vec![0, 0, 0]);
+        assert_eq!(tiles_of(&create_sphere(1.0, 8), 4), vec![0]);
+    }
+
+    #[test]
+    fn a_crowd_of_small_pieces_is_spread_over_every_tile() {
+        // More pieces than are grouped pair by pair.
+        let parts: Vec<_> = (0..400).map(|i| (create_cube(1.0), 0.2 + (i % 7) as f32 * 0.02, [(i % 20) as f32, 0.0, (i / 20) as f32])).collect();
+        let tile = tiles_of(&joined(&parts), 4);
+        let mut count = [0usize; 4];
+        for t in &tile { count[*t] += 1; }
+        assert!(count.iter().all(|c| *c > 0), "{count:?}");
+    }
+
+    #[test]
+    fn each_tile_is_packed_inside_its_own_square() {
+        let mut parts = vec![(create_cube(1.0), 3.0, [0.0, 0.0, 0.0])];
+        parts.extend(hand(10.0));
+        parts.extend(hand(-10.0));
+        let mut m = joined(&parts);
+        let one = unwrap(&m, UvMethod::Conformal, 60.0, 0.02, 1, 1);
+        m.uvs = unwrap(&m, UvMethod::Conformal, 60.0, 0.02, 1, 3);
+        assert_eq!(used_tiles(&m), vec![(0, 0), (1, 0), (2, 0)]);
+        // No triangle crosses a tile edge, and a piece stays on one tile.
+        let (element_of, infos) = elements(&m);
+        let mut home: Vec<Option<i32>> = vec![None; infos.len()];
+        for (t, uv) in m.uvs.chunks_exact(3).enumerate() {
+            let tile = uv[0][0].floor() as i32;
+            assert!(uv.iter().all(|p| p[0] >= tile as f32 - 1e-4 && p[0] <= tile as f32 + 1.0001 && p[1] >= -1e-4 && p[1] <= 1.0001));
+            assert_eq!(*home[element_of[t]].get_or_insert(tile), tile);
+        }
+        // The torso alone on 1001 gets more room than it had sharing one square.
+        let torso_tris = create_cube(1.0).indices.len() / 3;
+        let area = |uvs: &[[f32; 2]]| -> f32 { uvs[..torso_tris * 3].chunks_exact(3).map(|t| uv_area(&[Vec2::from_array(t[0]), Vec2::from_array(t[1]), Vec2::from_array(t[2])]).abs()).sum() };
+        assert!(area(&m.uvs) > area(&one));
+        // Planar and box projections are cut per tile too.
+        m.uvs = unwrap(&m, UvMethod::Planar, 60.0, 0.02, 1, 3);
+        assert_eq!(used_tiles(&m).len(), 3);
+        assert_eq!((udim(0, 0), udim(9, 0), udim(0, 1)), (1001, 1010, 1011));
+        assert_eq!(tile_offset(12), Vec2::new(2.0, 1.0));
     }
 
     #[test]

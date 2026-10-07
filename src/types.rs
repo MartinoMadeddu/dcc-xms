@@ -117,7 +117,9 @@ pub enum NodeType {
     // ── UV ───────────────────────────────────────────────────────────────────
     /// Make texture coordinates. `angle` (degrees) limits how far a chart's
     /// normals may spread; `margin` is the gap between charts.
-    UvUnwrap     { method: crate::core::uv::UvMethod, angle: f32, margin: f32, axis: usize },
+    UvUnwrap     { method: crate::core::uv::UvMethod, angle: f32, margin: f32, axis: usize,
+                   /// UDIM tiles to spread the elements over. One: everything in the unit square.
+                   #[serde(default = "one_tile")] tiles: u32 },
     /// Move, turn and scale the whole UV layout.
     UvTransform  { offset: [f32; 2], rotate: f32, scale: [f32; 2] },
     /// Move, turn and scale single UV islands.
@@ -796,3 +798,4 @@ pub fn rebuild(&mut self, entries: Vec<(NodeId, String, EvalResult)>) {
         }
     }
 }
+fn one_tile() -> u32 { 1 }
