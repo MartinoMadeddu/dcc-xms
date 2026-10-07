@@ -1,4 +1,4 @@
-# XMS DCC
+# XMS | Imago
 
 **A node-based 3D application written in Rust.** Model, import, animate and export, with every step a node you can go back and change.
 
@@ -8,7 +8,7 @@ This is Simon Legrand's fork of [MartinoMadeddu/xms-imago](https://github.com/Ma
 
 ![Splash](assets/splash.png)
 
-**[Download a build](https://github.com/srlegrand/dcc-xms/releases)** for Linux, macOS or Windows, pick a template, and start changing numbers.
+**[xms | imago website](https://srlegrand.github.io/dcc-xms/)** · **[Download a build](https://github.com/srlegrand/dcc-xms/releases)** for Linux, macOS or Windows, pick a template, and start changing numbers.
 
 ## Everything stays live
 
@@ -137,7 +137,7 @@ On Ubuntu or Debian, first:
 
 ## Example files
 
-The USD model in `examples/DeLorean.usdz` is by VTX (https://sketchfab.com/VTX_car), under CC BY-NC-SA 4.0: it may not be used commercially. See `examples/CREDITS.md`.
+The USD model in `examples/DeLorean.usdz` is by VTX (https://sketchfab.com/VTX_car), under CC BY-NC-SA 4.0, included with the permission of its author. See `examples/CREDITS.md`.
 
 ## Credit
 

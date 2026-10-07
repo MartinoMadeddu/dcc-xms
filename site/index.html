@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>XMS | Imago</title>
+<meta name="description" content="A node-based 3D application written in Rust: polygon modelling, UV and UDIM, USD at production size, motion capture. Free builds for Linux, macOS and Windows.">
+<meta property="og:title" content="XMS | Imago">
+<meta property="og:description" content="Node-based 3D in Rust: modelling, UV, USD, mocap. Free builds for Linux, macOS and Windows.">
+<meta property="og:image" content="https://srlegrand.github.io/dcc-xms/splash.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" type="image/png" href="icon.png">
+<style>
+  :root {
+    --ink: #000;
+    --paper: #f4f1ea;
+    --night: #0a0a0c;
+    --grid: #26262b;
+    --cyan: #46c8de;
+    --pink: #ec96be;
+    --red: #e83c34;
+    --yellow: #f6d648;
+    --green: #48b054;
+    --blue: #3a80de;
+    --dim: #a9a7a1;
+    --heavy: "Arial Black", "Helvetica Neue", Helvetica, Arial, sans-serif;
+    --body: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: var(--night); color: var(--paper); font-family: var(--body); font-size: 17px; line-height: 1.55; }
+  a { color: var(--cyan); }
+  img { max-width: 100%; display: block; }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 16px; }
+
+  /* The four-colour stripe of the artwork, used as a rule between sections. */
+  .stripe { height: 14px; background: linear-gradient(to bottom, var(--red) 0 25%, var(--yellow) 25% 50%, var(--green) 50% 75%, var(--blue) 75% 100%); }
+
+  /* Heavy black type with a white outline, as on the splash. */
+  .outlined { font-family: var(--heavy); font-weight: 900; color: var(--ink); letter-spacing: -0.02em;
+    text-shadow: 3px 0 #fff, -3px 0 #fff, 0 3px #fff, 0 -3px #fff, 2px 2px #fff, -2px 2px #fff, 2px -2px #fff, -2px -2px #fff, 6px 7px 0 rgba(0,0,0,.55); }
+
+  header.top { display: flex; align-items: center; gap: 10px; padding: 12px 16px; max-width: 1120px; margin: 0 auto; }
+  header.top img { width: 30px; height: 30px; }
+  header.top .name { font-family: var(--heavy); font-size: 18px; }
+  header.top nav { margin-left: auto; display: flex; gap: 18px; flex-wrap: wrap; font-size: 15px; }
+  header.top nav a { color: var(--paper); text-decoration: none; border-bottom: 2px solid transparent; }
+  header.top nav a:hover { border-bottom-color: var(--pink); }
+
+  /* The artwork whole, never cropped: its edges are black, so it sits on black. */
+  .hero { background: #000; }
+  .hero img.art { width: 100%; max-height: 74vh; object-fit: contain; margin: 0 auto; }
+  .hero .pitch { padding: 18px 16px 26px; background: var(--night); }
+  .hero .pitch p { max-width: 720px; margin: 0 auto; text-align: center; font-size: clamp(17px, 2.2vw, 22px); }
+
+  section { padding: 56px 0; }
+  h2 { font-family: var(--heavy); font-size: clamp(26px, 4.4vw, 44px); line-height: 1.05; margin: 0 0 18px; letter-spacing: -0.02em; }
+  h2 span { background: linear-gradient(100deg, var(--cyan), #fff 45%, var(--pink)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .lede { max-width: 760px; color: var(--dim); margin: 0 0 26px; }
+
+  /* Downloads */
+  #download { background:
+      linear-gradient(var(--grid) 1px, transparent 1px) 0 0 / 44px 44px,
+      linear-gradient(90deg, var(--grid) 1px, transparent 1px) 0 0 / 44px 44px,
+      var(--night); }
+  .downloads { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; }
+  .dl { display: block; text-decoration: none; color: var(--ink); background: var(--paper); border: 3px solid #fff; padding: 16px 18px 14px; box-shadow: 7px 7px 0 var(--blue); transition: transform .12s, box-shadow .12s; }
+  .dl:hover, .dl:focus-visible { transform: translate(-2px, -2px); box-shadow: 9px 9px 0 var(--pink); outline: none; }
+  .dl .os { font-family: var(--heavy); font-size: 24px; line-height: 1.1; }
+  .dl .what { font-size: 14px; color: #44423d; }
+  .dl .file { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; color: #6a6760; margin-top: 8px; word-break: break-all; }
+  .dl.yours { background: linear-gradient(120deg, var(--cyan), #fff 50%, var(--pink)); box-shadow: 7px 7px 0 var(--yellow); }
+  .dl.yours .what::after { content: " · your platform"; font-weight: bold; }
+  .build { margin-top: 20px; font-size: 15px; color: var(--dim); }
+  .build b { color: var(--paper); }
+
+  /* Features */
+  .feature { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 34px; align-items: center; padding: 34px 0; border-top: 1px solid var(--grid); }
+  .feature:nth-of-type(even) .shot { order: -1; }
+  .feature h3 { font-family: var(--heavy); font-size: 26px; line-height: 1.1; margin: 0 0 10px; }
+  .feature ul { margin: 0; padding-left: 20px; }
+  .feature li { margin: 6px 0; }
+  .feature li b { color: #fff; }
+  .shot { border: 3px solid #fff; box-shadow: 9px 9px 0 var(--ink), 9px 9px 0 3px var(--grid); background: #000; }
+  .shot img, .gallery img { aspect-ratio: 19 / 10; object-fit: cover; width: 100%; }
+  .shot figcaption { font-size: 13px; color: var(--dim); padding: 7px 10px; background: #111; }
+  figure { margin: 0; }
+  @media (max-width: 820px) {
+    .feature { grid-template-columns: 1fr; gap: 16px; }
+    .feature:nth-of-type(even) .shot { order: 0; }
+  }
+
+  .gallery { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 14px; }
+  .gallery a { display: block; border: 2px solid #fff; background: #000; }
+  .gallery img { width: 100%; aspect-ratio: 19 / 10; object-fit: cover; }
+
+  .credits { background: var(--paper); color: var(--ink); }
+  .credits h2 span { background: none; color: var(--ink); }
+  .credits a { color: #0b4fa8; }
+  .credits .people { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 22px; }
+  .credits .role { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: #5d5a54; }
+  .credits .who { font-family: var(--heavy); font-size: 26px; line-height: 1.15; }
+
+  footer { padding: 26px 0 40px; font-size: 14px; color: var(--dim); }
+  footer .links { display: flex; gap: 18px; flex-wrap: wrap; margin-bottom: 8px; }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <img src="icon.png" alt="">
+  <span class="name">XMS | Imago</span>
+  <nav>
+    <a href="#download">Download</a>
+    <a href="#features">Features</a>
+    <a href="https://github.com/srlegrand/dcc-xms/tree/main/docs">Documentation</a>
+    <a href="https://github.com/srlegrand/dcc-xms">Source</a>
+  </nav>
+</header>
+
+<div class="stripe"></div>
+<div class="hero">
+  <img class="art" src="splash.png" alt="XMS | Imago: a wireframe cube inside a prism splitting light, over a perspective grid">
+  <div class="pitch">
+    <p><b>A node-based 3D application written in Rust.</b> Model, unwrap, import, animate and export, with every step a node you can go back and change.</p>
+  </div>
+</div>
+<div class="stripe"></div>
+
+<section id="download">
+  <div class="wrap">
+    <h2><span>Download</span></h2>
+    <p class="lede">Free. Built from every change to the source, so these buttons always fetch the newest build. Unpack, run <code>xms</code>, pick a template and start changing numbers.</p>
+    <div class="downloads">
+      <a class="dl" data-os="windows" href="https://github.com/srlegrand/dcc-xms/releases/latest/download/xms-windows-x86_64.zip">
+        <div class="os">Windows</div><div class="what">64-bit</div><div class="file">xms-windows-x86_64.zip</div></a>
+      <a class="dl" data-os="mac-arm" href="https://github.com/srlegrand/dcc-xms/releases/latest/download/xms-macos-arm64.tar.gz">
+        <div class="os">macOS</div><div class="what">Apple silicon</div><div class="file">xms-macos-arm64.tar.gz</div></a>
+      <a class="dl" data-os="mac-intel" href="https://github.com/srlegrand/dcc-xms/releases/latest/download/xms-macos-x86_64.tar.gz">
+        <div class="os">macOS</div><div class="what">Intel</div><div class="file">xms-macos-x86_64.tar.gz</div></a>
+      <a class="dl" data-os="linux" href="https://github.com/srlegrand/dcc-xms/releases/latest/download/xms-linux-x86_64.tar.gz">
+        <div class="os">Linux</div><div class="what">x86-64</div><div class="file">xms-linux-x86_64.tar.gz</div></a>
+    </div>
+    <p class="build" id="build">Latest build: <a href="https://github.com/srlegrand/dcc-xms/releases/latest">see the releases page</a>.</p>
+    <p class="build">The builds are not signed. On macOS, right-click the program and choose Open the first time. On Windows, choose "More info" then "Run anyway" if SmartScreen asks.</p>
+  </div>
+</section>
+
+<section id="features">
+  <div class="wrap">
+    <h2><span>Everything stays live</span></h2>
+    <p class="lede">Nothing is baked. A mesh is a cube node followed by the operations that shaped it. A mocap clip is a file node followed by the trims, renames and retimes applied to it. Change any value upstream and everything after it follows.</p>
+
+    <div class="feature">
+      <div>
+        <h3>USD, at production size</h3>
+        <ul>
+          <li><b>Packed primitives:</b> a file comes in as one piece per mesh prim, passed along without copying</li>
+          <li><b>Pick, then edit:</b> choose pieces by path pattern; the nodes that follow work on those and pass the rest through</li>
+          <li><b>Materials and textures</b> in the viewport, straight from the <code>.usdz</code></li>
+          <li><b>A full transform stack</b>, units and up axis converted</li>
+        </ul>
+      </div>
+      <figure class="shot"><img src="shots/xms_usd_textured.png" alt="" loading="lazy"><figcaption>A 461,595 triangle USD model with its packed textures</figcaption></figure>
+    </div>
+
+    <div class="feature">
+      <div>
+        <h3>Polygon modelling in a single node</h3>
+        <ul>
+          <li><b>Edit Poly</b> keeps a whole modelling session in one node, modelled on the Edit Poly modifier of 3ds Max</li>
+          <li><b>Five selection levels</b>, picked in the viewport or by rule</li>
+          <li><b>Twenty-seven operations:</b> extrude, bevel, inset, chamfer, bridge, connect, slice, subdivide and more</li>
+          <li><b>Manipulators</b> on Q, W, E, R, and soft selection</li>
+        </ul>
+      </div>
+      <figure class="shot"><img src="shots/xms_sea_mine.png" alt="" loading="lazy"><figcaption>Eleven Edit Poly operations on one cube</figcaption></figure>
+    </div>
+
+    <div class="feature">
+      <div>
+        <h3>UV unwrapping and UDIMs</h3>
+        <ul>
+          <li><b>Least squares conformal maps</b>, with charts cut by angle and packed</li>
+          <li><b>UDIM tiles:</b> separate pieces spread over tiles by size, with neighbours kept together</li>
+          <li><b>An editor that draws a million edges</b>, with islands you can move, turn and scale</li>
+        </ul>
+      </div>
+      <figure class="shot"><img src="shots/xms_udim.png" alt="" loading="lazy"><figcaption>Nine separate pieces over three UDIM tiles</figcaption></figure>
+    </div>
+
+    <div class="feature">
+      <div>
+        <h3>Motion capture, from take to engine</h3>
+        <ul>
+          <li><b>Real frame rates and timecode</b>, drop-frame included</li>
+          <li><b>Clip tools:</b> mirror, smooth, in place, blend, loop, retarget, time warp, prune, floor</li>
+          <li><b>Batch:</b> split characters, T-pose, proxy skin and write FBX over a whole folder</li>
+          <li><b>Name patterns, not typing:</b> joints chosen by regular expression, with a picker</li>
+        </ul>
+      </div>
+      <figure class="shot"><img src="shots/xms_retarget.png" alt="" loading="lazy"><figcaption>A captured character driving a skeleton with another rest pose</figcaption></figure>
+    </div>
+
+    <div class="feature">
+      <div>
+        <h3>An interface that gets out of the way</h3>
+        <ul>
+          <li><b>Dock anything anywhere</b>, lock it, save it as a file</li>
+          <li><b>Your navigation:</b> Maya, Houdini, XSI, Blender, Max, Modo or Unreal</li>
+          <li><b>Display modes:</b> wireframe, hidden line removal, shaded, textured</li>
+          <li><b>Three themes</b>, each with a colour editor</li>
+        </ul>
+      </div>
+      <figure class="shot"><img src="shots/xms_hidden_line.png" alt="" loading="lazy"><figcaption>Hidden line removal</figcaption></figure>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2><span>More screens</span></h2>
+    <div class="gallery">
+      <a href="shots/xms_usd_pick.png"><img src="shots/xms_usd_pick.png" alt="One wheel picked out of the model and moved" loading="lazy"></a>
+      <a href="shots/xms_uv_heavy.png"><img src="shots/xms_uv_heavy.png" alt="The authored UVs of a heavy model" loading="lazy"></a>
+      <a href="shots/xms_edit_poly.png"><img src="shots/xms_edit_poly.png" alt="Edit Poly with the move manipulator" loading="lazy"></a>
+      <a href="shots/xms_graph_layout.png"><img src="shots/xms_graph_layout.png" alt="A template laid out in rows" loading="lazy"></a>
+      <a href="shots/xms_theme_adhd.png"><img src="shots/xms_theme_adhd.png" alt="The ADHD theme with the colour editor" loading="lazy"></a>
+      <a href="shots/xms_mocap.png"><img src="shots/xms_mocap.png" alt="A two-character motion capture take" loading="lazy"></a>
+    </div>
+  </div>
+</section>
+
+<div class="stripe"></div>
+<section class="credits">
+  <div class="wrap">
+    <h2><span>Credits</span></h2>
+    <div class="people">
+      <div><div class="role">Created by</div><div class="who">Martino Madeddu</div>
+        <p>The node graph, the viewport, the ICE subnets and the look of the interface. <a href="https://github.com/MartinoMadeddu/xms-imago">The original project</a>.</p></div>
+      <div><div class="role">Additional development by</div><div class="who">Simon Legrand</div>
+        <p>Polygon modelling, UV, USD, motion capture and the dockable interface. <a href="https://github.com/srlegrand/dcc-xms">This fork</a>.</p></div>
+    </div>
+    <p>The example USD model is by <a href="https://sketchfab.com/VTX_car">VTX</a>, CC BY-NC-SA 4.0, included with the permission of its author.</p>
+  </div>
+</section>
+<div class="stripe"></div>
+
+<footer>
+  <div class="wrap">
+    <div class="links">
+      <a href="https://github.com/srlegrand/dcc-xms">Source</a>
+      <a href="https://github.com/srlegrand/dcc-xms/tree/main/docs">Documentation</a>
+      <a href="https://github.com/srlegrand/dcc-xms/releases">All builds</a>
+      <a href="https://github.com/srlegrand/dcc-xms/issues">Report a problem</a>
+    </div>
+    <div>XMS: Cross-data Manipulation System.</div>
+  </div>
+</footer>
+
+<script>
+  // Mark the visitor's platform among the download buttons.
+  (function () {
+    var ua = navigator.userAgent || "", platform = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || "";
+    var os = /Win/i.test(platform) || /Windows/i.test(ua) ? "windows"
+           : /Mac/i.test(platform) || /Macintosh/i.test(ua) ? "mac"
+           : /Linux|X11/i.test(platform + ua) && !/Android/i.test(ua) ? "linux" : "";
+    function mark(key) { var el = document.querySelector('.dl[data-os="' + key + '"]'); if (el) el.classList.add("yours"); }
+    if (os === "mac") {
+      // Browsers do not say which processor a Mac has, except through this.
+      var done = false;
+      if (navigator.userAgentData && navigator.userAgentData.getHighEntropyValues) {
+        navigator.userAgentData.getHighEntropyValues(["architecture"]).then(function (v) {
+          done = true; mark(v.architecture === "x86" ? "mac-intel" : "mac-arm");
+        }).catch(function () { mark("mac-arm"); });
+      }
+      if (!navigator.userAgentData) mark("mac-arm");
+    } else if (os) { mark(os); }
+  })();
+
+  // Name the newest build, from GitHub's public record of it.
+  fetch("https://api.github.com/repos/srlegrand/dcc-xms/releases/latest")
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (rel) {
+      if (!rel || !rel.tag_name) return;
+      var d = new Date(rel.published_at), two = function (n) { return (n < 10 ? "0" : "") + n; };
+      var date = two(d.getDate()) + "/" + two(d.getMonth() + 1) + "/" + d.getFullYear();
+      var el = document.getElementById("build");
+      el.textContent = "";
+      el.append("Latest build: ");
+      var b = document.createElement("b"); b.textContent = rel.tag_name; el.append(b);
+      el.append(" of " + date + ". ");
+      var a = document.createElement("a"); a.href = rel.html_url; a.textContent = "What changed"; el.append(a);
+      el.append(".");
+    })
+    .catch(function () {});
+</script>
+</body>
+</html>

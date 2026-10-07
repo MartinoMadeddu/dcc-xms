@@ -24,3 +24,17 @@ The workflow is `.github/workflows/release.yml`. It can also be started by hand 
 On Ubuntu or Debian, first:
 
     sudo apt install build-essential pkg-config libasound2-dev libudev-dev libx11-dev libxkbcommon-x11-0
+
+## Website
+
+The page at https://srlegrand.github.io/dcc-xms/ is the `site/` folder of the repository, published by `.github/workflows/pages.yml` on every push to `main` that touches the site, the screenshots in `docs/` or the artwork in `assets/`.
+
+Its download buttons point at `releases/latest/download/<file>`, so they always fetch the newest build without the page being touched. The page also names the newest build, from GitHub's public record of it.
+
+One-time setup on GitHub: Settings > Pages > Source: "GitHub Actions".
+
+To look at the site before pushing:
+
+    sh site/build.sh _site
+
+then open `_site/index.html`.

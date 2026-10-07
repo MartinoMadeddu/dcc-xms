@@ -46,10 +46,10 @@ fn main() {
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
-                title: "XMS DCC".into(),
+                title: "XMS | Imago".into(),
                 // Window class on X11 and app id on Wayland, so the desktop
                 // groups the window under its own name.
-                name: Some("xms-dcc".into()),
+                name: Some("xms-imago".into()),
                 // Opens on the primary screen. `close_splash` then makes it
                 // fill that screen.
                 position: WindowPosition::Centered(MonitorSelection::Primary),
@@ -156,8 +156,8 @@ fn open_splash(
         Extent3d { width: w, height: h, depth_or_array_layers: 1 },
         TextureDimension::D2, rgba, TextureFormat::Rgba8UnormSrgb, RenderAssetUsages::default()));
     let window = commands.spawn((SplashPart, Window {
-        title: "XMS DCC".into(),
-        name: Some("xms-dcc".into()),
+        title: "XMS | Imago".into(),
+        name: Some("xms-imago".into()),
         resolution: WindowResolution::new(size.x, size.y),
         position: WindowPosition::Centered(MonitorSelection::Primary),
         decorations: false,
@@ -311,7 +311,7 @@ fn dcc_ui(
         .show(ctx, |ui| {
             ui.horizontal_centered(|ui| {
                 draw_logo(ui);
-                ui.label(egui::RichText::new("XMS DCC").strong().color(theme::c(243, 243, 243)));
+                ui.label(egui::RichText::new("XMS | Imago").strong().color(theme::c(243, 243, 243)));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     // Right to left: the lock sits at the far right, the menu before it.
                     {

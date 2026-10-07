@@ -7,4 +7,4 @@
 
 The motion capture take in `takes/` is described in `docs/templates.md`.
 
-`DeLorean.usdz` is not covered by the licence of the program. Remove it before any commercial distribution.
+`DeLorean.usdz` is not covered by the licence of the program. It is included with the permission of its author.
