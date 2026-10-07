@@ -107,9 +107,11 @@ One row per node, from Output down to the sources. A chain of single inputs stay
 
 ## Splash and icon
 
-The program opens maximised on the primary screen. A splash image sits in the middle of the window for three seconds at start, then fades. A click or a key sends it away. Setting the environment variable `XMS_NO_SPLASH` skips it.
+At start a splash shows for three seconds: a borderless window of its own, always on top, in the middle of the primary screen. The main window is hidden until the splash closes, then opens maximised on the primary screen. A click or a key in the splash closes it early. Setting the environment variable `XMS_NO_SPLASH` skips it.
 
-The window has its own icon, shown in the task bar on X11 and Windows. On Wayland and macOS the desktop takes the icon from an installed application entry or bundle, which the program does not ship. The icon of the file itself in Windows Explorer is not set. Both images are in `assets/`.
+![The splash on an otherwise empty screen](xms_splash.png)
+
+The icon is the wireframe cube of the splash. It is the logo in the top bar and the icon of the window, shown in the task bar on X11 and Windows. On Wayland and macOS the desktop takes the icon from an installed application entry or bundle, which the program does not ship. The icon of the file itself in Windows Explorer is not set. Both images are in `assets/`.
 
 ## Primitive Inspector
 

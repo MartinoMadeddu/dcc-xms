@@ -47,9 +47,11 @@ fn main() {
                 // Window class on X11 and app id on Wayland, so the desktop
                 // groups the window under its own name.
                 name: Some("xms-dcc".into()),
-                // Opens on the primary screen, and `maximize_window` then
-                // makes it fill that screen.
+                // Opens on the primary screen. `close_splash` then makes it
+                // fill that screen.
                 position: WindowPosition::Centered(MonitorSelection::Primary),
+                // Hidden until the splash closes.
+                visible: false,
                 ..default()
             }),
             ..default()
@@ -73,10 +75,10 @@ fn main() {
         .init_resource::<uv_editor::UvEditorState>()
         .init_resource::<node_graph::GraphRevision>()
         .init_resource::<viewport::nav::NavSettings>()
-        .add_systems(Startup, (maximize_window, setup_scene, setup_egui_theme, setup_gizmos, modelling::setup_gizmos))
+        .add_systems(Startup, (open_splash, setup_scene, setup_egui_theme, setup_gizmos, modelling::setup_gizmos))
         .add_systems(Update, (
             dcc_ui,
-            splash.after(dcc_ui),
+            close_splash,
             set_window_icon,
             track_revision.after(dcc_ui).after(modelling::pick_system),
             update_operator_stack.after(track_revision),
@@ -117,58 +119,91 @@ fn set_window_icon(windows: NonSend<bevy::winit::WinitWindows>, mut done: Local<
     for window in windows.windows.values() { window.set_window_icon(Some(icon.clone())); }
 }
 
-/// Fill the primary screen at start. Maximised, not exclusive full screen:
-/// the task bar and the window buttons stay.
-fn maximize_window(mut windows: Query<&mut Window, With<bevy::window::PrimaryWindow>>) {
-    for mut window in &mut windows { window.set_maximized(true); }
-}
-
-/// How long the splash stays, and how long it takes to fade, in seconds.
+/// How long the splash stays, in seconds.
 const SPLASH_HOLD: f64 = 3.0;
-const SPLASH_FADE: f64 = 0.4;
+/// Width of the splash window, in logical pixels. The height follows the image.
+const SPLASH_WIDTH: f32 = 740.0;
+/// The splash is drawn on its own layer, so nothing else lands in its window.
+const SPLASH_LAYER: usize = 31;
 
-/// The splash image, over the whole window while the program starts. A click
-/// or a key sends it away. `XMS_NO_SPLASH` set to anything skips it.
-fn splash(
-    mut contexts: EguiContexts,
-    time:         Res<Time<Real>>,
-    mut state:    Local<Option<(f64, Option<egui::TextureHandle>)>>,
-    mut over:     Local<bool>,
-    mut frames:   Local<u32>,
+/// Everything that belongs to the splash window.
+#[derive(Component)]
+struct SplashPart;
+
+/// The splash: a borderless window of its own, always on top, in the middle
+/// of the primary screen. The main window stays hidden until it closes.
+/// `XMS_NO_SPLASH` set to anything skips it.
+fn open_splash(
+    mut commands: Commands,
+    mut images:   ResMut<Assets<Image>>,
+    mut main:     Query<&mut Window, With<bevy::window::PrimaryWindow>>,
 ) {
-    if *over { return; }
-    *frames += 1;
-    let ctx = contexts.ctx_mut();
-    let now = time.elapsed_seconds_f64();
-    let (start, texture) = state.get_or_insert_with(|| {
-        let texture = decode_png(include_bytes!("../assets/splash.png")).map(|(rgba, w, h)| {
-            ctx.load_texture("splash", egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba), Default::default())
-        });
-        (now, texture)
-    });
-    // The first frames are slow while the renderer warms up: the clock
-    // starts once they are through, so the splash is seen for its full time.
-    if *frames <= 3 { *start = now; }
-    let age = now - *start;
-    let skip = std::env::var_os("XMS_NO_SPLASH").is_some()
-        || ctx.input(|i| i.pointer.any_pressed() || i.events.iter().any(|e| matches!(e, egui::Event::Key { pressed: true, .. })));
-    let Some(texture) = texture.clone().filter(|_| !skip && age < SPLASH_HOLD + SPLASH_FADE) else {
-        *over = true;
-        *state = Some((0.0, None));   // let go of the texture
+    use bevy::render::{camera::RenderTarget, render_asset::RenderAssetUsages, view::RenderLayers};
+    use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+    use bevy::window::{WindowLevel, WindowRef, WindowResolution};
+
+    let decoded = if std::env::var_os("XMS_NO_SPLASH").is_some() { None } else { decode_png(include_bytes!("../assets/splash.png")) };
+    let Some((rgba, w, h)) = decoded else {
+        // No splash: the main window shows at once.
+        for mut window in &mut main { window.visible = true; window.set_maximized(true); }
         return;
     };
-    let alpha = (1.0 - (age - SPLASH_HOLD) / SPLASH_FADE).clamp(0.0, 1.0) as f32;
-    let screen = ctx.screen_rect();
-    // Painted straight onto a layer above every pane and window.
-    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Debug, egui::Id::new("splash")));
-    painter.rect_filled(screen, 0.0, egui::Color32::BLACK.gamma_multiply(alpha));
-    // Whole image in view, never enlarged past its own size.
-    let size = texture.size_vec2();
-    let k = (screen.width() / size.x).min(screen.height() / size.y).min(1.0);
-    let rect = egui::Rect::from_center_size(screen.center(), size * k);
-    painter.image(texture.id(), rect, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-        egui::Color32::WHITE.gamma_multiply(alpha));
-    ctx.request_repaint();
+    let size = Vec2::new(SPLASH_WIDTH, SPLASH_WIDTH * h as f32 / w as f32);
+    let image = images.add(Image::new(
+        Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+        TextureDimension::D2, rgba, TextureFormat::Rgba8UnormSrgb, RenderAssetUsages::default()));
+    let window = commands.spawn((SplashPart, Window {
+        title: "XMS DCC".into(),
+        name: Some("xms-dcc".into()),
+        resolution: WindowResolution::new(size.x, size.y),
+        position: WindowPosition::Centered(MonitorSelection::Primary),
+        decorations: false,
+        resizable: false,
+        window_level: WindowLevel::AlwaysOnTop,
+        skip_taskbar: true,
+        ..default()
+    })).id();
+    commands.spawn((SplashPart, RenderLayers::layer(SPLASH_LAYER), Camera2dBundle {
+        camera: Camera { target: RenderTarget::Window(WindowRef::Entity(window)), clear_color: ClearColorConfig::Custom(Color::BLACK), ..default() },
+        ..default()
+    }));
+    commands.spawn((SplashPart, RenderLayers::layer(SPLASH_LAYER), SpriteBundle {
+        texture: image,
+        sprite: Sprite { custom_size: Some(size), ..default() },
+        ..default()
+    }));
+}
+
+/// Close the splash when its time is up, or on a click or key in it, then
+/// show the main window filling the primary screen.
+fn close_splash(
+    mut commands: Commands,
+    time:         Res<Time<Real>>,
+    parts:        Query<Entity, With<SplashPart>>,
+    mut main:     Query<&mut Window, With<bevy::window::PrimaryWindow>>,
+    mouse:        Res<ButtonInput<MouseButton>>,
+    keys:         Res<ButtonInput<KeyCode>>,
+    mut clock:    Local<(u32, f64)>,
+    mut shown:    Local<u32>,
+) {
+    // After the splash: the window is shown, then maximised on the next
+    // frame, once the desktop has it on screen.
+    if *shown > 0 {
+        if *shown == 2 { for mut window in &mut main { window.set_maximized(true); } }
+        if *shown <= 2 { *shown += 1; }
+        return;
+    }
+    if parts.is_empty() { *shown = 3; return; }
+    // The first frames are slow while the renderer warms up: the clock
+    // starts once they are through, so the splash is seen for its full time.
+    let now = time.elapsed_seconds_f64();
+    clock.0 += 1;
+    if clock.0 <= 3 { clock.1 = now; }
+    let dismissed = mouse.get_just_pressed().next().is_some() || keys.get_just_pressed().next().is_some();
+    if now - clock.1 < SPLASH_HOLD && !dismissed { return; }
+    for part in &parts { commands.entity(part).despawn_recursive(); }
+    for mut window in &mut main { window.visible = true; }
+    *shown = 1;
 }
 
 // ── UI ────────────────────────────────────────────────────────────────────────
@@ -468,14 +503,17 @@ fn dcc_ui(
 /// of XMS and the node graph it is built on.
 fn draw_logo(ui: &mut egui::Ui) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::hover());
-    let painter = ui.painter();
-    painter.rect_filled(rect, 4.0, egui::Color32::from_rgb(34, 38, 46));
-    let r = rect.shrink(4.5);
-    let (blue, orange) = (egui::Color32::from_rgb(110, 170, 255), egui::Color32::from_rgb(255, 150, 70));
-    painter.line_segment([r.left_top(), r.right_bottom()], egui::Stroke::new(2.2_f32, blue));
-    painter.line_segment([r.left_bottom(), r.right_top()], egui::Stroke::new(2.2_f32, orange));
-    for (p, c) in [(r.left_top(), blue), (r.right_bottom(), blue), (r.left_bottom(), orange), (r.right_top(), orange)] {
-        painter.circle_filled(p, 2.3, c);
+    // The program icon, loaded once and kept by egui.
+    let id = egui::Id::new("logo_texture");
+    let texture = ui.ctx().data(|d| d.get_temp::<egui::TextureHandle>(id)).or_else(|| {
+        let (rgba, w, h) = decode_png(include_bytes!("../assets/icon.png"))?;
+        let image = egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba);
+        let texture = ui.ctx().load_texture("logo", image, egui::TextureOptions::LINEAR);
+        ui.ctx().data_mut(|d| d.insert_temp(id, texture.clone()));
+        Some(texture)
+    });
+    if let Some(texture) = texture {
+        ui.painter().image(texture.id(), rect, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE);
     }
     response
 }
