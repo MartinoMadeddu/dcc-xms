@@ -107,7 +107,7 @@ One row per node, from Output down to the sources. A chain of single inputs stay
 
 ## Splash and icon
 
-A splash image covers the window for about two seconds at start. A click or a key sends it away. Setting the environment variable `XMS_NO_SPLASH` skips it.
+The program opens maximised on the primary screen. A splash image sits in the middle of the window for three seconds at start, then fades. A click or a key sends it away. Setting the environment variable `XMS_NO_SPLASH` skips it.
 
 The window has its own icon, shown in the task bar on X11 and Windows. On Wayland and macOS the desktop takes the icon from an installed application entry or bundle, which the program does not ship. The icon of the file itself in Windows Explorer is not set. Both images are in `assets/`.
 

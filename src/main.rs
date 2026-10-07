@@ -47,6 +47,9 @@ fn main() {
                 // Window class on X11 and app id on Wayland, so the desktop
                 // groups the window under its own name.
                 name: Some("xms-dcc".into()),
+                // Opens on the primary screen, and `maximize_window` then
+                // makes it fill that screen.
+                position: WindowPosition::Centered(MonitorSelection::Primary),
                 ..default()
             }),
             ..default()
@@ -70,7 +73,7 @@ fn main() {
         .init_resource::<uv_editor::UvEditorState>()
         .init_resource::<node_graph::GraphRevision>()
         .init_resource::<viewport::nav::NavSettings>()
-        .add_systems(Startup, (setup_scene, setup_egui_theme, setup_gizmos, modelling::setup_gizmos))
+        .add_systems(Startup, (maximize_window, setup_scene, setup_egui_theme, setup_gizmos, modelling::setup_gizmos))
         .add_systems(Update, (
             dcc_ui,
             splash.after(dcc_ui),
@@ -114,8 +117,14 @@ fn set_window_icon(windows: NonSend<bevy::winit::WinitWindows>, mut done: Local<
     for window in windows.windows.values() { window.set_window_icon(Some(icon.clone())); }
 }
 
+/// Fill the primary screen at start. Maximised, not exclusive full screen:
+/// the task bar and the window buttons stay.
+fn maximize_window(mut windows: Query<&mut Window, With<bevy::window::PrimaryWindow>>) {
+    for mut window in &mut windows { window.set_maximized(true); }
+}
+
 /// How long the splash stays, and how long it takes to fade, in seconds.
-const SPLASH_HOLD: f64 = 1.6;
+const SPLASH_HOLD: f64 = 3.0;
 const SPLASH_FADE: f64 = 0.4;
 
 /// The splash image, over the whole window while the program starts. A click
