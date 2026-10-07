@@ -93,6 +93,36 @@ pub enum NodeType {
     /// Passes the clip through. Writing happens from the properties panel.
     WriteFbx     { path: String },
 
+    // ── Mocap tools ──────────────────────────────────────────────────────────
+    /// Swap left and right.
+    MirrorClip,
+    /// Gaussian filter over time. `radius` in frames.
+    SmoothClip   { radius: u32, amount: f32, translations: bool },
+    /// Hold the hips over their starting point.
+    InPlace      { keep_height: bool, to_root: bool },
+    /// Move, turn (degrees) and scale the whole clip.
+    TransformClip { translate: [f32; 3], rotate: [f32; 3], scale: f32 },
+    /// First input followed by the second, cross-faded over `blend` frames.
+    BlendClips   { blend: u32, align: bool },
+    /// Ease the end into the start so the clip cycles.
+    LoopClip     { blend: u32 },
+    /// Motion of the first input on the skeleton of the second.
+    Retarget,
+    TimeWarp     { speed: f32, reverse: bool },
+    /// Remove joints whose name contains one of the comma-separated words.
+    PruneJoints  { words: String },
+    /// Put the lowest point of the clip at `height` (metres).
+    FloorClip    { height: f32 },
+
+    // ── UV ───────────────────────────────────────────────────────────────────
+    /// Make texture coordinates. `angle` (degrees) limits how far a chart's
+    /// normals may spread; `margin` is the gap between charts.
+    UvUnwrap     { method: crate::core::uv::UvMethod, angle: f32, margin: f32, axis: usize },
+    /// Move, turn and scale the whole UV layout.
+    UvTransform  { offset: [f32; 2], rotate: f32, scale: [f32; 2] },
+    /// Move, turn and scale single UV islands.
+    UvEdit       { edits: Vec<crate::core::uv::IslandEdit> },
+
     // ── Modelling ────────────────────────────────────────────────────────────
     /// Polygon modelling in one node: an ordered list of operations, each
     /// with its own selection, like the history of an Edit Poly modifier.
@@ -139,7 +169,11 @@ impl NodeType {
         self.is_anim_generator() || matches!(self,
             NodeType::RenameJoints { .. } | NodeType::TrimClip { .. } | NodeType::Retime { .. }
             | NodeType::SetTimecode { .. } | NodeType::SplitSkeleton { .. } | NodeType::AutoTPose { .. }
-            | NodeType::FixPose { .. } | NodeType::ProxySkin { .. } | NodeType::WriteFbx { .. })
+            | NodeType::FixPose { .. } | NodeType::ProxySkin { .. } | NodeType::WriteFbx { .. }
+            | NodeType::MirrorClip | NodeType::SmoothClip { .. } | NodeType::InPlace { .. }
+            | NodeType::TransformClip { .. } | NodeType::BlendClips { .. } | NodeType::LoopClip { .. }
+            | NodeType::Retarget | NodeType::TimeWarp { .. } | NodeType::PruneJoints { .. }
+            | NodeType::FloorClip { .. })
     }
 }
 
@@ -168,6 +202,19 @@ pub fn node_type_icon(t: &NodeType) -> &'static str {
         NodeType::ProxySkin { .. }     => "⬟",
         NodeType::WriteFbx { .. }      => "💾",
         NodeType::EditPoly { .. }      => "🔨",
+        NodeType::MirrorClip           => "↔",
+        NodeType::SmoothClip { .. }    => "〰",
+        NodeType::InPlace { .. }       => "📍",
+        NodeType::TransformClip { .. } => "🔃",
+        NodeType::BlendClips { .. }    => "🔀",
+        NodeType::LoopClip { .. }      => "🔁",
+        NodeType::Retarget             => "👥",
+        NodeType::TimeWarp { .. }      => "⏩",
+        NodeType::PruneJoints { .. }   => "🌿",
+        NodeType::FloorClip { .. }     => "⬇",
+        NodeType::UvUnwrap { .. }      => "🗺",
+        NodeType::UvTransform { .. }   => "📌",
+        NodeType::UvEdit { .. }        => "✋",
     }
 }
 
@@ -196,6 +243,19 @@ pub fn node_type_label(t: &NodeType) -> &'static str {
         NodeType::ProxySkin { .. }     => "Proxy Skin",
         NodeType::WriteFbx { .. }      => "Write FBX",
         NodeType::EditPoly { .. }      => "Edit Poly",
+        NodeType::MirrorClip           => "Mirror",
+        NodeType::SmoothClip { .. }    => "Smooth",
+        NodeType::InPlace { .. }       => "In Place",
+        NodeType::TransformClip { .. } => "Transform Clip",
+        NodeType::BlendClips { .. }    => "Blend Clips",
+        NodeType::LoopClip { .. }      => "Loop",
+        NodeType::Retarget             => "Retarget",
+        NodeType::TimeWarp { .. }      => "Time Warp",
+        NodeType::PruneJoints { .. }   => "Prune Joints",
+        NodeType::FloorClip { .. }     => "Floor",
+        NodeType::UvUnwrap { .. }      => "UV Unwrap",
+        NodeType::UvTransform { .. }   => "UV Transform",
+        NodeType::UvEdit { .. }        => "UV Edit",
     }
 }
 
@@ -296,6 +356,9 @@ pub struct MeshData {
     /// Polygons as vertex loops, when the mesh has them. `indices` then holds
     /// their triangulation. Empty for meshes that are only triangles.
     pub polys:      Vec<Vec<u32>>,
+    /// Texture coordinates, one pair per triangle corner in the order of
+    /// `indices`. Empty when the mesh has none.
+    pub uvs:        Vec<[f32; 2]>,
 }
 
 impl MeshData {
@@ -460,9 +523,26 @@ impl EvalResult {
 pub enum PrimInspectorTab {
     #[default]
     Vertex,
+    Edge,
+    /// One row per polygon. Per-polygon primvars sit here too.
     Uniform,
     FaceVarying,
     Constant,
+    /// Joints of a clip, at the playhead.
+    Joint,
+    /// Bones of a clip: each runs from one joint to another.
+    Bone,
+}
+
+/// One tab of the inspector, ready to draw.
+#[derive(Clone, Debug, Default)]
+pub struct InspectorTable {
+    pub rows:   usize,
+    /// Text column before the numbers (joint names), with its heading.
+    pub labels: Option<(String, Vec<String>)>,
+    /// Column group name and its values per row. A group wider than one
+    /// is shown as name.X, name.Y, name.Z.
+    pub cols:   Vec<(String, Vec<Vec<f32>>)>,
 }
 
 #[derive(Resource, Default)]
@@ -470,14 +550,16 @@ pub struct PrimInspectorState {
     pub active_tab:   PrimInspectorTab,
     pub row_offset:   usize,
 
-    // Mesh of the selected node, cooked once per graph revision.
+    // Mesh or clip of the selected node, cooked once per graph revision.
     cached_mesh:    Option<std::sync::Arc<MeshData>>,
+    cached_clip:    Option<std::sync::Arc<crate::core::anim::AnimData>>,
     cached_node_id: Option<NodeId>,
     cached_rev:     Option<u64>,
-    // Columns of the open tab, built once per cached mesh.
-    table_tab:  Option<PrimInspectorTab>,
-    table_rows: usize,
-    table_cols: Vec<(String, Vec<Vec<f32>>)>,
+    /// Number of edges of the cached mesh.
+    pub edge_count: usize,
+    // The open tab, built once per cached data (and per frame for a clip).
+    table_key: Option<(PrimInspectorTab, usize)>,
+    table:     InspectorTable,
 }
 
 impl PrimInspectorState {
@@ -485,33 +567,39 @@ impl PrimInspectorState {
         self.cached_node_id == node_id && self.cached_rev == Some(revision)
     }
 
-    pub fn update_cache(&mut self, node_id: Option<NodeId>, mesh: Option<MeshData>, revision: u64) {
+    pub fn update_cache(
+        &mut self,
+        node_id:  Option<NodeId>,
+        mesh:     Option<MeshData>,
+        clip:     Option<std::sync::Arc<crate::core::anim::AnimData>>,
+        revision: u64,
+    ) {
+        self.edge_count = mesh.as_ref()
+            .map(|m| crate::core::poly::PolyMesh::from_mesh(m).edges().len()).unwrap_or(0);
         self.cached_mesh    = mesh.map(std::sync::Arc::new);
+        self.cached_clip    = clip;
         self.cached_node_id = node_id;
         self.cached_rev     = Some(revision);
-        self.table_tab      = None;
-        self.table_cols.clear();
+        self.table_key      = None;
+        self.table          = InspectorTable::default();
     }
 
     pub fn cached_mesh(&self) -> Option<std::sync::Arc<MeshData>> { self.cached_mesh.clone() }
+    pub fn cached_clip(&self) -> Option<std::sync::Arc<crate::core::anim::AnimData>> { self.cached_clip.clone() }
 
-    pub fn table_is_for(&self, tab: &PrimInspectorTab) -> bool { self.table_tab.as_ref() == Some(tab) }
+    /// True when the stored table is this tab at this frame.
+    pub fn table_is_for(&self, tab: &PrimInspectorTab, frame: usize) -> bool {
+        self.table_key.as_ref() == Some(&(tab.clone(), frame))
+    }
 
-    pub fn set_table(&mut self, tab: PrimInspectorTab, rows: usize, cols: Vec<(String, Vec<Vec<f32>>)>) {
-        self.table_tab  = Some(tab);
-        self.table_rows = rows;
-        self.table_cols = cols;
+    pub fn set_table(&mut self, tab: PrimInspectorTab, frame: usize, table: InspectorTable) {
+        self.table_key = Some((tab, frame));
+        self.table     = table;
     }
 
     /// Lend the table out for drawing; hand it back with `put_table`.
-    pub fn take_table(&mut self) -> (usize, Vec<(String, Vec<Vec<f32>>)>) {
-        (self.table_rows, std::mem::take(&mut self.table_cols))
-    }
-
-    pub fn put_table(&mut self, rows: usize, cols: Vec<(String, Vec<Vec<f32>>)>) {
-        self.table_rows = rows;
-        self.table_cols = cols;
-    }
+    pub fn take_table(&mut self) -> InspectorTable { std::mem::take(&mut self.table) }
+    pub fn put_table(&mut self, table: InspectorTable) { self.table = table; }
 
     /// Clear cache when tab changes
     pub fn set_active_tab(&mut self, tab: PrimInspectorTab) {

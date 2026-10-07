@@ -46,10 +46,19 @@ Each operation uses the selection that was active when it was added.
 | Collapse | Any | Collapses each connected part of the selection to a point |
 | Break | Any | Gives each polygon around the selected vertices its own copy |
 | Delete | Any | Deletes the selection and the polygons that use it |
-| Transform | Any | Move, rotate, scale about the selection centre |
+| Transform | Any | Move, rotate, scale about the selection centre. Falloff above zero is soft selection: vertices within that distance follow partly |
 | Make planar | Any | Flattens across X, Y, Z or the best fitting plane |
 | Relax | Any | Moves vertices towards the average of their neighbours |
 | Subdivide | Whole mesh | Catmull-Clark subdivision |
+| Chamfer | Vertex, Edge | Cuts the selected corners or edges back by an amount |
+| Extrude vertex | Vertex | Raises each vertex into a spike with a base width |
+| Extrude edge | Edge | Raises edges. Open edges grow new polygons |
+| Outline | Polygon | Grows or shrinks the outline of the selection in its plane |
+| Hinge | Polygon | Turns the selection about one of its edges, in segments |
+| Slice | Any | Cuts new edges where an axis plane crosses the selection |
+| Insert vertex | Edge | Splits each selected edge into segments |
+| Triangulate | Polygon | Splits polygons into triangles |
+| Turn | Edge | Turns the edge shared by two triangles |
 
 In the list, each live operation has: an enable checkbox, a button to edit its selection (the viewport then shows the mesh entering that operation), move up, move down, collapse, remove.
 
@@ -79,4 +88,4 @@ A collapsed operation is frozen and hidden from the list. It is still applied, i
 
 ## Not done yet
 
-Chamfer, cut and slice, hinge, extrude along spline, vertex and edge extrude, target weld, attach, soft selection, smoothing groups, material IDs, paint deformation, constraints, local manipulator axes.
+Interactive cut and quickslice, extrude along spline, target weld, attach, edge split, MSmooth on a selection, preserve UVs, smoothing groups, material IDs, paint deformation, constraints, local manipulator axes. UVs do not pass through Edit Poly: unwrap after it.

@@ -16,6 +16,7 @@ mod timeline;
 mod theme;
 mod modelling;
 mod layout;
+mod uv_editor;
 mod examples;
 mod templates;
 
@@ -57,6 +58,7 @@ fn main() {
         .init_resource::<GraphFile>()
         .init_resource::<modelling::PolyTool>()
         .init_resource::<Layout>()
+        .init_resource::<uv_editor::UvEditorState>()
         .init_resource::<node_graph::GraphRevision>()
         .init_resource::<viewport::nav::NavSettings>()
         .add_systems(Startup, (setup_scene, setup_egui_theme, setup_gizmos, modelling::setup_gizmos))
@@ -98,7 +100,7 @@ fn dcc_ui(
     mut graph_file: ResMut<GraphFile>,
     mut poly_tool:  ResMut<modelling::PolyTool>,
     mut nav_settings: ResMut<viewport::nav::NavSettings>,
-    (mut layout, revision): (ResMut<Layout>, Res<node_graph::GraphRevision>),
+    (mut layout, revision, mut uv_state): (ResMut<Layout>, Res<node_graph::GraphRevision>, ResMut<uv_editor::UvEditorState>),
     batch:          Res<BatchState>,
     time:           Res<Time>,
 ) {
@@ -218,6 +220,7 @@ fn dcc_ui(
             dt: time.delta_seconds_f64(), keys_free,
             space_plays: nav_settings.style != viewport::nav::NavStyle::Houdini,
             revision: revision.0, locked, toggle_float: &mut toggle_float, tab_pressed: &mut tab_pressed,
+            uv_state: &mut uv_state,
         };
         let mut style = egui_dock::Style::from_egui(ctx.style().as_ref());
         style.tab_bar.fill_tab_bar = true;
@@ -413,6 +416,7 @@ struct Panes<'a> {
     toggle_float:   &'a mut Option<Pane>,
     /// Pane whose tab the mouse button went down on this frame.
     tab_pressed:    &'a mut Option<Pane>,
+    uv_state:       &'a mut uv_editor::UvEditorState,
 }
 
 impl egui_dock::TabViewer for Panes<'_> {
@@ -477,6 +481,18 @@ impl egui_dock::TabViewer for Panes<'_> {
                     .show(ui, |ui| draw_operator_stack(ui, self.stack, self.graph));
             }
 
+            Pane::UvEditor => {
+                let subnets = &*self.subnets;
+                let get_mesh = |g: &NodeGraphState| -> Option<MeshData> {
+                    let id = g.selected_node?;
+                    let eval = |sid: SubnetId, mesh: &MeshData, template: Option<&MeshData>| -> MeshData {
+                        subnets.get(sid).map(|sg| sg.evaluate(mesh, template)).unwrap_or_else(|| mesh.clone())
+                    };
+                    g.eval_node(id, &mut std::collections::HashMap::new(), &eval).map(|r| r.into_mesh())
+                };
+                uv_editor::draw_uv_editor(ui, self.graph, self.uv_state, self.revision, &get_mesh);
+            }
+
             Pane::PrimInspector => {
                 let get_mesh = |g: &NodeGraphState| -> Option<MeshData> {
                     let id = g.selected_node?;
@@ -484,7 +500,8 @@ impl egui_dock::TabViewer for Panes<'_> {
                     let eval_subnet = |_sid: SubnetId, mesh: &MeshData, _template: Option<&MeshData>| mesh.clone();
                     g.eval_node(id, &mut cache, &eval_subnet).map(|r| r.into_mesh())
                 };
-                draw_prim_inspector(ui, self.graph, self.prim_state, self.revision, &get_mesh);
+                let get_clip = |g: &NodeGraphState| g.selected_node.and_then(|id| g.eval_anim(id));
+                draw_prim_inspector(ui, self.graph, self.prim_state, self.revision, self.playback.time, &get_mesh, &get_clip);
             }
 
             Pane::NodeGraph => match self.nav.current_subnet {

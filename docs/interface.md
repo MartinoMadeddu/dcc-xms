@@ -1,6 +1,6 @@
 # Interface
 
-![Default layout: the top bar, and the seven panes under it](xms_layout.png)
+![Default layout: the top bar, and the panes under it](xms_layout.png)
 
 ## Top bar
 
@@ -8,7 +8,7 @@ A fixed line across the top of the window, for things that belong to the whole p
 
 ## Panes
 
-Seven panes: Viewport, Node Graph, Scene Explorer, Operator Stack, Properties, Primitive Inspector, Timeline. Each one is a tab.
+Eight panes: Viewport, Node Graph, UV Editor, Scene Explorer, Operator Stack, Properties, Primitive Inspector, Timeline. Each one is a tab. The UV Editor starts as a tab behind the Node Graph and is described in [UV](uv.md).
 
 | To | Do this |
 |---|---|
@@ -36,13 +36,34 @@ The layout, the lock and the place of every floating window are saved when they 
 
 When the Viewport pane is closed or hidden behind another tab, the 3D view is not drawn.
 
+## Framing
+
+With the cursor over the viewport:
+
+| Key | Frames |
+|---|---|
+| F, G, Z, . | The selected node. With an Edit Poly node selected and vertices, edges or polygons selected in it, those components |
+| A, H | Everything shown |
+
 ## Theme
 
 Light by default. "Dark mode" in the node graph header switches, and the choice is kept.
 
 ## Primitive Inspector
 
-A spreadsheet of the mesh of the selected node: one tab per attribute class (Vertex, Uniform, FaceVarying, Constant).
+A spreadsheet of the selected node.
+
+| Tab | Rows |
+|---|---|
+| Vertex | Points of the mesh: position and normal |
+| Edge | Edges: the two vertices and the length |
+| Polygon | Polygons |
+| FaceVarying | Polygon corners, with UVs when the mesh has them |
+| Constant | Values for the whole mesh |
+| Joint | Joints of a clip: name, parent, position and rotation at the current frame |
+| Bone | Bones of a clip: from one joint to another, with length |
+
+Mesh nodes show the first five tabs, clip nodes the last two.
 
 The mesh is cooked and the table built only when the graph changes or another node is selected. Moving the camera, or anything else in the viewport that leaves the graph alone, does not refresh it. Each frame draws only the rows in view.
 

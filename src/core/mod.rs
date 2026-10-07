@@ -6,6 +6,8 @@
 pub mod anim;
 pub mod poly;
 pub mod poly_ops;
+pub mod anim_tools;
+pub mod uv;
 pub mod manip;
 pub mod attribute;
 pub mod geometry;

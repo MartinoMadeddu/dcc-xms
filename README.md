@@ -2,7 +2,7 @@
 
 **A node-based 3D application written in Rust.** Model, import, animate and export, with every step a node you can go back and change.
 
-This is Simon Legrand's fork of [MartinoMadeddu/xms-imago](https://github.com/MartinoMadeddu/xms-imago), the project Martino Madeddu started. It adds polygon modelling, motion capture tools and a dockable interface on top of his node graph.
+This is Simon Legrand's fork of [MartinoMadeddu/xms-imago](https://github.com/MartinoMadeddu/xms-imago), the project Martino Madeddu started. It adds polygon modelling, UV unwrapping, motion capture tools and a dockable interface on top of his node graph.
 
 ![The sea mine template: eleven Edit Poly operations on one cube, about 9,600 polygons](docs/xms_sea_mine.png)
 
@@ -14,18 +14,27 @@ Nothing is baked. A mesh is a cube node followed by the operations that shaped i
 
 ![Twelve of the built-in templates](docs/xms_templates.png)
 
-Fourteen templates ship with the program, one for each area of it. Each loads a working graph and tells you what to try.
+Nineteen templates ship with the program, one for each area of it. Each loads a working graph and tells you what to try.
 
 ## Polygon modelling in a single node
 
 Edit Poly keeps a whole modelling session in one node, modelled on the Edit Poly modifier of 3ds Max.
 
 - **Five selection levels:** vertex, edge, border, polygon, element. Pick in the viewport, or select by rule so the selection adapts when the mesh changes
-- **Eighteen operations:** extrude, bevel, inset, bridge, connect, weld, collapse, cap, detach, tessellate, relax, subdivide and more
+- **Twenty-seven operations:** extrude (polygon, edge, vertex), bevel, inset, outline, hinge, chamfer, slice, bridge, connect, weld, collapse, cap, detach, tessellate, triangulate, turn, relax, subdivide and more
+- **Soft selection:** a falloff distance on Transform
 - **Manipulators:** move, rotate and scale in the viewport on Q, W, E, R. Each drag becomes an operation you can edit afterwards
 - **Collapse when you are done:** freeze operations one by one or all at once, or let the node collapse them as you go. Collapsed operations still follow the mesh coming in
 
 ![Edit Poly: collapsed and live operations, with the move manipulator on the selection](docs/xms_edit_poly.png)
+
+## UV unwrapping
+
+- **UV Unwrap:** cuts the mesh into charts where the surface bends past an angle, flattens each chart with least squares conformal maps (Lévy, Petitjean, Ray and Maillot, 2002) and packs the charts into the unit square. Box and planar projection are there too
+- **UV Transform and UV Edit:** move, turn, scale and flip the whole layout or single islands
+- **UV Editor pane:** the layout of the selected node, with zoom, pan and island dragging
+
+![The sea mine unwrapped: 339 islands in the UV Editor](docs/xms_uv_editor.png)
 
 ## Motion capture, from take to engine
 
@@ -33,10 +42,13 @@ Load a folder of FBX takes, split the characters, fix the pose, skin a proxy and
 
 - **Real frame rates and timecode:** rational rates, drop-frame, and a timeline that takes its range from whichever node is selected
 - **Clip nodes:** rename joints, trim, retime, set timecode
+- **Clip tools:** mirror, smooth, in place, transform, blend, loop, retarget, time warp, prune joints, floor
 - **Batch nodes:** split characters, auto T-pose, fix pose, proxy skin, write FBX
 - **Write FBX:** skeleton, animation, mesh, skin and bind pose, for one file or the whole folder, in the background
 
 ![A two-character motion capture take, loaded from FBX](docs/xms_mocap.png)
+
+![Retarget: a captured character driving a skeleton with another rest pose](docs/xms_retarget.png)
 
 ![The timeline follows the selected node: here a trimmed range over the incoming clip](docs/xms_anim_timeline.png)
 
@@ -44,6 +56,7 @@ Load a folder of FBX takes, split the characters, fix the pose, skin a proxy and
 
 - **Dock anything anywhere:** every pane is a tab. Drag it beside another pane, stack it, float it, or drop it on a side of the window to span that whole side
 - **Lock it:** one padlock freezes the layout once you are happy. Dividers still resize
+- **Frame it:** F, G, Z or . frames the selection, down to selected vertices, edges and polygons. A or H frames everything
 - **Your navigation:** Maya, Houdini, XSI, Blender, Max, Modo or Unreal viewport controls, from a menu
 - **Remembered:** layout, floating windows, theme and navigation style come back at the next start
 - **Fast:** the graph is cooked when its content changes, not on every frame
@@ -59,7 +72,7 @@ Load a folder of FBX takes, split the characters, fix the pose, skin a proxy and
 - Scatter Points and Copy To Points
 - ICE-style subnets: graphs inside a node
 - USD import (`.usda`, `.usdc`, `.usdz`)
-- Primitive Inspector: a spreadsheet of the mesh of the selected node
+- Primitive Inspector: a spreadsheet of the selected node. Vertex, Edge, Polygon, FaceVarying and Constant tabs for a mesh, Joint and Bone tabs for a clip
 - Graphs saved and loaded as JSON
 
 ## Get it
@@ -76,12 +89,14 @@ On Ubuntu or Debian, first:
 
 ## Documentation
 
-[docs/](docs/README.md): interface, templates, Edit Poly, viewport navigation, animation and mocap, builds and releases.
+[docs/](docs/README.md): interface, templates, Edit Poly, UV, viewport navigation, animation and mocap, builds and releases.
 
 ## Not done yet
 
 - Undo
-- Edit Poly: chamfer, cut and slice, hinge, soft selection, smoothing groups, material IDs, attach
+- Edit Poly: interactive cut and quickslice, extrude along spline, target weld, attach, smoothing groups, material IDs, paint deformation, constraints
+- UV: editing single UV vertices and edges, a checker in the viewport, UVs kept through Edit Poly and Copy To Points, UVs in FBX and USD files. Unwrapping is LSCM only: ABF++, SLIM and BFF are not implemented
+- Mocap: IK, foot planting, characterization
 - Meshes and skinning read from FBX
 - Timeline zoom and pan
 - Curve cleanup

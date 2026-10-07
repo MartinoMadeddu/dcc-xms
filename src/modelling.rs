@@ -140,7 +140,7 @@ pub enum Drag {
 
 fn transform_of(kind: &PolyOpKind) -> Option<(Vec3, Quat, Vec3)> {
     match kind {
-        PolyOpKind::Transform { translate, rotate, scale } =>
+        PolyOpKind::Transform { translate, rotate, scale, .. } =>
             Some((Vec3::from_array(*translate), Quat::from_array(*rotate).normalize(), Vec3::from_array(*scale))),
         _ => None,
     }
@@ -247,7 +247,7 @@ pub fn pick_system(
             let (t, r, s) = manip::compose(*base, delta);
             if let Some(node) = graph.nodes.iter_mut().find(|n| n.id == stage.node) {
                 if let NodeType::EditPoly { ops, .. } = &mut node.node_type {
-                    if let Some(PolyOpKind::Transform { translate, rotate, scale }) = ops.get_mut(*op).map(|o| &mut o.kind) {
+                    if let Some(PolyOpKind::Transform { translate, rotate, scale, .. }) = ops.get_mut(*op).map(|o| &mut o.kind) {
                         let new = (t.to_array(), r.to_array(), s.to_array());
                         if (*translate, *rotate, *scale) != new { (*translate, *rotate, *scale) = new; }
                     }

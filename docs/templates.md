@@ -21,7 +21,15 @@ The Templates menu in the node graph header holds ready-made graphs. Picking one
 | Edit Poly: panels | By-polygon inset and extrude on every cell of a grid, a bevel on every other one |
 | Edit Poly: goblet | Edge loops with Connect, a Transform, extrudes and Subdivide. The first three operations are collapsed |
 | Edit Poly: bridge | Two cubes joined with Bridge. The selection is a box rule, so it follows changes upstream |
+| Edit Poly: bolt | Chamfer, slice, hinge and the other newer operations on one cube |
 | Edit Poly: sea mine | Eleven operations on one cube, with one round of subdivision at the start and two at the end: about 9,600 polygons. The hull is collapsed, the horns and ports are live |
+
+## UV
+
+| Template | Shows |
+|---|---|
+| Unwrap the sea mine | UV Unwrap on the sea mine, shown in the UV Editor |
+| Edit UV islands | A box unwrapped, the layout scaled with UV Transform, two islands moved with UV Edit |
 
 ## Animation & Mocap
 
@@ -30,6 +38,8 @@ The Templates menu in the node graph header holds ready-made graphs. Picking one
 | Clip basics | Test Clip, Rename Joints, Trim Clip, Retime and Set Timecode in a chain. Select each node to see the timeline follow |
 | FBX import | The example take loaded with Load FBX and trimmed by a second at each end |
 | T-pose and export | Auto T-Pose, Fix Pose lowering the arms, Proxy Skin and Write FBX |
+| Mocap tools | A character of the example take through the clip tool nodes |
+| Retarget | A character of the example take driving the test skeleton, which rests in another pose |
 | Mocap split (example takes) | The mocap split graph on the example folder: one take of two characters |
 | Mocap split | The same graph with no folder set |
 

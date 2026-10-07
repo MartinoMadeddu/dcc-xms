@@ -18,7 +18,7 @@ pub struct Template {
     pub build: fn(&mut NodeGraphState, &mut SubnetStore) -> String,
 }
 
-pub const GROUPS: [&str; 3] = ["Basics", "Modelling", "Animation & Mocap"];
+pub const GROUPS: [&str; 4] = ["Basics", "Modelling", "UV", "Animation & Mocap"];
 
 pub const TEMPLATES: &[Template] = &[
     Template { group: "Basics", name: "Primitives", build: primitives,
@@ -39,12 +39,22 @@ pub const TEMPLATES: &[Template] = &[
         hint: "Two cubes joined with Bridge, the selection made by a box rule" },
     Template { group: "Modelling", name: "Edit Poly: sea mine", build: sea_mine,
         hint: "Eleven operations with three rounds of subdivision: about ten thousand polygons from one cube" },
+    Template { group: "Modelling", name: "Edit Poly: bolt", build: bolt,
+        hint: "Chamfer, slice, hinge, outline and vertex extrude: the second set of Edit Poly operations" },
+    Template { group: "UV", name: "Unwrap the sea mine", build: uv_mine,
+        hint: "Conformal (LSCM) unwrap of ten thousand polygons. Open the UV Editor pane to see the charts" },
+    Template { group: "UV", name: "Edit UV islands", build: uv_edit,
+        hint: "A box unwrapped, then islands moved, turned and scaled in a UV Edit node" },
     Template { group: "Animation & Mocap", name: "Clip basics", build: clip_basics,
         hint: "Test clip renamed, trimmed, retimed and given a start timecode. Select each node to see the timeline follow" },
     Template { group: "Animation & Mocap", name: "FBX import", build: fbx_import,
         hint: "A real two-character mocap take loaded from FBX" },
     Template { group: "Animation & Mocap", name: "T-pose and export", build: tpose,
         hint: "Auto T-pose, a manual fix, proxy skin and Write FBX" },
+    Template { group: "Animation & Mocap", name: "Mocap tools", build: mocap_tools,
+        hint: "The example take split, pruned, smoothed, held in place, mirrored and looped" },
+    Template { group: "Animation & Mocap", name: "Retarget", build: retarget,
+        hint: "A character of the example take driving the test skeleton, which rests in another pose" },
     Template { group: "Animation & Mocap", name: "Mocap split (example takes)", build: mocap_example,
         hint: "The mocap split graph, pointed at the example folder with a two-character take" },
     Template { group: "Animation & Mocap", name: "Mocap split", build: mocap_blank,
@@ -227,7 +237,7 @@ fn goblet(g: &mut NodeGraphState, _: &mut SubnetStore) -> String {
     // Foot and stem, collapsed.
     let mut ops = vec![
         connect,
-        PolyOp::new(top(), PolyOpKind::Transform { translate: [0.0; 3], rotate: [0.0, 0.0, 0.0, 1.0], scale: [0.3, 1.0, 0.3] }),
+        PolyOp::new(top(), PolyOpKind::Transform { translate: [0.0; 3], rotate: [0.0, 0.0, 0.0, 1.0], scale: [0.3, 1.0, 0.3], falloff: 0.0 }),
         PolyOp::new(top(), PolyOpKind::Extrude { height: 0.7, mode: group }),
     ];
     crate::core::poly::collapse_all(&mut ops);
@@ -281,7 +291,7 @@ fn sea_mine(g: &mut NodeGraphState, _: &mut SubnetStore) -> String {
     // The hull, collapsed.
     let mut ops = vec![
         PolyOp::new(all(), PolyOpKind::Subdivide { iterations: 1 }),
-        PolyOp::new(all(), PolyOpKind::Transform { translate: [0.0, 1.2, 0.0], rotate: [0.0, 0.0, 0.0, 1.0], scale: [2.4, 2.4, 2.4] }),
+        PolyOp::new(all(), PolyOpKind::Transform { translate: [0.0, 1.2, 0.0], rotate: [0.0, 0.0, 0.0, 1.0], scale: [2.4, 2.4, 2.4], falloff: 0.0 }),
         PolyOp::new(plates(), PolyOpKind::Inset { amount: 0.06, by_polygon: true }),
         PolyOp::new(plates(), PolyOpKind::Extrude { height: -0.05, mode: each }),
         PolyOp::new(plates(), PolyOpKind::Inset { amount: 0.07, by_polygon: true }),
@@ -299,6 +309,63 @@ fn sea_mine(g: &mut NodeGraphState, _: &mut SubnetStore) -> String {
     g.add_connection(cube, 0, ep, 0);
     finish(g, ep, ep, p(180.0, 260.0));
     "Edit Poly sea mine: about ten thousand polygons. Change the height of the horns in operation 7, or lower the last Subdivide to see the cage.".into()
+}
+
+fn bolt(g: &mut NodeGraphState, _: &mut SubnetStore) -> String {
+    crate::graph_io::clear(g);
+    let top = || picked(vec![3]);
+    let all_edges = PolySelection { level: SubLevel::Edge, source: SelSource::All, ..Default::default() };
+    let top_corners = PolySelection { level: SubLevel::Vertex, source: SelSource::InBox { min: [-2.0, 1.7, -2.0], max: [2.0, 3.0, 2.0] }, ..Default::default() };
+    let ops = vec![
+        // Head: a slab, its edges taken off.
+        PolyOp::new(PolySelection { source: SelSource::All, ..Default::default() },
+            PolyOpKind::Transform { translate: [0.0, 0.2, 0.0], rotate: [0.0, 0.0, 0.0, 1.0], scale: [1.6, 0.4, 1.6], falloff: 0.0 }),
+        PolyOp::new(all_edges, PolyOpKind::Chamfer { amount: 0.06 }),
+        // Shank: inset the top, pull it up, cut it into rings.
+        PolyOp::new(top(), PolyOpKind::Inset { amount: 0.35, by_polygon: false }),
+        PolyOp::new(top(), PolyOpKind::Extrude { height: 1.5, mode: ExtrudeMode::Group }),
+        PolyOp::new(Default::default(), PolyOpKind::Slice { axis: 1, offset: 0.8 }),
+        PolyOp::new(Default::default(), PolyOpKind::Slice { axis: 1, offset: 1.2 }),
+        PolyOp::new(Default::default(), PolyOpKind::Slice { axis: 1, offset: 1.6 }),
+        // Tip: narrower, a spike on each corner, and a lid hinged open.
+        PolyOp::new(top(), PolyOpKind::Outline { amount: -0.08 }),
+        PolyOp::new(top_corners, PolyOpKind::ExtrudeVertex { height: 0.15, width: 0.08 }),
+        PolyOp::new(top(), PolyOpKind::Hinge { angle: 50.0, segments: 5, edge: 0 }),
+    ];
+    let cube = g.add_node("Cube".into(), NodeType::CreateCube { size: 1.0 }, p(180.0, 20.0));
+    let ep   = g.add_node("Bolt".into(), edit_poly(ops, top()), p(180.0, 130.0));
+    g.add_connection(cube, 0, ep, 0);
+    finish(g, ep, ep, p(180.0, 260.0));
+    "Edit Poly bolt: chamfer, slice, outline, vertex extrude and hinge. Change the hinge angle in the last operation.".into()
+}
+
+// ── UV ───────────────────────────────────────────────────────────────────────
+
+fn uv_mine(g: &mut NodeGraphState, store: &mut SubnetStore) -> String {
+    sea_mine(g, store);
+    let ep = g.nodes.iter().find(|n| matches!(n.node_type, NodeType::EditPoly { .. })).map(|n| n.id).expect("sea mine has an Edit Poly node");
+    let uv = g.add_node("Unwrap".into(), NodeType::UvUnwrap {
+        method: crate::core::uv::UvMethod::Conformal, angle: 50.0, margin: 0.01, axis: 1 }, p(180.0, 240.0));
+    g.add_connection(ep, 0, uv, 0);
+    finish(g, uv, uv, p(180.0, 350.0));
+    "UV unwrap: open the UV Editor pane from the Panes menu. Lower the chart angle for more charts with less distortion.".into()
+}
+
+fn uv_edit(g: &mut NodeGraphState, _: &mut SubnetStore) -> String {
+    use crate::core::uv::{IslandEdit, UvMethod};
+    crate::graph_io::clear(g);
+    let cube = g.add_node("Box".into(), NodeType::CreateCube { size: 1.0 }, p(180.0, 20.0));
+    let size = g.add_node("Stretch".into(), transform([0.0, 0.5, 0.0], [0.0, 0.0, 0.0], [2.0, 1.0, 1.0]), p(180.0, 110.0));
+    let uv   = g.add_node("Unwrap".into(), NodeType::UvUnwrap { method: UvMethod::Conformal, angle: 45.0, margin: 0.03, axis: 1 }, p(180.0, 200.0));
+    let edit = g.add_node("Arrange".into(), NodeType::UvEdit { edits: vec![
+        IslandEdit { island: 0, offset: [0.0, 0.0], rotate: 90.0, scale: [1.0, 1.0] },
+        IslandEdit { island: 3, offset: [0.05, 0.1], rotate: 0.0, scale: [0.6, 0.6] },
+    ] }, p(180.0, 290.0));
+    g.add_connection(cube, 0, size, 0);
+    g.add_connection(size, 0, uv, 0);
+    g.add_connection(uv, 0, edit, 0);
+    finish(g, edit, edit, p(180.0, 400.0));
+    "UV edit: open the UV Editor pane. Click an island to select it, drag to move it; its values are in Properties.".into()
 }
 
 // ── Animation & mocap ────────────────────────────────────────────────────────
@@ -349,6 +416,44 @@ fn tpose(g: &mut NodeGraphState, _: &mut SubnetStore) -> String {
     g.selected_node  = Some(fix);
     g.selected_nodes = vec![fix];
     "T-pose and export: the Fix Pose node lowers both arms. Set a path on WriteTPose and press Write to export.".into()
+}
+
+fn mocap_tools(g: &mut NodeGraphState, _: &mut SubnetStore) -> String {
+    crate::graph_io::clear(g);
+    let x = 180.0;
+    let load   = g.add_node("Take".into(), NodeType::LoadFbx { path: examples::path(examples::TAKE_FBX), take: 0 }, p(x, 20.0));
+    let split  = g.add_node("OneCharacter".into(), NodeType::SplitSkeleton { picks: vec![crate::types::SplitPick::Character(0)] }, p(x, 100.0));
+    let prune  = g.add_node("NoFingers".into(), NodeType::PruneJoints { words: "thumb, index, middle, ring, pinky, end".into() }, p(x, 180.0));
+    let trim   = g.add_node("Trim".into(), NodeType::TrimClip { head: 120, tail: 240 }, p(x, 260.0));
+    let smooth = g.add_node("Smooth".into(), NodeType::SmoothClip { radius: 4, amount: 1.0, translations: true }, p(x, 340.0));
+    let place  = g.add_node("InPlace".into(), NodeType::InPlace { keep_height: true, to_root: false }, p(x, 420.0));
+    let floor  = g.add_node("Floor".into(), NodeType::FloorClip { height: 0.0 }, p(x, 500.0));
+    let mirror = g.add_node("Mirror".into(), NodeType::MirrorClip, p(x, 580.0));
+    let lp     = g.add_node("Loop".into(), NodeType::LoopClip { blend: 30 }, p(x, 660.0));
+    for (a, b) in [(load, split), (split, prune), (prune, trim), (trim, smooth), (smooth, place), (place, floor), (floor, mirror), (mirror, lp)] {
+        g.add_connection(a, 0, b, 0);
+    }
+    view(g, lp, p(x, 760.0));
+    g.selected_node  = Some(smooth);
+    g.selected_nodes = vec![smooth];
+    format!("Mocap tools: one node per step. Put the view flag on any of them to see the clip at that point.{}", missing_examples())
+}
+
+fn retarget(g: &mut NodeGraphState, _: &mut SubnetStore) -> String {
+    crate::graph_io::clear(g);
+    let load  = g.add_node("Take".into(), NodeType::LoadFbx { path: examples::path(examples::TAKE_FBX), take: 0 }, p(40.0, 20.0));
+    let split = g.add_node("OneCharacter".into(), NodeType::SplitSkeleton { picks: vec![crate::types::SplitPick::Character(0)] }, p(40.0, 110.0));
+    let skel  = g.add_node("TargetSkeleton".into(), NodeType::TestClip { seconds: 1.0, fps_num: 30, fps_den: 1 }, p(300.0, 110.0));
+    let ret   = g.add_node("Retarget".into(), NodeType::Retarget, p(170.0, 220.0));
+    let skin  = g.add_node("ProxySkin".into(), NodeType::ProxySkin { thickness: 1.6 }, p(170.0, 320.0));
+    g.add_connection(load, 0, split, 0);
+    g.add_connection(split, 0, ret, 0);
+    g.add_connection(skel, 0, ret, 1);
+    g.add_connection(ret, 0, skin, 0);
+    view(g, skin, p(170.0, 430.0));
+    g.selected_node  = Some(ret);
+    g.selected_nodes = vec![ret];
+    format!("Retarget: a captured performance on the 19-joint test skeleton, which rests with its arms down. Space plays.{}", missing_examples())
 }
 
 fn mocap_example(g: &mut NodeGraphState, _: &mut SubnetStore) -> String {
@@ -407,8 +512,30 @@ mod tests {
     }
 
     #[test]
+    fn uv_templates_give_layouts_in_the_unit_square() {
+        for name in ["Unwrap the sea mine", "Edit UV islands"] {
+            let t = TEMPLATES.iter().find(|t| t.name == name).unwrap();
+            let mut g = NodeGraphState::default();
+            (t.build)(&mut g, &mut SubnetStore::default());
+            let node = g.selected_node.unwrap();
+            let eval = |_: SubnetId, mesh: &MeshData, _: Option<&MeshData>| mesh.clone();
+            let mesh = g.eval_node(node, &mut std::collections::HashMap::new(), &eval).unwrap().into_mesh();
+            assert_eq!(mesh.uvs.len(), mesh.indices.len(), "{name}");
+            assert!(mesh.uvs.iter().all(|uv| uv[0].is_finite() && uv[1].is_finite()), "{name}");
+            let (_, islands) = crate::core::uv::islands(&mesh);
+            if name == "Unwrap the sea mine" {
+                assert!(mesh.uvs.iter().all(|uv| uv[0] > -1e-3 && uv[0] < 1.001 && uv[1] > -1e-3 && uv[1] < 1.001));
+                assert!(islands > 20 && islands < 2000, "{islands} islands");
+                assert!(crate::core::uv::coverage(&mesh) > 0.2, "{}", crate::core::uv::coverage(&mesh));
+            } else {
+                assert_eq!(islands, 6);
+            }
+        }
+    }
+
+    #[test]
     fn modelling_templates_give_valid_meshes() {
-        for (name, verts_at_least) in [("Edit Poly: tower", 30), ("Edit Poly: panels", 300), ("Edit Poly: goblet", 300), ("Edit Poly: bridge", 20), ("Edit Poly: sea mine", 8000)] {
+        for (name, verts_at_least) in [("Edit Poly: tower", 30), ("Edit Poly: panels", 300), ("Edit Poly: goblet", 300), ("Edit Poly: bridge", 20), ("Edit Poly: sea mine", 8000), ("Edit Poly: bolt", 60)] {
             let t = TEMPLATES.iter().find(|t| t.name == name).unwrap();
             let mut g = NodeGraphState::default();
             (t.build)(&mut g, &mut SubnetStore::default());

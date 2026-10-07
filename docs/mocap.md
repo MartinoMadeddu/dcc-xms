@@ -23,6 +23,33 @@ The timeline has no range of its own. It takes range, rate and timecode from the
 | Proxy Skin | A sphere per bone and a cylinder per link, bound to the skeleton |
 | Write FBX | Binary FBX with skeleton, animation, mesh, skin and bind pose |
 
+## Clip tools
+
+In the "Mocap tools" section of the same sub-menu.
+
+| Node | What it does |
+|---|---|
+| Mirror | Swaps left and right joints and mirrors the motion across X |
+| Smooth | Averages rotations, and optionally translations, over a radius in frames |
+| In Place | Removes horizontal travel of the root. Optionally keeps the height, or moves the travel to a root joint |
+| Transform Clip | Moves, turns and scales the whole clip |
+| Blend Clips | Plays the first clip, then the second, with a blend in frames. Can align the second clip to where the first ends |
+| Loop | Blends the end of a clip into its start |
+| Retarget | Puts the motion of the first input on the skeleton of the second. Joints are matched by name, ignoring prefixes and namespaces. Bones are aligned in the rest pose, so the two skeletons may rest differently |
+| Time Warp | Changes speed, or reverses |
+| Prune Joints | Removes joints whose names contain given words |
+| Floor | Moves the clip so its lowest point sits at a height |
+
+![The Mocap tools template, with the Joint tab of the Primitive Inspector](xms_mocap_tools.png)
+
+![Retarget onto the test skeleton](xms_retarget.png)
+
+Retarget copies rotations and root motion. It has no IK, so feet can slide when proportions differ.
+
+## Joints and bones
+
+With a clip node selected, the Primitive Inspector shows a Joint tab (name, parent, position and rotation at the current frame) and a Bone tab (one row per bone: the joint it starts at, the joint it points to, and its length).
+
 ## Batch export
 
 Write FBX writes the current file or every file of the folder, in the background. The Templates menu has "Mocap split", which builds the whole graph for splitting a two-character take into animation files and skinned T-pose files.
@@ -35,4 +62,4 @@ Open and Save in the node graph header read and write the graph as JSON. The con
 
 ## Not done yet
 
-Meshes and skinning read from FBX, timeline zoom and pan, curve cleanup. Import into Unreal has not been tested.
+Meshes and skinning read from FBX, timeline zoom and pan, curve cleanup, IK, foot planting, characterization. Import into Unreal has not been tested.

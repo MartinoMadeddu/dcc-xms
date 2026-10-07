@@ -128,6 +128,39 @@ pub fn evaluate_node_type(
 
         NodeType::WriteFbx { .. } => inputs.first().cloned(),
 
+        // ── Mocap tools ──────────────────────────────────────────────────────
+        NodeType::MirrorClip => anim_op(node_type, inputs, |a| a.mirrored()),
+        NodeType::SmoothClip { radius, amount, translations } =>
+            anim_op(node_type, inputs, |a| a.smoothed(*radius, *amount, *translations)),
+        NodeType::InPlace { keep_height, to_root } =>
+            anim_op(node_type, inputs, |a| a.in_place(*keep_height, *to_root)),
+        NodeType::TransformClip { translate, rotate, scale } =>
+            anim_op(node_type, inputs, |a| a.transformed(Vec3::from_array(*translate), Vec3::from_array(*rotate), *scale)),
+        NodeType::LoopClip { blend } => anim_op(node_type, inputs, |a| a.looped(*blend)),
+        NodeType::TimeWarp { speed, reverse } => anim_op(node_type, inputs, |a| a.time_warped(*speed, *reverse)),
+        NodeType::PruneJoints { words } => anim_op(node_type, inputs, |a| a.pruned(words)),
+        NodeType::FloorClip { height } => anim_op(node_type, inputs, |a| a.floored(*height)),
+        NodeType::BlendClips { blend, align } =>
+            anim_op2(node_type, inputs, |a, b| a.blended(b, *blend, *align)),
+        NodeType::Retarget => anim_op2(node_type, inputs, |a, b| a.retargeted(b).0),
+
+        // ── UV ───────────────────────────────────────────────────────────────
+        NodeType::UvUnwrap { method, angle, margin, axis } => inputs.first().map(|r| {
+            let mut mesh = r.as_mesh();
+            mesh.uvs = (*crate::core::uv::unwrap_cached(&mesh, *method, *angle, *margin, *axis)).clone();
+            EvalResult::Single(mesh)
+        }),
+        NodeType::UvTransform { offset, rotate, scale } => inputs.first().map(|r| {
+            let mut mesh = r.as_mesh();
+            mesh.uvs = crate::core::uv::transform_all(&mesh, *offset, *rotate, *scale);
+            EvalResult::Single(mesh)
+        }),
+        NodeType::UvEdit { edits } => inputs.first().map(|r| {
+            let mut mesh = r.as_mesh();
+            mesh.uvs = crate::core::uv::edit_islands(&mesh, edits);
+            EvalResult::Single(mesh)
+        }),
+
         // ── Modelling ────────────────────────────────────────────────────────
         NodeType::EditPoly { ops, .. } => inputs.first().map(|r| {
             let mesh = crate::core::poly::PolyMesh::from_mesh(&r.as_mesh());
@@ -153,6 +186,19 @@ fn anim_op(
 ) -> Option<EvalResult> {
     let input: &Arc<AnimData> = inputs.first()?.as_anim()?;
     anim::memo(&format!("{node_type:?}"), Some(input), || Some(op(input)))
+        .map(EvalResult::Anim)
+}
+
+/// A clip operator with two clip inputs. Needs both wired.
+fn anim_op2(
+    node_type: &NodeType,
+    inputs:    &[EvalResult],
+    op:        impl FnOnce(&AnimData, &AnimData) -> AnimData,
+) -> Option<EvalResult> {
+    let a: &Arc<AnimData> = inputs.first()?.as_anim()?;
+    let b: &Arc<AnimData> = inputs.get(1)?.as_anim()?;
+    // The second input is part of the key by its address.
+    anim::memo(&format!("{node_type:?}:{:p}", Arc::as_ptr(b)), Some(a), || Some(op(a, b)))
         .map(EvalResult::Anim)
 }
 
@@ -244,6 +290,7 @@ pub fn transform(mesh: &MeshData, t: Vec3, r: Vec3, s: Vec3) -> MeshData {
             .collect(),
         polys:      mesh.polys.clone(),
         face_count: mesh.face_count,
+        uvs:        mesh.uvs.clone(),
         ..Default::default()
     };
     // Recompute normals after transform so they stay correct
@@ -275,6 +322,12 @@ pub fn merge(a: &MeshData, b: &MeshData) -> MeshData {
     };
     m.face_count = if polys.is_empty() { m.indices.len() / 3 } else { polys.len() };
     m.polys = polys;
+    // UVs survive when either side has them; the other side gets zeros.
+    if !a.uvs.is_empty() || !b.uvs.is_empty() {
+        let side = |x: &MeshData| if x.uvs.len() == x.indices.len() { x.uvs.clone() } else { vec![[0.0; 2]; x.indices.len()] };
+        m.uvs = side(a);
+        m.uvs.extend(side(b));
+    }
     m.compute_normals();
     m
 }

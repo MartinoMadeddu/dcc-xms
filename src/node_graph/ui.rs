@@ -605,6 +605,36 @@ fn add_node_menu(ui: &mut egui::Ui, graph: &mut NodeGraphState, cp: egui::Pos2) 
             graph.add_node("Write".into(), NodeType::WriteFbx {
                 path: crate::types::DEFAULT_WRITE_PATH.into() }, cp); added = true;
         }
+        ui.separator();
+        ui.label(egui::RichText::new("Mocap tools").strong());
+        let tools: [(&str, &str, NodeType); 10] = [
+            ("↔  Mirror", "Mirror", NodeType::MirrorClip),
+            ("〰  Smooth", "Smooth", NodeType::SmoothClip { radius: 3, amount: 1.0, translations: true }),
+            ("📍  In Place", "InPlace", NodeType::InPlace { keep_height: true, to_root: false }),
+            ("🔃  Transform Clip", "TransformClip", NodeType::TransformClip { translate: [0.0; 3], rotate: [0.0; 3], scale: 1.0 }),
+            ("🔀  Blend Clips", "Blend", NodeType::BlendClips { blend: 15, align: true }),
+            ("🔁  Loop", "Loop", NodeType::LoopClip { blend: 15 }),
+            ("👥  Retarget", "Retarget", NodeType::Retarget),
+            ("⏩  Time Warp", "TimeWarp", NodeType::TimeWarp { speed: 1.0, reverse: false }),
+            ("🌿  Prune Joints", "Prune", NodeType::PruneJoints { words: "finger, thumb".into() }),
+            ("⬇  Floor", "Floor", NodeType::FloorClip { height: 0.0 }),
+        ];
+        for (label, name, node) in tools {
+            if ui.button(label).clicked() { graph.add_node(name.into(), node, cp); added = true; }
+        }
+    });
+    ui.menu_button("🗺  UV", |ui| {
+        ui.set_min_width(170.0);
+        if ui.button("🗺  UV Unwrap").clicked() {
+            graph.add_node("UVUnwrap".into(), NodeType::UvUnwrap {
+                method: crate::core::uv::UvMethod::Conformal, angle: 66.0, margin: 0.02, axis: 1 }, cp); added = true;
+        }
+        if ui.button("📌  UV Transform").clicked() {
+            graph.add_node("UVTransform".into(), NodeType::UvTransform { offset: [0.0; 2], rotate: 0.0, scale: [1.0; 2] }, cp); added = true;
+        }
+        if ui.button("✋  UV Edit").clicked() {
+            graph.add_node("UVEdit".into(), NodeType::UvEdit { edits: vec![] }, cp); added = true;
+        }
     });
     if added { ui.close_menu(); }
     added

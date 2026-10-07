@@ -162,7 +162,7 @@ mod tests {
                 },
                 PolyOp::new(
                     PolySelection { level: SubLevel::Border, ..Default::default() },
-                    PolyOpKind::Transform { translate: [0.5, 0.0, 0.25], rotate: [0.0, 0.0, 0.0, 1.0], scale: [1.0, 2.0, 1.0] }),
+                    PolyOpKind::Transform { translate: [0.5, 0.0, 0.25], rotate: [0.0, 0.0, 0.0, 1.0], scale: [1.0, 2.0, 1.0], falloff: 0.0 }),
                 PolyOp::new(Default::default(), PolyOpKind::MakePlanar { axis: None }),
             ],
             pending: PolySelection { level: SubLevel::Edge, edges: vec![[0, 1], [2, 3]], ..Default::default() },

@@ -3,7 +3,8 @@
 - [Interface](interface.md): dockable panes, saved layout, theme, primitive inspector
 - [Templates and example files](templates.md): ready-made graphs for every area of the program
 - [Edit Poly](edit-poly.md): polygon modelling in one node
-- [Viewport navigation](navigation.md): the seven navigation styles
+- [UV](uv.md): unwrapping, island editing, the UV Editor pane
+- [Viewport navigation](navigation.md): the seven navigation styles, framing keys
 - [Animation and mocap](mocap.md): clips, the timeline, batch export to FBX
 - [Builds and releases](releases.md): where the binaries come from
 

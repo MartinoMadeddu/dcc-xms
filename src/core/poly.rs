@@ -476,7 +476,11 @@ pub enum PolyOpKind {
     Inset   { amount: f32, by_polygon: bool },
     /// Move, rotate and scale the selection about its centre. `rotate` is a
     /// quaternion (x, y, z, w). Scale is applied first, then rotation.
-    Transform { translate: [f32; 3], rotate: [f32; 4], scale: [f32; 3] },
+    Transform {
+        translate: [f32; 3], rotate: [f32; 4], scale: [f32; 3],
+        /// Soft selection: vertices within this distance follow part of the way.
+        #[serde(default)] falloff: f32,
+    },
     /// Delete the selection and the polygons that use it, leaving holes.
     Delete,
     /// Remove edges or vertices without leaving holes.
@@ -503,6 +507,23 @@ pub enum PolyOpKind {
     Tessellate,
     /// Catmull-Clark subdivision of the whole mesh.
     Subdivide { iterations: u32 },
+    /// Cut the corner off vertices, or replace edges by a strip.
+    Chamfer { amount: f32 },
+    /// Raise a pyramid at each vertex: `width` along the edges, `height` along the normal.
+    ExtrudeVertex { height: f32, width: f32 },
+    /// New polygons growing from open edges.
+    ExtrudeEdge { height: f32, width: f32 },
+    /// Grow or shrink the outline of the selected polygons in place.
+    Outline { amount: f32 },
+    /// Swing the selected polygons about one edge of their outline.
+    Hinge { angle: f32, segments: u32, edge: u32 },
+    /// Cut with a plane across X, Y or Z.
+    Slice { axis: usize, offset: f32 },
+    /// Insert vertices: along the selected edges, or in the middle of polygons.
+    InsertVertex { segments: u32 },
+    Triangulate,
+    /// Flip the diagonal between two triangles.
+    Turn,
 }
 
 impl PolyOpKind {
@@ -526,18 +547,27 @@ impl PolyOpKind {
             PolyOpKind::Relax { .. }      => "Relax",
             PolyOpKind::Tessellate        => "Tessellate",
             PolyOpKind::Subdivide { .. }  => "Subdivide",
+            PolyOpKind::Chamfer { .. }    => "Chamfer",
+            PolyOpKind::ExtrudeVertex { .. } => "Extrude vertex",
+            PolyOpKind::ExtrudeEdge { .. }   => "Extrude edge",
+            PolyOpKind::Outline { .. }    => "Outline",
+            PolyOpKind::Hinge { .. }      => "Hinge",
+            PolyOpKind::Slice { .. }      => "Slice",
+            PolyOpKind::InsertVertex { .. } => "Insert vertex",
+            PolyOpKind::Triangulate       => "Triangulate",
+            PolyOpKind::Turn              => "Turn",
         }
     }
 
     pub fn identity_transform() -> Self {
-        PolyOpKind::Transform { translate: [0.0; 3], rotate: [0.0, 0.0, 0.0, 1.0], scale: [1.0; 3] }
+        PolyOpKind::Transform { translate: [0.0; 3], rotate: [0.0, 0.0, 0.0, 1.0], scale: [1.0; 3], falloff: 0.0 }
     }
 
     /// True when the operation leaves every vertex and polygon index alone,
     /// so the selection it used is still valid afterwards.
     pub fn keeps_indices(&self) -> bool {
         matches!(self, PolyOpKind::Transform { .. } | PolyOpKind::Flip
-            | PolyOpKind::MakePlanar { .. } | PolyOpKind::Relax { .. })
+            | PolyOpKind::MakePlanar { .. } | PolyOpKind::Relax { .. } | PolyOpKind::Outline { .. })
     }
 }
 
@@ -569,9 +599,9 @@ impl PolyOp {
             PolyOpKind::Inset { amount, by_polygon } => offset_faces(
                 mesh, &sel.poly_mask(mesh), 0.0, *amount,
                 if *by_polygon { ExtrudeMode::ByPolygon } else { ExtrudeMode::Group }),
-            PolyOpKind::Transform { translate, rotate, scale } => mesh.transform_verts(
+            PolyOpKind::Transform { translate, rotate, scale, falloff } => mesh.transform_verts(
                 &sel.vertex_set(mesh), Vec3::from_array(*translate),
-                Quat::from_array(*rotate).normalize(), Vec3::from_array(*scale)),
+                Quat::from_array(*rotate).normalize(), Vec3::from_array(*scale), *falloff),
             PolyOpKind::Delete => {
                 let mask: Vec<bool> = match level {
                     SubLevel::Polygon => sel.poly_mask(mesh),
@@ -615,6 +645,30 @@ impl PolyOp {
                 mesh.relax(&sel.vertex_set(mesh), *amount, (*iterations).min(200), *hold_border),
             PolyOpKind::Tessellate => mesh.tessellate(&sel.poly_mask(mesh)),
             PolyOpKind::Subdivide { iterations } => for _ in 0..(*iterations).min(4) { mesh.subdivide(); },
+            PolyOpKind::Chamfer { amount } => match level {
+                SubLevel::Edge   => mesh.chamfer_edges(&sel.resolve(mesh).edges, *amount),
+                SubLevel::Vertex => mesh.chamfer_verts(&sel.resolve(mesh).verts, *amount, None),
+                // Polygons: the edges around them.
+                _                => mesh.chamfer_edges(&sel.edge_set(mesh), *amount),
+            },
+            PolyOpKind::ExtrudeVertex { height, width } =>
+                mesh.chamfer_verts(&sel.vertex_set(mesh), *width, Some(*height)),
+            PolyOpKind::ExtrudeEdge { height, width } =>
+                mesh.extrude_border_edges(&sel.edge_set(mesh), *height, *width),
+            PolyOpKind::Outline { amount } => mesh.outline(&sel.poly_mask(mesh), *amount),
+            PolyOpKind::Hinge { angle, segments, edge } => mesh.hinge(&sel.poly_mask(mesh), *angle, *segments, *edge),
+            PolyOpKind::Slice { axis, offset } => {
+                // With nothing selected the whole mesh is cut.
+                let mask = sel.poly_mask(mesh);
+                let any = mask.iter().any(|m| *m);
+                mesh.slice(*axis, *offset, any.then_some(mask.as_slice()));
+            }
+            PolyOpKind::InsertVertex { segments } => match level {
+                SubLevel::Polygon => mesh.poke(&sel.poly_mask(mesh)),
+                _                 => mesh.split_edges(&sel.edge_set(mesh), *segments),
+            },
+            PolyOpKind::Triangulate => mesh.triangulate(&sel.poly_mask(mesh)),
+            PolyOpKind::Turn => mesh.turn_edges(&sel.edge_set(mesh)),
         }
     }
 }

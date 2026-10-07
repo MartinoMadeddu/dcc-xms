@@ -559,6 +559,193 @@ pub fn draw_properties(
                 batch_log(ui, io.batch);
             }
 
+            // ── Mocap tools ──────────────────────────────────────────────────
+            NodeType::MirrorClip => {
+                section_label(ui, "Mirror");
+                section(ui, |ui| {
+                    ui.colored_label(xsi::DIM(), egui::RichText::new(
+                        "Left and right joints swap roles and the motion is reflected. Joints pair up by name: Left / Right, L_ / R_, _L / _R.").small());
+                });
+                clip_summary(ui, anim);
+            }
+            NodeType::SmoothClip { radius, amount, translations } => {
+                section_label(ui, "Smooth");
+                section(ui, |ui| {
+                    labeled_slider_u32(ui, "Radius (frames)", radius, 0..=30);
+                    labeled_slider(ui, "Amount", amount, 0.0..=1.0);
+                    ui.checkbox(translations, "Also smooth positions");
+                });
+                clip_summary(ui, anim);
+            }
+            NodeType::InPlace { keep_height, to_root } => {
+                section_label(ui, "In place");
+                section(ui, |ui| {
+                    ui.checkbox(keep_height, "Keep the up and down motion");
+                    ui.checkbox(to_root, "Put the travel on the root joint")
+                        .on_hover_text("Root motion: the joint above the hips carries the travel, the hips stay under it");
+                });
+                clip_summary(ui, anim);
+            }
+            NodeType::TransformClip { translate, rotate, scale } => {
+                section_label(ui, "Transform clip");
+                section(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.colored_label(xsi::LABEL(), "Move:");
+                        for a in translate.iter_mut() { ui.add(egui::DragValue::new(a).speed(0.01).max_decimals(3)); }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.colored_label(xsi::LABEL(), "Turn:");
+                        for a in rotate.iter_mut() { ui.add(egui::DragValue::new(a).speed(0.5).max_decimals(2).suffix("°")); }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.colored_label(xsi::LABEL(), "Scale:");
+                        ui.add(egui::DragValue::new(scale).speed(0.01).range(0.001..=1000.0).max_decimals(3));
+                    });
+                });
+                clip_summary(ui, anim);
+            }
+            NodeType::BlendClips { blend, align } => {
+                section_label(ui, "Blend clips");
+                section(ui, |ui| {
+                    labeled_slider_u32(ui, "Cross-fade (frames)", blend, 0..=240);
+                    ui.checkbox(align, "Start the next clip where this one ends");
+                    ui.colored_label(xsi::DIM(), egui::RichText::new(
+                        "First input, then the second. Joints are matched by name.").small());
+                });
+                clip_summary(ui, anim);
+            }
+            NodeType::LoopClip { blend } => {
+                section_label(ui, "Loop");
+                section(ui, |ui| {
+                    labeled_slider_u32(ui, "Ease over (frames)", blend, 0..=240);
+                    ui.colored_label(xsi::DIM(), egui::RichText::new(
+                        "The end of the clip is eased into the pose of its first frame. Travel is kept.").small());
+                });
+                clip_summary(ui, anim);
+            }
+            NodeType::Retarget => {
+                section_label(ui, "Retarget");
+                section(ui, |ui| {
+                    ui.colored_label(xsi::DIM(), egui::RichText::new(
+                        "Motion from the first input on the skeleton of the second. Joints are matched by name, ignoring namespaces and the prefix each skeleton shares. The skeletons may rest in different poses: bones are lined up at rest first.").small());
+                    if let (Some(i), Some(o)) = (&anim.input, &anim.output) {
+                        ui.colored_label(xsi::LABEL(), format!("Source: {} joints. Result: {} joints.", i.joints.len(), o.joints.len()));
+                    } else if anim.output.is_none() {
+                        ui.colored_label(xsi::LABEL(), "Connect a clip to both inputs.");
+                    }
+                });
+                clip_summary(ui, anim);
+            }
+            NodeType::TimeWarp { speed, reverse } => {
+                section_label(ui, "Time warp");
+                section(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.colored_label(xsi::LABEL(), "Speed:");
+                        ui.add(egui::DragValue::new(speed).speed(0.01).range(0.05..=20.0).max_decimals(3).suffix(" x"));
+                    });
+                    ui.checkbox(reverse, "Play backwards");
+                });
+                clip_summary(ui, anim);
+            }
+            NodeType::PruneJoints { words } => {
+                section_label(ui, "Prune joints");
+                section(ui, |ui| {
+                    ui.horizontal(|ui| { ui.colored_label(xsi::LABEL(), "Names containing:"); ui.text_edit_singleline(words); });
+                    ui.colored_label(xsi::DIM(), egui::RichText::new(
+                        "Comma-separated words, for example: finger, thumb, toe. Each matching joint goes, with everything below it.").small());
+                    if let (Some(i), Some(o)) = (&anim.input, &anim.output) {
+                        ui.colored_label(xsi::LABEL(), format!("{} joints in, {} out", i.joints.len(), o.joints.len()));
+                    }
+                });
+            }
+            NodeType::FloorClip { height } => {
+                section_label(ui, "Floor");
+                section(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.colored_label(xsi::LABEL(), "Height (m):");
+                        ui.add(egui::DragValue::new(height).speed(0.005).max_decimals(3));
+                    });
+                    if let Some(i) = &anim.input {
+                        ui.colored_label(xsi::DIM(), format!("Lowest point of the incoming clip: {:.3} m", i.lowest_point()));
+                    }
+                });
+                clip_summary(ui, anim);
+            }
+
+            // ── UV ───────────────────────────────────────────────────────────
+            NodeType::UvUnwrap { method, angle, margin, axis } => {
+                use crate::core::uv::UvMethod;
+                section_label(ui, "UV unwrap");
+                section(ui, |ui| {
+                    ui.radio_value(method, UvMethod::Conformal, "Conformal (LSCM)")
+                        .on_hover_text("Charts by normal angle, each flattened with Least Squares Conformal Maps, packed at equal density");
+                    ui.radio_value(method, UvMethod::Box, "Box");
+                    ui.radio_value(method, UvMethod::Planar, "Planar");
+                    match method {
+                        UvMethod::Conformal => labeled_slider(ui, "Chart angle", angle, 5.0..=89.0),
+                        UvMethod::Planar => { ui.horizontal(|ui| {
+                            ui.colored_label(xsi::LABEL(), "Along:");
+                            ui.selectable_value(axis, 0, "X");
+                            ui.selectable_value(axis, 1, "Y");
+                            ui.selectable_value(axis, 2, "Z");
+                        }); }
+                        UvMethod::Box => {}
+                    }
+                    labeled_slider(ui, "Margin", margin, 0.0..=0.1);
+                    ui.colored_label(xsi::DIM(), egui::RichText::new(
+                        "Open the UV Editor pane (Panes menu) to see the layout. A smaller chart angle gives more charts with less distortion.").small());
+                });
+            }
+            NodeType::UvTransform { offset, rotate, scale } => {
+                section_label(ui, "UV transform");
+                section(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.colored_label(xsi::LABEL(), "Offset:");
+                        for a in offset.iter_mut() { ui.add(egui::DragValue::new(a).speed(0.005).max_decimals(4)); }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.colored_label(xsi::LABEL(), "Turn:");
+                        ui.add(egui::DragValue::new(rotate).speed(0.5).max_decimals(2).suffix("°"));
+                    });
+                    ui.horizontal(|ui| {
+                        ui.colored_label(xsi::LABEL(), "Scale:");
+                        for a in scale.iter_mut() { ui.add(egui::DragValue::new(a).speed(0.005).max_decimals(4)); }
+                    });
+                });
+            }
+            NodeType::UvEdit { edits } => {
+                section_label(ui, "UV islands");
+                section(ui, |ui| {
+                    ui.colored_label(xsi::DIM(), egui::RichText::new(
+                        "In the UV Editor pane: click an island to select it, drag to move it. Its values appear here.").small());
+                    if edits.is_empty() { ui.colored_label(xsi::LABEL(), "No island edited yet."); }
+                });
+                let mut remove = None;
+                for (i, e) in edits.iter_mut().enumerate() {
+                    ui.add_space(2.0);
+                    section(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.colored_label(xsi::HEADER_TEXT(), format!("Island {}", e.island));
+                            if ui.small_button("⟲ 90°").clicked() { e.rotate = (e.rotate + 90.0) % 360.0; }
+                            if ui.small_button("Flip U").clicked() { e.scale[0] = -e.scale[0]; }
+                            if ui.small_button("Flip V").clicked() { e.scale[1] = -e.scale[1]; }
+                            if ui.small_button("🗑").on_hover_text("Remove this edit").clicked() { remove = Some(i); }
+                        });
+                        ui.horizontal(|ui| {
+                            ui.colored_label(xsi::LABEL(), "Offset:");
+                            for a in e.offset.iter_mut() { ui.add(egui::DragValue::new(a).speed(0.002).max_decimals(4)); }
+                        });
+                        ui.horizontal(|ui| {
+                            ui.colored_label(xsi::LABEL(), "Turn:");
+                            ui.add(egui::DragValue::new(&mut e.rotate).speed(0.5).max_decimals(2).suffix("°"));
+                            ui.colored_label(xsi::LABEL(), "Scale:");
+                            for a in e.scale.iter_mut() { ui.add(egui::DragValue::new(a).speed(0.005).max_decimals(4)); }
+                        });
+                    });
+                }
+                if let Some(i) = remove { edits.remove(i); }
+            }
+
             // ── Modelling ────────────────────────────────────────────────────
             NodeType::EditPoly { ops, pending, edit, auto_collapse } => {
                 if edit.map(|i| i >= ops.len() || ops[i].collapsed).unwrap_or(false) { *edit = None; }
@@ -622,22 +809,31 @@ pub fn draw_properties(
                         ("Flip",    true, PolyOpKind::Flip),
                         ("Detach",  true, PolyOpKind::Detach),
                         ("Tessellate", true, PolyOpKind::Tessellate),
+                        ("Outline", true, PolyOpKind::Outline { amount: 0.05 }),
+                        ("Hinge", true, PolyOpKind::Hinge { angle: 30.0, segments: 4, edge: 0 }),
+                        ("Triangulate", true, PolyOpKind::Triangulate),
                     ]);
                     row(ui, "Edge:", &[
                         ("Connect", e || v, PolyOpKind::Connect { segments: 1 }),
                         ("Remove",  e || v, PolyOpKind::Remove { clean: true }),
                         ("Cap",     true, PolyOpKind::Cap),
+                        ("Chamfer", true, PolyOpKind::Chamfer { amount: 0.05 }),
+                        ("Extrude", e, PolyOpKind::ExtrudeEdge { height: 0.0, width: 0.25 }),
+                        ("Turn",    e, PolyOpKind::Turn),
                     ]);
                     row(ui, "Vertex:", &[
                         ("Weld",     true, PolyOpKind::Weld { threshold: 0.01 }),
                         ("Collapse", true, PolyOpKind::Collapse),
                         ("Break",    true, PolyOpKind::Break),
+                        ("Extrude",  true, PolyOpKind::ExtrudeVertex { height: 0.2, width: 0.1 }),
                     ]);
                     row(ui, "Any:", &[
                         ("Delete",      true, PolyOpKind::Delete),
                         ("Transform",   true, PolyOpKind::identity_transform()),
                         ("Make planar", true, PolyOpKind::MakePlanar { axis: None }),
                         ("Relax",       true, PolyOpKind::Relax { amount: 0.5, iterations: 1, hold_border: true }),
+                        ("Slice",       true, PolyOpKind::Slice { axis: 1, offset: 0.0 }),
+                        ("Insert vertex", true, PolyOpKind::InsertVertex { segments: 1 }),
                     ]);
                     row(ui, "Whole mesh:", &[
                         ("Subdivide", true, PolyOpKind::Subdivide { iterations: 1 }),
@@ -760,7 +956,7 @@ pub fn draw_properties(
                                 drag(ui, "Amount:", amount);
                                 ui.checkbox(by_polygon, "By polygon");
                             }
-                            PolyOpKind::Transform { translate, rotate, scale } => {
+                            PolyOpKind::Transform { translate, rotate, scale, falloff } => {
                                 ui.horizontal(|ui| {
                                     ui.colored_label(xsi::LABEL(), "Move:");
                                     for a in translate.iter_mut() { ui.add(egui::DragValue::new(a).speed(0.01).max_decimals(3)); }
@@ -783,7 +979,40 @@ pub fn draw_properties(
                                     ui.colored_label(xsi::LABEL(), "Scale:");
                                     for a in scale.iter_mut() { ui.add(egui::DragValue::new(a).speed(0.01).max_decimals(3)); }
                                 });
+                                ui.horizontal(|ui| {
+                                    ui.colored_label(xsi::LABEL(), "Soft falloff:");
+                                    ui.add(egui::DragValue::new(falloff).speed(0.01).range(0.0..=1.0e6).max_decimals(3))
+                                        .on_hover_text("Soft selection: vertices within this distance of the selection follow part of the way. 0 is off");
+                                });
                             }
+                            PolyOpKind::Chamfer { amount } => drag(ui, "Amount:", amount),
+                            PolyOpKind::ExtrudeVertex { height, width } | PolyOpKind::ExtrudeEdge { height, width } => {
+                                drag(ui, "Height:", height);
+                                drag(ui, "Width:", width);
+                            }
+                            PolyOpKind::Outline { amount } => drag(ui, "Amount:", amount),
+                            PolyOpKind::Hinge { angle, segments, edge } => {
+                                ui.horizontal(|ui| {
+                                    ui.colored_label(xsi::LABEL(), "Angle:");
+                                    ui.add(egui::DragValue::new(angle).speed(0.5).range(-360.0..=360.0).suffix("°"));
+                                });
+                                whole(ui, "Segments:", segments, 64);
+                                ui.horizontal(|ui| {
+                                    ui.colored_label(xsi::LABEL(), "Hinge edge:");
+                                    ui.add(egui::DragValue::new(edge).speed(0.05).range(0..=9999))
+                                        .on_hover_text("Which edge of the selection's outline is the hinge");
+                                });
+                            }
+                            PolyOpKind::Slice { axis, offset } => {
+                                ui.horizontal(|ui| {
+                                    ui.colored_label(xsi::LABEL(), "Across:");
+                                    ui.selectable_value(axis, 0, "X");
+                                    ui.selectable_value(axis, 1, "Y");
+                                    ui.selectable_value(axis, 2, "Z");
+                                });
+                                drag(ui, "At:", offset);
+                            }
+                            PolyOpKind::InsertVertex { segments } => whole(ui, "Per edge:", segments, 64),
                             PolyOpKind::Remove { clean } => {
                                 ui.checkbox(clean, "Also remove leftover vertices");
                             }
@@ -804,7 +1033,8 @@ pub fn draw_properties(
                             }
                             PolyOpKind::Subdivide { iterations } => whole(ui, "Iterations:", iterations, 4),
                             PolyOpKind::Delete | PolyOpKind::Collapse | PolyOpKind::Cap | PolyOpKind::Bridge
-                            | PolyOpKind::Detach | PolyOpKind::Break | PolyOpKind::Flip | PolyOpKind::Tessellate => {}
+                            | PolyOpKind::Detach | PolyOpKind::Break | PolyOpKind::Flip | PolyOpKind::Tessellate
+                            | PolyOpKind::Triangulate | PolyOpKind::Turn => {}
                         }
                     });
                     ui.add_space(2.0);

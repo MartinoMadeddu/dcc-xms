@@ -9,12 +9,12 @@ use egui_dock::{DockState, NodeIndex};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum Pane { Viewport, NodeGraph, SceneExplorer, OperatorStack, Properties, PrimInspector, Timeline }
+pub enum Pane { Viewport, NodeGraph, SceneExplorer, OperatorStack, Properties, PrimInspector, Timeline, UvEditor }
 
 impl Pane {
-    pub const ALL: [Pane; 7] = [
+    pub const ALL: [Pane; 8] = [
         Pane::Viewport, Pane::NodeGraph, Pane::SceneExplorer, Pane::OperatorStack,
-        Pane::Properties, Pane::PrimInspector, Pane::Timeline,
+        Pane::Properties, Pane::PrimInspector, Pane::Timeline, Pane::UvEditor,
     ];
 
     pub fn title(self) -> &'static str {
@@ -26,6 +26,7 @@ impl Pane {
             Pane::Properties    => "Properties",
             Pane::PrimInspector => "Primitive Inspector",
             Pane::Timeline      => "Timeline",
+            Pane::UvEditor      => "UV Editor",
         }
     }
 }
@@ -77,6 +78,7 @@ pub struct Layout {
 
 /// Viewport on the left with the inspector under it, then the node graph,
 /// the scene and stack column, and the properties. Timeline along the bottom.
+/// The UV editor is a tab behind the node graph.
 pub fn default_dock() -> DockState<Pane> {
     let mut dock = DockState::new(vec![Pane::Viewport]);
     let s = dock.main_surface_mut();
@@ -86,6 +88,11 @@ pub fn default_dock() -> DockState<Pane> {
     let [scene, _props]  = s.split_right(rest, 0.5, vec![Pane::Properties]);
     s.split_below(scene, 0.5, vec![Pane::OperatorStack]);
     s.split_below(viewport, 0.72, vec![Pane::PrimInspector]);
+    // The UV editor shares the node graph's place, as a second tab behind it.
+    if let Some((surface, node, _)) = dock.find_tab(&Pane::NodeGraph) {
+        dock[surface][node].append_tab(Pane::UvEditor);
+        dock.set_active_tab((surface, node, egui_dock::TabIndex(0)));
+    }
     dock
 }
 
@@ -270,13 +277,14 @@ mod tests {
     use super::*;
 
     fn layout() -> Layout { Layout { dock: default_dock(), locked: false, saved: String::new(), sized: vec![], tab_drag: None } }
+    const ALL: usize = Pane::ALL.len();
     fn open(l: &Layout) -> usize { Pane::ALL.iter().filter(|p| l.is_open(**p)).count() }
 
     #[test]
     fn default_layout_has_every_pane_once() {
         let l = layout();
         assert!(is_valid(&l.dock));
-        assert_eq!(open(&l), 7);
+        assert_eq!(open(&l), ALL);
         assert!(!l.any_floating());
     }
 
@@ -304,7 +312,7 @@ mod tests {
         assert_eq!(a, b);
         assert!(back.is_floating(Pane::PrimInspector));
         assert!(!back.is_open(Pane::Timeline));
-        assert_eq!(open(&back), 6);
+        assert_eq!(open(&back), ALL - 1);
     }
 
     #[test]
@@ -312,10 +320,10 @@ mod tests {
         let mut l = layout();
         l.hide(Pane::Viewport);
         l.hide(Pane::Viewport);
-        assert_eq!(open(&l), 6);
+        assert_eq!(open(&l), ALL - 1);
         l.show(Pane::Viewport);
         l.show(Pane::Viewport);
-        assert_eq!(open(&l), 7);
+        assert_eq!(open(&l), ALL);
         assert!(is_valid(&l.dock));
 
         l.hide(Pane::Properties);
@@ -331,7 +339,7 @@ mod tests {
         assert!(l.is_floating(Pane::Timeline));
         l.toggle_float(Pane::Timeline);
         assert!(!l.is_floating(Pane::Timeline));
-        assert_eq!(open(&l), 7);
+        assert_eq!(open(&l), ALL);
 
         // Everything closed, then one shown again.
         for p in Pane::ALL { l.hide(p); }
@@ -339,7 +347,7 @@ mod tests {
         l.show(Pane::NodeGraph);
         assert!(l.is_open(Pane::NodeGraph) && !l.is_floating(Pane::NodeGraph));
         l.reset();
-        assert_eq!(open(&l), 7);
+        assert_eq!(open(&l), ALL);
     }
 
     #[test]
@@ -358,7 +366,7 @@ mod tests {
             l.float_pane(Pane::Timeline);
             l.dock_to_edge(Pane::Timeline, edge);
             assert!(is_valid(&l.dock) && !l.is_floating(Pane::Timeline));
-            assert_eq!(open(&l), 7);
+            assert_eq!(open(&l), ALL);
             // It is a child of the root: it spans the whole side.
             let (node, _) = l.dock.find_main_surface_tab(&Pane::Timeline).unwrap();
             assert_eq!(node.parent(), Some(NodeIndex::root()), "{edge:?}");

@@ -114,20 +114,128 @@ fn zoom(t: &mut Transform, target: Vec3, amount: f32) {
     t.translation = target + off.normalize_or_zero() * dist;
 }
 
+/// Where the camera has to be to see a sphere, looking along `dir`.
+/// Returns the new position. `fov` is the vertical field of view in radians.
+pub fn frame_position(centre: Vec3, radius: f32, dir: Vec3, fov: f32, aspect: f32) -> Vec3 {
+    // The narrower of the two view angles has to hold the sphere.
+    let half_v = fov * 0.5;
+    let half_h = (half_v.tan() * aspect.max(0.05)).atan();
+    let half = half_v.min(half_h).max(0.01);
+    let dir = if dir.length_squared() > 1e-10 { dir.normalize() } else { Vec3::new(0.5, 0.45, 0.74).normalize() };
+    centre + dir * (radius.max(1e-3) / half.sin() * 1.15)
+}
+
+/// Bounding sphere of some points: centre of their box, and its half diagonal.
+pub fn bounds_of(points: impl Iterator<Item = Vec3>) -> Option<(Vec3, f32)> {
+    let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+    let mut any = false;
+    for p in points { if p.is_finite() { lo = lo.min(p); hi = hi.max(p); any = true; } }
+    any.then(|| ((lo + hi) * 0.5, ((hi - lo) * 0.5).length()))
+}
+
+/// Frame the view.
+///
+/// F, G, Z or . : frame the selection. With an Edit Poly node selected that
+/// is its selected vertices, edges or polygons, or its whole mesh when
+/// nothing is selected. Otherwise it is everything shown.
+/// A or H: frame everything shown.
+///
+/// The keys cover what Maya (F, A), Houdini (G, H), Max (Z), Blender (.)
+/// and Modo (A) use. The cursor has to be over the viewport.
 pub fn focus_camera(
     keyboard:     Res<ButtonInput<KeyCode>>,
-    mut cam_q:    Query<&mut Transform, With<MainCamera>>,
-    mesh_q:       Query<&Transform, (With<GeneratedMesh>, Without<MainCamera>)>,
+    graph:        Res<crate::node_graph::NodeGraphState>,
+    subnets:      Res<crate::ice::SubnetStore>,
+    playback:     Res<crate::timeline::Playback>,
+    vp_rect:      Res<ViewportRect>,
+    windows:      Query<&Window>,
+    mut cam_q:    Query<(&mut Transform, &Projection), With<MainCamera>>,
+    mut orbit:    ResMut<CameraOrbitState>,
     mut contexts: EguiContexts,
 ) {
-    if !keyboard.just_pressed(KeyCode::KeyF) { return; }
-    if contexts.ctx_mut().wants_keyboard_input() { return; }
-    if let Ok(mt) = mesh_q.get_single() {
-        for mut ct in cam_q.iter_mut() {
-            let dir = (ct.translation - mt.translation).normalize();
-            ct.translation = mt.translation + dir * 6.0;
-            ct.look_at(mt.translation, Vec3::Y);
+    let selection_key = keyboard.any_just_pressed([KeyCode::KeyF, KeyCode::KeyG, KeyCode::KeyZ, KeyCode::Period, KeyCode::NumpadDecimal]);
+    let all_key = keyboard.any_just_pressed([KeyCode::KeyA, KeyCode::KeyH]);
+    if !selection_key && !all_key { return; }
+    if keyboard.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight, KeyCode::AltLeft, KeyCode::AltRight,
+                             KeyCode::SuperLeft, KeyCode::SuperRight, KeyCode::Space, KeyCode::KeyS]) { return; }
+    let ctx = contexts.ctx_mut();
+    if ctx.wants_keyboard_input() { return; }
+    let cursor = windows.get_single().ok().and_then(|w| w.cursor_position());
+    let Some(rect) = vp_rect.0 else { return };
+    if !cursor.map(|c| rect.contains(bevy_egui::egui::pos2(c.x, c.y))).unwrap_or(false) { return; }
+
+    let eval = |sid: crate::types::SubnetId, mesh: &crate::types::MeshData, template: Option<&crate::types::MeshData>| {
+        subnets.get(sid).map(|sg| sg.evaluate(mesh, template)).unwrap_or_else(|| mesh.clone())
+    };
+
+    // What to frame.
+    let mut target: Option<(Vec3, f32)> = None;
+    let stage = crate::modelling::stage(&graph, &eval);
+    if let Some(stage) = &stage {
+        if selection_key {
+            let picked = stage.selection.vertex_set(&stage.mesh);
+            target = bounds_of(stage.mesh.verts.iter().enumerate().filter(|(v, _)| picked[*v]).map(|(_, p)| *p));
+            // One vertex has no size: show its surroundings.
+            if let Some((_, r)) = &mut target {
+                let whole = bounds_of(stage.mesh.verts.iter().copied()).map(|b| b.1).unwrap_or(1.0);
+                *r = r.max(whole * 0.08);
+            }
         }
+        if target.is_none() { target = bounds_of(stage.mesh.verts.iter().copied()); }
+    }
+    if target.is_none() {
+        let mut points: Vec<Vec3> = vec![];
+        if let Some(mesh) = graph.evaluate_for_viewport(&eval) {
+            points.extend(mesh.vertices.iter().map(|v| Vec3::from_array(*v)));
+            points.extend(mesh.points.iter().map(|v| Vec3::from_array(*v)));
+        }
+        for clip in graph.display_clips() {
+            points.extend(clip.world_pose(clip.index_at(playback.time)).iter().map(|m| m.w_axis.truncate()));
+        }
+        target = bounds_of(points.into_iter());
+    }
+    let Some((centre, radius)) = target else { return };
+
+    let aspect = rect.width() / rect.height().max(1.0);
+    for (mut t, projection) in cam_q.iter_mut() {
+        let fov = match projection { Projection::Perspective(p) => p.fov, _ => std::f32::consts::FRAC_PI_4 };
+        let dir = t.translation - orbit.target;
+        t.translation = frame_position(centre, radius, dir, fov, aspect);
+        t.look_at(centre, Vec3::Y);
+    }
+    orbit.target = centre;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn framing_backs_off_far_enough_to_see_the_whole_sphere() {
+        let fov = std::f32::consts::FRAC_PI_4;
+        let centre = Vec3::new(1.0, 2.0, 3.0);
+        for (radius, aspect) in [(1.0, 1.6), (0.01, 1.0), (50.0, 0.5)] {
+            let p = frame_position(centre, radius, Vec3::new(1.0, 1.0, 1.0), fov, aspect);
+            let d = p.distance(centre);
+            // The sphere fits inside the narrower view angle, with some room.
+            let half = (fov * 0.5).min(((fov * 0.5).tan() * aspect).atan());
+            assert!((radius / d).asin() < half, "radius {radius}");
+            assert!(d < radius / half.sin() * 1.3);
+            // The view direction is kept.
+            assert!(((p - centre).normalize() - Vec3::splat(1.0).normalize()).length() < 1e-5);
+        }
+        // No direction to keep: a default one is used.
+        assert!(frame_position(centre, 1.0, Vec3::ZERO, fov, 1.0).is_finite());
+    }
+
+    #[test]
+    fn bounds_cover_the_points() {
+        let (c, r) = bounds_of([Vec3::ZERO, Vec3::new(2.0, 0.0, 0.0), Vec3::new(1.0, 4.0, 0.0)].into_iter()).unwrap();
+        assert_eq!(c, Vec3::new(1.0, 2.0, 0.0));
+        assert!((r - (1.0f32 + 4.0).sqrt()).abs() < 1e-6);
+        assert!(bounds_of(std::iter::empty()).is_none());
+        // A single point: a sphere of no size at that point.
+        assert_eq!(bounds_of([Vec3::ONE].into_iter()), Some((Vec3::ONE, 0.0)));
     }
 }
 

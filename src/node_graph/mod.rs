@@ -161,7 +161,20 @@ impl NodeGraphState {
             | NodeType::AutoTPose { .. }
             | NodeType::FixPose { .. }
             | NodeType::ProxySkin { .. }
-            | NodeType::WriteFbx { .. }     => (vec![i("Clip")], vec![o("Clip")]),
+            | NodeType::WriteFbx { .. }
+            | NodeType::MirrorClip
+            | NodeType::SmoothClip { .. }
+            | NodeType::InPlace { .. }
+            | NodeType::TransformClip { .. }
+            | NodeType::LoopClip { .. }
+            | NodeType::TimeWarp { .. }
+            | NodeType::PruneJoints { .. }
+            | NodeType::FloorClip { .. }    => (vec![i("Clip")], vec![o("Clip")]),
+            NodeType::BlendClips { .. }     => (vec![i("First"), i("Next")], vec![o("Clip")]),
+            NodeType::Retarget              => (vec![i("Motion"), i("Skeleton")], vec![o("Clip")]),
+            NodeType::UvUnwrap { .. }
+            | NodeType::UvTransform { .. }
+            | NodeType::UvEdit { .. }       => (vec![i("Mesh")], vec![o("Mesh")]),
             NodeType::LoadFbxDir { .. }     => (vec![], vec![o("Clip")]),
             NodeType::EditPoly { .. }       => (vec![i("Mesh")], vec![o("Mesh")]),
             NodeType::SplitSkeleton { picks } => (
