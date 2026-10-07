@@ -136,17 +136,21 @@
 
   /* ── Parody adverts down the margins: pictures only, nothing to click ── */
   .desk { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1280px) minmax(0, 1fr); }
-  .rail { display: none; flex-direction: column; justify-content: space-between; align-items: center; gap: 60px; padding: 90px 0 60px; }
-  @media (min-width: 1680px) { .rail { display: flex; } }
-  .ad { pointer-events: none; user-select: none; width: 160px; }
-  .ad img { width: 160px; height: auto; image-rendering: pixelated; box-shadow: 6px 6px 0 #000; }
+  .desk > .mag { grid-column: 2; grid-row: 1; width: 100%; }
+  .desk > .rail:first-child { grid-column: 1; grid-row: 1; } .desk > .rail:last-child { grid-column: 3; grid-row: 1; }
+  /* The adverts grow with the margin. The rail never makes the page taller: what does not fit is cut off. */
+  .rail { display: none; position: relative; --adw: clamp(140px, calc((100vw - 1280px) / 2 - 56px), 380px); }
+  .rail .in { position: absolute; inset: 84px 0 40px; overflow: hidden; display: flex; flex-direction: column; justify-content: space-between; align-items: center; gap: 44px; }
+  @media (min-width: 1640px) { .rail { display: block; } }
+  .ad { pointer-events: none; user-select: none; width: var(--adw, 160px); flex: none; }
+  .ad img { width: 100%; height: auto; image-rendering: pixelated; box-shadow: 8px 8px 0 #000; }
   .ad figcaption { font-family: var(--tech); font-size: 8px; letter-spacing: .2em; text-transform: uppercase; color: #77738c; text-align: center; margin-bottom: 5px; }
-  .desk > .mag { grid-column: 2; width: 100%; } .desk > .rail:first-child { grid-column: 1; grid-row: 1; } .desk > .rail:last-child { grid-column: 3; grid-row: 1; }
-  /* Narrower windows have no margins: the small adverts go on a page of their own. */
+  .rail .ad:nth-child(3n+1) { transform: rotate(-1.2deg); } .rail .ad:nth-child(3n) { transform: rotate(1deg); }
+  /* Narrower windows have no margins: the adverts go on a page of their own. */
   .classified { background: #15151c; padding: 26px 16px 30px; border-top: 6px solid #000; }
   .classified h2 { font-family: var(--tech); font-weight: 400; font-size: 11px; letter-spacing: .2em; text-transform: uppercase; text-align: center; color: #9a96b0; margin: 0 0 18px; }
-  .classified .row { display: flex; flex-wrap: wrap; justify-content: center; gap: 22px; }
-  @media (min-width: 1680px) { .classified { display: none; } }
+  .classified .row { display: flex; flex-wrap: wrap; justify-content: center; align-items: flex-start; gap: 22px; --adw: min(280px, calc(50vw - 30px)); }
+  @media (min-width: 1640px) { .classified { display: none; } }
 
   /* ── The numbers strip ── */
   .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); background: #000; border-top: 6px solid var(--yellow); border-bottom: 6px solid var(--yellow); }
@@ -245,20 +249,20 @@
 </head>
 <body>
 <div class="desk">
-  <aside class="rail" aria-label="Parody adverts">
-    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/polygonator.gif" width="160" height="600" alt="Parody advert: Polygonator 9000 3D accelerator card" draggable="false"></figure>
-    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/flyinglogo.gif" width="160" height="600" alt="Parody advert: The Flying Logo Academy, with a badly scanned photograph of a graduate" draggable="false"></figure>
+  <aside class="rail" aria-label="Parody adverts"><div class="in">
+    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/helpline.gif" width="320" height="540" alt="Parody advert: 3D Helpline, with Simon waiting for your call" draggable="false"></figure>
     <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/megaslab.gif" width="160" height="240" alt="Parody advert: Megaslab 8 MB memory board" draggable="false"></figure>
-    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/clunkmaster.gif" width="160" height="240" alt="Parody advert: Clunkmaster disk drive, with a bad photograph of it" draggable="false"></figure>
-    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/marbles.gif" width="160" height="240" alt="Parody advert: Marbles and Chromes texture disks" draggable="false"></figure>
-    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/renderfridge.gif" width="160" height="600" alt="Parody advert: Renderfridge render farm" draggable="false"></figure>
-    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/megatube.gif" width="160" height="240" alt="Parody advert: Megatube 21 monitor, photographed with the flash on" draggable="false"></figure>
-    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/diskbrick.gif" width="160" height="240" alt="Parody advert: Diskbrick 44 cartridge drive" draggable="false"></figure>
-    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/scribblepad.gif" width="160" height="240" alt="Parody advert: Scribblepad 1212 tablet" draggable="false"></figure>
+    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/polygonator.gif" width="160" height="600" alt="Parody advert: Polygonator 9000 3D accelerator card" draggable="false"></figure>
+    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/polycon.gif" width="320" height="320" alt="Parody advert: Polycon '93, with exhibitor badges for Martino and Simon" draggable="false"></figure>
+    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/clunkmaster.gif" width="160" height="240" alt="Parody advert: Clunkmaster disk drive" draggable="false"></figure>
     <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/synthia.gif" width="160" height="600" alt="Parody advert: Synthia, a digital actress of 312 polygons" draggable="false"></figure>
-    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/chromeball.gif" width="160" height="600" alt="Parody advert: Chromeball Studio 2.1 raytracer" draggable="false"></figure>
-    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/morphomatic.gif" width="160" height="240" alt="Parody advert: Morph-o-matic" draggable="false"></figure>
-  </aside>
+    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/teapots.gif" width="320" height="320" alt="Parody advert: The Teapot Pack" draggable="false"></figure>
+    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/diskbrick.gif" width="160" height="240" alt="Parody advert: Diskbrick 44 cartridge drive" draggable="false"></figure>
+    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/masterclass.gif" width="320" height="480" alt="Parody advert: Martino's Node Graph Masterclass on three tapes" draggable="false"></figure>
+    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/polygonpit.gif" width="320" height="240" alt="Parody advert: The Polygon Pit bulletin board" draggable="false"></figure>
+    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/renderfridge.gif" width="160" height="600" alt="Parody advert: Renderfridge render farm" draggable="false"></figure>
+    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/marbles.gif" width="160" height="240" alt="Parody advert: Marbles and Chromes texture disks" draggable="false"></figure>
+  </div></aside>
 <div class="mag">
 
   <nav class="bar" aria-label="Download">
@@ -620,10 +624,15 @@
   <section class="classified" aria-label="Parody adverts">
     <h2>Advertisements</h2>
     <div class="row">
+    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/helpline.gif" width="320" height="540" alt="Parody advert: 3D Helpline, with Simon waiting for your call" draggable="false"></figure>
+    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/masterclass.gif" width="320" height="480" alt="Parody advert: Martino's Node Graph Masterclass on three tapes" draggable="false"></figure>
+    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/polycon.gif" width="320" height="320" alt="Parody advert: Polycon '93, with exhibitor badges for Martino and Simon" draggable="false"></figure>
+    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/teapots.gif" width="320" height="320" alt="Parody advert: The Teapot Pack" draggable="false"></figure>
     <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/megaslab.gif" width="160" height="240" alt="Parody advert: Megaslab 8 MB memory board" draggable="false"></figure>
-    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/clunkmaster.gif" width="160" height="240" alt="Parody advert: Clunkmaster disk drive, with a bad photograph of it" draggable="false"></figure>
-    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/megatube.gif" width="160" height="240" alt="Parody advert: Megatube 21 monitor, photographed with the flash on" draggable="false"></figure>
     <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/morphomatic.gif" width="160" height="240" alt="Parody advert: Morph-o-matic" draggable="false"></figure>
+    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/clunkmaster.gif" width="160" height="240" alt="Parody advert: Clunkmaster disk drive" draggable="false"></figure>
+    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/megatube.gif" width="160" height="240" alt="Parody advert: Megatube 21 monitor" draggable="false"></figure>
+    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/polygonpit.gif" width="320" height="240" alt="Parody advert: The Polygon Pit bulletin board" draggable="false"></figure>
     <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/scribblepad.gif" width="160" height="240" alt="Parody advert: Scribblepad 1212 tablet" draggable="false"></figure>
     <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/marbles.gif" width="160" height="240" alt="Parody advert: Marbles and Chromes texture disks" draggable="false"></figure>
     <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/diskbrick.gif" width="160" height="240" alt="Parody advert: Diskbrick 44 cartridge drive" draggable="false"></figure>
@@ -662,20 +671,20 @@
     <span><a href="https://github.com/srlegrand/xms-imago">Source</a> · <a href="https://github.com/srlegrand/xms-imago/tree/main/docs">Manual</a> · <a href="https://github.com/srlegrand/xms-imago/releases">All builds</a> · <a href="https://github.com/srlegrand/xms-imago/issues">Report a problem</a></span>
   </footer>
 </div>
-  <aside class="rail" aria-label="Parody adverts">
-    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/chromeball.gif" width="160" height="600" alt="Parody advert: Chromeball Studio 2.1 raytracer" draggable="false"></figure>
-    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/megatube.gif" width="160" height="240" alt="Parody advert: Megatube 21 monitor, photographed with the flash on" draggable="false"></figure>
+  <aside class="rail" aria-label="Parody adverts"><div class="in">
+    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/masterclass.gif" width="320" height="480" alt="Parody advert: Martino's Node Graph Masterclass on three tapes" draggable="false"></figure>
+    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/polygonpit.gif" width="320" height="240" alt="Parody advert: The Polygon Pit bulletin board" draggable="false"></figure>
+    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/flyinglogo.gif" width="160" height="600" alt="Parody advert: The Flying Logo Academy" draggable="false"></figure>
+    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/teapots.gif" width="320" height="320" alt="Parody advert: The Teapot Pack" draggable="false"></figure>
     <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/morphomatic.gif" width="160" height="240" alt="Parody advert: Morph-o-matic" draggable="false"></figure>
+    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/chromeball.gif" width="320" height="600" alt="Parody advert: Chromeball Studio 2.1 raytracer" draggable="false"></figure>
+    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/helpline.gif" width="320" height="540" alt="Parody advert: 3D Helpline, with Simon waiting for your call" draggable="false"></figure>
+    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/megatube.gif" width="160" height="240" alt="Parody advert: Megatube 21 monitor" draggable="false"></figure>
     <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/scribblepad.gif" width="160" height="240" alt="Parody advert: Scribblepad 1212 tablet" draggable="false"></figure>
-    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/synthia.gif" width="160" height="600" alt="Parody advert: Synthia, a digital actress of 312 polygons" draggable="false"></figure>
-    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/polygonator.gif" width="160" height="600" alt="Parody advert: Polygonator 9000 3D accelerator card" draggable="false"></figure>
-    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/megaslab.gif" width="160" height="240" alt="Parody advert: Megaslab 8 MB memory board" draggable="false"></figure>
-    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/flyinglogo.gif" width="160" height="600" alt="Parody advert: The Flying Logo Academy, with a badly scanned photograph of a graduate" draggable="false"></figure>
-    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/diskbrick.gif" width="160" height="240" alt="Parody advert: Diskbrick 44 cartridge drive" draggable="false"></figure>
     <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/renderfridge.gif" width="160" height="600" alt="Parody advert: Renderfridge render farm" draggable="false"></figure>
-    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/clunkmaster.gif" width="160" height="240" alt="Parody advert: Clunkmaster disk drive, with a bad photograph of it" draggable="false"></figure>
+    <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/polycon.gif" width="320" height="320" alt="Parody advert: Polycon '93, with exhibitor badges for Martino and Simon" draggable="false"></figure>
     <figure class="ad"><figcaption>Advertisement</figcaption><img src="ads/marbles.gif" width="160" height="240" alt="Parody advert: Marbles and Chromes texture disks" draggable="false"></figure>
-  </aside>
+  </div></aside>
 </div>
 
 <script>

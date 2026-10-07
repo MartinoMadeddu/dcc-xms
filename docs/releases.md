@@ -33,7 +33,7 @@ The downloads are in four places: a bar that stays at the top of the window, who
 
 The page is laid out as a 3D magazine of the 1990s: a cover, a contents page with the downloads on a cover disk, then a double page in its own colours for each area of the program, a reference card with the keys, the file formats and all 38 nodes, the build instructions as a type-in listing, and the known gaps. Its fonts are in `site/fonts/` and are served with it.
 
-The adverts down the margins are parodies of the period, for products that do not exist: twelve 16-colour dithered GIFs in `site/ads/`, five of them animated. Three carry a "photograph": a graduate, a disk drive and a monitor, each rendered and then given the grain, the colour cast, the flash and the crooked scan of a bad print. They are pictures only and cannot be clicked. The margins exist in windows 1680 pixels wide or more; in narrower ones the seven small adverts sit on a page of their own before the credits.
+The adverts down the margins are parodies of the period, for products that do not exist: seventeen GIFs in `site/ads/`, six of them animated. They are not all of one kind: 16-colour dithered ones, a four-colour one, an amber text screen, a one-ink newspaper halftone, and 48 to 128 colour ones, one of them a proper raytrace. Three carry a rendered "photograph" given the grain, the cast and the crooked scan of a bad print. Three carry real photographs of Martino and Simon. They are pictures only and cannot be clicked. The margins exist in windows 1640 pixels wide or more, and the adverts grow with them, up to 380 pixels wide; in narrower windows twelve of them sit on a page of their own before the credits.
 
 ![The website](xms_site.png)
 
