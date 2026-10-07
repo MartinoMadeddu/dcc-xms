@@ -31,6 +31,10 @@ The page at https://srlegrand.github.io/dcc-xms/ is the `site/` folder of the re
 
 Its download buttons point at `releases/latest/download/<file>`, so they always fetch the newest build without the page being touched. The page also names the newest build, from GitHub's public record of it.
 
+The page is laid out as a magazine: a cover with the downloads, the numbers, an article for each area of the program, a reference card with the keys, the file formats and all 38 nodes, the build instructions as a type-in listing, and the known gaps.
+
+![The website](xms_site.png)
+
 One-time setup on GitHub: Settings > Pages > Source: "GitHub Actions".
 
 To look at the site before pushing:

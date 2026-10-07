@@ -10,6 +10,8 @@ This is Simon Legrand's fork of [MartinoMadeddu/xms-imago](https://github.com/Ma
 
 **[xms | imago website](https://srlegrand.github.io/dcc-xms/)** · **[Download a build](https://github.com/srlegrand/dcc-xms/releases)** for Linux, macOS or Windows, pick a template, and start changing numbers.
 
+[![The website](docs/xms_site.png)](https://srlegrand.github.io/dcc-xms/)
+
 ## Everything stays live
 
 Nothing is baked. A mesh is a cube node followed by the operations that shaped it. A mocap clip is a file node followed by the trims, renames and retimes applied to it. Change any value upstream and everything after it follows.
