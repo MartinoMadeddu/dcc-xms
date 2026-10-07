@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// Largest side kept. Larger images are reduced: the viewport is a preview.
@@ -30,15 +30,12 @@ enum State { Loading, Ready(Arc<Decoded>), Failed }
 
 static CACHE: Mutex<Option<HashMap<PathBuf, State>>> = Mutex::new(None);
 static GENERATION: AtomicU64 = AtomicU64::new(0);
-static ENABLED: AtomicBool = AtomicBool::new(true);
 
-/// Counts finished files and switches of the display option.
+/// Counts finished files and changes of display mode.
 pub fn generation() -> u64 { GENERATION.load(Ordering::Relaxed) }
 
-pub fn enabled() -> bool { ENABLED.load(Ordering::Relaxed) }
-pub fn set_enabled(on: bool) {
-    if ENABLED.swap(on, Ordering::Relaxed) != on { GENERATION.fetch_add(1, Ordering::Relaxed); }
-}
+/// Have the viewport rebuild what it shows.
+pub fn touch() { GENERATION.fetch_add(1, Ordering::Relaxed); }
 
 /// Files still being decoded.
 pub fn pending() -> usize {

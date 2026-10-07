@@ -1,5 +1,6 @@
 pub mod camera;pub mod nav;
 pub mod textures;
+pub mod display;
 
 use bevy_egui::egui;
 

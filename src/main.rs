@@ -475,10 +475,12 @@ fn dcc_ui(
                         if ui.selectable_label(nav_help, "?").on_hover_text("Show the navigation keys").clicked() {
                             nav_help = !nav_help;
                         }
-                        let mut textured = viewport::textures::enabled();
-                        if ui.checkbox(&mut textured, "Textures").on_hover_text("Show the materials and textures of USD primitives").changed() {
-                            viewport::textures::set_enabled(textured);
-                        }
+                        let shown = viewport::display::mode();
+                        ui.menu_button(format!("{} ⏷", shown.label()), |ui| {
+                            for m in viewport::display::DisplayMode::ALL {
+                                if ui.radio(shown == m, m.label()).clicked() { viewport::display::set_mode(m); ui.close_menu(); }
+                            }
+                        }).response.on_hover_text("How meshes are drawn");
                         let loading = viewport::textures::pending();
                         if loading > 0 {
                             ui.label(egui::RichText::new(format!("loading {loading}")).small());
@@ -834,7 +836,10 @@ fn update_generated_meshes(
     mut shown:    Local<Option<(f64, u64)>>,
     mut images:   ResMut<Assets<Image>>,
     mut textures: Local<std::collections::HashMap<std::path::PathBuf, Handle<Image>>>,
+    clear:        Res<ClearColor>,
 ) {
+    use viewport::display::DisplayMode;
+    let mode = viewport::display::mode();
     // Cook again when the graph changed, the playhead moved, the theme
     // switched or a texture finished loading; not when the camera moves.
     let now = (playback.time, theme::revision() ^ viewport::textures::generation().rotate_left(32));
@@ -901,7 +906,7 @@ fn update_generated_meshes(
     // Packed primitives with materials: one mesh per material, textured.
     let packed = if stage.is_none() { graph.evaluate_for_viewport_packed(&eval_subnet) } else { None };
     if let Some(types::EvalResult::Named(prims)) = &packed {
-        if viewport::textures::enabled() && prims.iter().any(|p| p.look.is_some()) {
+        if mode == DisplayMode::Textured && prims.iter().any(|p| p.look.is_some()) {
             let mut groups: Vec<(Option<std::sync::Arc<types::Look>>, Vec<&MeshData>)> = vec![];
             for p in prims {
                 match groups.iter_mut().find(|(look, _)| look.as_ref().map(std::sync::Arc::as_ptr) == p.look.as_ref().map(std::sync::Arc::as_ptr)) {
@@ -950,19 +955,48 @@ fn update_generated_meshes(
     };
     if let Some(md) = shown {
         if md.vertices.is_empty() { return; }
-        commands.spawn((
-            PbrBundle {
-                mesh: meshes.add(mesh_data_to_bevy(&md)),
-                material: mats.add(StandardMaterial {
-                    base_color: Color::srgb(0.6, 0.6, 0.6),
-                    metallic: 0.1,
-                    perceptual_roughness: 0.5,
+        let lines = matches!(mode, DisplayMode::HiddenLine | DisplayMode::Wireframe);
+        if lines {
+            // Polygon edges as a line mesh, pulled a little towards the
+            // camera so they win against the surface they lie on.
+            let mut wire = Mesh::new(
+                bevy::render::mesh::PrimitiveTopology::LineList,
+                bevy::render::render_asset::RenderAssetUsages::default(),
+            );
+            wire.insert_attribute(Mesh::ATTRIBUTE_POSITION, md.vertices.clone());
+            wire.insert_indices(bevy::render::mesh::Indices::U32(viewport::display::wire_edges(&md)));
+            let ink = theme::c(225, 225, 225);
+            commands.spawn((
+                PbrBundle {
+                    mesh: meshes.add(wire),
+                    material: mats.add(StandardMaterial {
+                        base_color: Color::srgb_u8(ink.r(), ink.g(), ink.b()),
+                        unlit: true,
+                        depth_bias: 8.0,
+                        ..default()
+                    }),
                     ..default()
-                }),
-                ..default()
-            },
-            GeneratedMesh,
-        ));
+                },
+                GeneratedMesh,
+                bevy::pbr::NotShadowCaster,
+            ));
+        }
+        // Hidden line removal: the surface is drawn in the colour of the
+        // background, so it shows nothing but hides the edges behind it.
+        let material = match mode {
+            DisplayMode::Wireframe => None,
+            DisplayMode::HiddenLine => Some(StandardMaterial {
+                base_color: clear.0, unlit: true, double_sided: true, cull_mode: None, ..default()
+            }),
+            _ => Some(StandardMaterial { base_color: Color::srgb(0.6, 0.6, 0.6), metallic: 0.1, perceptual_roughness: 0.5, ..default() }),
+        };
+        if let Some(material) = material {
+            let mut entity = commands.spawn((
+                PbrBundle { mesh: meshes.add(mesh_data_to_bevy(&md)), material: mats.add(material), ..default() },
+                GeneratedMesh,
+            ));
+            if lines { entity.insert((bevy::pbr::NotShadowCaster, bevy::pbr::NotShadowReceiver)); }
+        }
     }
 }
 
