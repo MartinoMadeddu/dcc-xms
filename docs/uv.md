@@ -41,7 +41,7 @@ Past 256 elements, the smallest ones skip the grouping and join the nearest of t
 
 ## UV Editor pane
 
-A tab behind the Node Graph in the default layout. It draws the UVs of the selected node, with seams marked, and reports islands, triangles, tiles and how much of them is used. Every tile in use is drawn with its UDIM number, and the view fits them when the set of tiles changes.
+A tab behind the Viewport in the default layout. It draws the UVs of the selected node, with seams marked, and reports islands, triangles, tiles and how much of them is used. Every tile in use is drawn with its UDIM number, and the view fits them when the set of tiles changes.
 
 | To | Do this |
 |---|---|

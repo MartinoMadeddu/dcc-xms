@@ -1,6 +1,6 @@
 # Undo and the History pane
 
-![The History pane, behind the Operator Stack: a moved node, a Bevel changed, a bypass, and two undone steps kept as a branch](xms_history.png)
+![The History pane: a moved node, a Bevel changed, a bypass, and two undone steps kept as a branch](xms_history.png)
 
 ## What is undone
 

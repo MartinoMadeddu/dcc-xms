@@ -77,28 +77,20 @@ pub struct Layout {
     pub tab_drag: Option<(Pane, bool)>,
 }
 
-/// Viewport on the left with the inspector under it, then the node graph,
-/// the scene and stack column, and the properties. Timeline along the bottom.
-/// The UV editor is a tab behind the node graph, the history a tab behind
-/// the operator stack.
+/// Scene Explorer in a narrow column at the far left, the viewport beside
+/// it with the UV editor as a tab behind, the primitive inspector under
+/// both. Then the node graph, then the properties over the operator stack.
+/// Timeline along the bottom of those, History down the whole right side.
 pub fn default_dock() -> DockState<Pane> {
-    let mut dock = DockState::new(vec![Pane::Viewport]);
+    let mut dock = DockState::new(vec![Pane::Viewport, Pane::UvEditor]);
     let s = dock.main_surface_mut();
-    let [top, _timeline] = s.split_below(NodeIndex::root(), 0.9, vec![Pane::Timeline]);
-    let [viewport, rest] = s.split_right(top, 0.37, vec![Pane::NodeGraph]);
-    let [_graph, rest]   = s.split_right(rest, 0.57, vec![Pane::SceneExplorer]);
-    let [scene, _props]  = s.split_right(rest, 0.5, vec![Pane::Properties]);
-    s.split_below(scene, 0.5, vec![Pane::OperatorStack]);
-    s.split_below(viewport, 0.72, vec![Pane::PrimInspector]);
-    // The UV editor shares the node graph's place, as a second tab behind it.
-    if let Some((surface, node, _)) = dock.find_tab(&Pane::NodeGraph) {
-        dock[surface][node].append_tab(Pane::UvEditor);
-        dock.set_active_tab((surface, node, egui_dock::TabIndex(0)));
-    }
-    if let Some((surface, node, _)) = dock.find_tab(&Pane::OperatorStack) {
-        dock[surface][node].append_tab(Pane::History);
-        dock.set_active_tab((surface, node, egui_dock::TabIndex(0)));
-    }
+    let [work, _history]  = s.split_right(NodeIndex::root(), 0.928, vec![Pane::History]);
+    let [top, _timeline]  = s.split_below(work, 0.862, vec![Pane::Timeline]);
+    let [left, right]     = s.split_right(top, 0.476, vec![Pane::NodeGraph]);
+    let [view, _prim]     = s.split_below(left, 0.72, vec![Pane::PrimInspector]);
+    s.split_left(view, 0.163, vec![Pane::SceneExplorer]);
+    let [_graph, side]    = s.split_right(right, 0.648, vec![Pane::Properties]);
+    s.split_below(side, 0.718, vec![Pane::OperatorStack]);
     dock
 }
 
@@ -438,5 +430,48 @@ mod tests {
         let old = serde_json::to_string(&serde_json::from_str::<serde_json::Value>(&to_json(&default_dock(), false).unwrap()).unwrap()["dock"]).unwrap();
         let (dock, locked) = from_json(&old).unwrap();
         assert!(is_valid(&dock) && !locked);
+    }
+
+    /// Where each pane sits in a layout: tab order in its place, and the
+    /// fractions of the splits above it, rounded.
+    fn shape(dock: &DockState<Pane>) -> Vec<(Vec<Pane>, Vec<i32>)> {
+        let tree = &dock[egui_dock::SurfaceIndex::main()];
+        let mut out = vec![];
+        for (i, node) in tree.iter().enumerate() {
+            if let Some(tabs) = node.tabs() {
+                let mut fr = vec![];
+                let mut at = NodeIndex(i);
+                while let Some(p) = at.parent() {
+                    let f = match &tree[p] {
+                        egui_dock::Node::Horizontal { fraction, .. } | egui_dock::Node::Vertical { fraction, .. } => Some(*fraction),
+                        _ => None,
+                    };
+                    if let Some(f) = f {
+                        // The fraction is the share of the first (left or top) child.
+                        let first = p.left() == at;
+                        fr.push(((if first { f } else { 1.0 - f }) * 100.0).round() as i32);
+                    }
+                    at = p;
+                }
+                out.push((tabs.to_vec(), fr));
+            }
+        }
+        out.sort_by_key(|(t, _)| format!("{t:?}"));
+        out
+    }
+
+    /// The default is the layout Simon arranged, saved from the program.
+    #[test]
+    fn the_default_layout_is_the_arranged_one() {
+        let Ok(text) = std::fs::read_to_string(std::env::var("XMS_LAYOUT_FILE").unwrap_or_default()) else { return };
+        let (theirs, _) = from_json(&text).unwrap();
+        assert_eq!(shape(&default_dock()), shape(&theirs));
+    }
+
+    #[test]
+    fn the_default_layout_has_every_pane_once() {
+        let d = default_dock();
+        assert!(is_valid(&d));
+        assert_eq!(d.iter_all_tabs().count(), Pane::ALL.len());
     }
 }
