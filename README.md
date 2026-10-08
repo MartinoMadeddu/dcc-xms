@@ -2,15 +2,17 @@
 
 **A node-based 3D application written in Rust.** Model, import, animate and export, with every step a node you can go back and change.
 
-This is Simon Legrand's fork of [MartinoMadeddu/xms-imago](https://github.com/MartinoMadeddu/xms-imago), the project Martino Madeddu started. It adds polygon modelling, UV unwrapping, motion capture tools and a dockable interface on top of his node graph.
+Created by [Martino Madeddu](https://github.com/MartinoMadeddu). Additional development by [Simon Legrand](https://github.com/srlegrand).
 
-![The sea mine template: eleven Edit Poly operations on one cube, about 9,600 polygons](docs/xms_sea_mine.png)
+![XMS | Imago with the sea mine template: one Edit Poly node, eleven operations on a cube, 9,600 polygons](docs/xms_imago.png)
 
-![Splash](assets/splash.png)
+**[xms | imago website](https://martinomadeddu.github.io/xms-imago/)** · **[Download a build](https://github.com/MartinoMadeddu/xms-imago/releases)** for Linux, macOS or Windows, pick a template, and start changing numbers.
 
-**[xms | imago website](https://srlegrand.github.io/xms-imago/)** · **[Download a build](https://github.com/srlegrand/xms-imago/releases)** for Linux, macOS or Windows, pick a template, and start changing numbers.
+[![The website](docs/xms_site.png)](https://martinomadeddu.github.io/xms-imago/)
 
-[![The website](docs/xms_site.png)](https://srlegrand.github.io/xms-imago/)
+## About
+
+A work in progress, started as a way of learning Rust. Big chunks of the project, sometimes entire modules, were written with AI and will be replaced moving forward.
 
 ## Everything stays live
 
@@ -77,7 +79,7 @@ Load a folder of FBX takes, split the characters, fix the pose, skin a proxy and
 
 The actor sat on a box. The character sits in a car, with its hips in the cushion and its feet under the floor. Wire the take and the set into a Ragdoll node and press Solve: the character is kept out of the set and out of itself, joints give way as far as each may, and no bone changes length. Where the capture walks the character through a door that was not there on the day, it follows the capture through and is caught again on the other side.
 
-A take of 12,227 frames against a car of 1.7 million triangles solves in under five minutes on two cores, a chunk of frames at a time. See [docs/ragdoll.md](docs/ragdoll.md).
+A take of 12,227 frames against a car of 1.7 million triangles solves in under five minutes on two cores, a chunk of frames at a time. The "Ragdoll: into the car" template ships with that take, the car and the solved result, so it opens solved. See [docs/ragdoll.md](docs/ragdoll.md).
 
 ![Ragdoll: the take in the car](docs/xms_ragdoll.png)
 
@@ -116,7 +118,7 @@ A take of 12,227 frames against a car of 1.7 million triangles solves in under f
 
 ## Get it
 
-**Download:** binaries for Linux, macOS and Windows are built from every change to `main` and published on the [Releases page](https://github.com/srlegrand/xms-imago/releases). See [docs/releases.md](docs/releases.md).
+**Download:** binaries for Linux, macOS and Windows are built from every change to `main` and published on the [Releases page](https://github.com/MartinoMadeddu/xms-imago/releases). See [docs/releases.md](docs/releases.md).
 
 **Build from source:**
 
@@ -146,18 +148,13 @@ On Ubuntu or Debian, first:
 
 ## Example files
 
-The USD model in `examples/DeLorean.usdz` is by VTX (https://sketchfab.com/VTX_car), under CC BY-NC-SA 4.0, included with the permission of its author. See `examples/CREDITS.md`.
+- `examples/DeLorean.usdz` is by VTX (https://sketchfab.com/VTX_car), under CC BY-NC-SA 4.0, included with the permission of its author. See `examples/CREDITS.md`.
+- `examples/ragdoll/` holds Simon Legrand's take and car for the ragdoll template, in the program's compact `.xmsclip` and `.xmsmesh` formats, with the solved result. `examples/ragdoll/split/into_the_car_.fbx` is frames 1200 to 9199 of the take as FBX. See [examples/ragdoll/README.md](examples/ragdoll/README.md).
 
 ## Credit
 
-XMS was created by [Martino Madeddu](https://github.com/MartinoMadeddu). The node graph, the viewport, the ICE subnets, the USD loader and the look of the interface are his. The first animation work from this fork was merged upstream in [pull request #3](https://github.com/MartinoMadeddu/xms-imago/pull/3); the rest is proposed in [pull request #4](https://github.com/MartinoMadeddu/xms-imago/pull/4).
+XMS was created by [Martino Madeddu](https://github.com/MartinoMadeddu): the node graph, the viewport, the ICE subnets, the USD loader and the look of the interface.
 
----
+Additional development by [Simon Legrand](https://github.com/srlegrand): polygon modelling, UV, USD at production size, motion capture, the ragdoll solver, the dockable interface and the website.
 
-## Original README
-
-WIP 3d application written in Rust as part of learning the language -
-The project currently has big chunks and sometimes entire modules written with AI which will be replaced moving forward.
-
-XMS UI sccreengrab
-<img width="2055" height="1286" alt="xms_main_ui1" src="https://github.com/user-attachments/assets/33300420-038c-4770-bd21-e664a7c00303" />
+![The first XMS interface](https://github.com/user-attachments/assets/33300420-038c-4770-bd21-e664a7c00303)

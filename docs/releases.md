@@ -1,6 +1,6 @@
 # Builds and releases
 
-Every push to `main` that changes code is built by GitHub Actions for Linux, macOS and Windows, and published on the [Releases page](https://github.com/srlegrand/xms-imago/releases) as "Build N". Changes to documentation alone do not trigger a build.
+Every push to `main` that changes code is built by GitHub Actions for Linux, macOS and Windows, and published on the [Releases page](https://github.com/MartinoMadeddu/xms-imago/releases) as "Build N". Changes to documentation alone do not trigger a build.
 
 | File | Platform |
 |---|---|
@@ -27,7 +27,7 @@ On Ubuntu or Debian, first:
 
 ## Website
 
-The page at https://srlegrand.github.io/xms-imago/ is the `site/` folder of the repository, published by `.github/workflows/pages.yml` on every push to `main` that touches the site, the screenshots in `docs/` or the artwork in `assets/`.
+The page at https://martinomadeddu.github.io/xms-imago/ is the `site/` folder of the repository, published by `.github/workflows/pages.yml` on every push to `main` that touches the site, the screenshots in `docs/` or the artwork in `assets/`.
 
 The downloads are in four places: a bar that stays at the top of the window, whose button fetches the build for the visitor's machine, a band of four large buttons under the cover, the cover disk, and a second band at the end. Its download buttons point at `releases/latest/download/<file>`, so they always fetch the newest build without the page being touched. The page also names the newest build, from GitHub's public record of it.
 

@@ -10,4 +10,4 @@
 - [Ragdoll](ragdoll.md): keeping a captured character out of a set and out of itself
 - [Builds and releases](releases.md): where the binaries come from
 
-These pages describe the fork at [srlegrand/xms-imago](https://github.com/srlegrand/xms-imago). They are updated with every change.
+These pages describe [MartinoMadeddu/xms-imago](https://github.com/MartinoMadeddu/xms-imago). They are updated with every change.
