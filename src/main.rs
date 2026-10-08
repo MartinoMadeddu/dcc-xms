@@ -1070,50 +1070,6 @@ fn draw_clip_skeleton(clip: &core::anim::AnimData, time: f64, gizmos: &mut Gizmo
     }
 }
 
-// ── Skeleton display ──────────────────────────────────────────────────────────
-// Draws the clip of the viewed node (view flag, else Output) at the playhead.
-
-fn setup_gizmos(mut store: ResMut<GizmoConfigStore>) {
-    let (config, _) = store.config_mut::<DefaultGizmoConfigGroup>();
-    config.line_width = 2.5;
-    config.depth_bias = -1.0;   // draw over the ground grid and meshes
-}
-
-fn draw_skeleton(
-    graph:      Res<NodeGraphState>,
-    playback:   Res<Playback>,
-    mut gizmos: Gizmos,
-) {
-    let Some(id)   = graph.display_source() else { return };
-    let Some(clip) = graph.eval_anim(id)    else { return };
-    if clip.joints.is_empty() { return; }
-
-    let pose = clip.world_pose(clip.index_at(playback.time));
-    let pos: Vec<Vec3> = pose.iter().map(|m| m.w_axis.truncate()).collect();
-
-    // Marker size follows the skeleton, so centimetre and metre rigs both read.
-    let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
-    for p in &pos { lo = lo.min(*p); hi = hi.max(*p); }
-    let r = ((hi - lo).max_element() * 0.012).max(1e-4);
-
-    let bone_col  = Color::srgb(0.95, 0.82, 0.35);
-    let joint_col = Color::srgb(0.95, 0.95, 0.95);
-    for (j, joint) in clip.joints.iter().enumerate() {
-        match joint.parent {
-            Some(p) => { gizmos.line(pos[p], pos[j], bone_col); }
-            None => {
-                // Root: small axis tripod showing its orientation.
-                let m = pose[j];
-                let l = r * 5.0;
-                gizmos.line(pos[j], pos[j] + m.x_axis.truncate().normalize_or_zero() * l, Color::srgb(1.0, 0.2, 0.2));
-                gizmos.line(pos[j], pos[j] + m.y_axis.truncate().normalize_or_zero() * l, Color::srgb(0.2, 1.0, 0.2));
-                gizmos.line(pos[j], pos[j] + m.z_axis.truncate().normalize_or_zero() * l, Color::srgb(0.3, 0.5, 1.0));
-            }
-        }
-        gizmos.sphere(pos[j], Quat::IDENTITY, r, joint_col).resolution(8);
-    }
-}
-
 fn apply_viewport_rect(
     vp_rect:   Res<ViewportRect>,
     windows:   Query<&Window>,

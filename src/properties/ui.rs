@@ -51,15 +51,6 @@ pub struct PanelIo<'a> {
     pub tool: &'a mut Tool,
 }
 
-/// Clips around the selected node and the playhead, so animation nodes can
-/// show what they receive and set parameters from the current frame.
-pub struct AnimContext {
-    /// Playhead on the timecode axis, seconds.
-    pub time:   f64,
-    pub output: Option<Arc<AnimData>>,
-    pub input:  Option<Arc<AnimData>>,
-}
-
 pub fn draw_properties_panel(
     ui:      &mut egui::Ui,
     graph:   &mut NodeGraphState,

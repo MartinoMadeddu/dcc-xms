@@ -575,21 +575,6 @@ impl NodeGraphState {
                 }
             }
         }
-
-        // Animation: show the skeleton that reaches Output, after every
-        // operator, so renames are visible in the explorer.
-        if let Some(src) = self.nodes.iter()
-            .find(|n| matches!(n.node_type, NodeType::Output))
-            .and_then(|n| n.inputs.first())
-            .and_then(|i| i.connected_output)
-            .map(|(src, _)| src)
-        {
-            if let Some(Some(r @ EvalResult::Anim(_))) = cache.get(&src) {
-                if let Some(n) = self.nodes.iter().find(|n| n.id == src) {
-                    out.push((n.id, n.name.clone(), r.clone()));
-                }
-            }
-        }
         out
     }
 
