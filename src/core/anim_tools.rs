@@ -228,6 +228,14 @@ impl AnimData {
             Quat::from_euler(bevy::math::EulerRot::YXZ, rotate_deg.y.to_radians(), rotate_deg.x.to_radians(), rotate_deg.z.to_radians()),
             translate,
         );
+        self.moved(x)
+    }
+
+    /// The whole clip moved by `x`, in world space. Only the joints at the
+    /// top of the hierarchy change; everything under them follows. A mesh
+    /// skinned to the skeleton is left as it is: it follows the joints when
+    /// it is posed, and moving it as well would move it twice.
+    pub fn moved(&self, x: Mat4) -> AnimData {
         let n = self.frame_count();
         let mut tracks: Vec<Track> = (*self.tracks).clone();
         let mut joints = self.joints.clone();
@@ -236,7 +244,7 @@ impl AnimData {
             tracks[j] = (0..n).map(|i| Transform::from_matrix(x * self.local(j, i).compute_matrix())).collect();
             joints[j].rest = Transform::from_matrix(x * self.joints[j].rest.compute_matrix());
         }
-        AnimData { joints, tracks: Arc::new(tracks), skin: None, ..self.clone() }
+        AnimData { joints, tracks: Arc::new(tracks), ..self.clone() }
     }
 
     // ── Blend ────────────────────────────────────────────────────────────────
@@ -590,6 +598,22 @@ mod tests {
         }
         assert!((c.floored(0.5).lowest_point() - 0.5).abs() < 1e-4);
         assert!(c.floored(0.0).lowest_point().abs() < 1e-4);
+    }
+
+    /// A skinned clip moved: the posed mesh moves once, with its skeleton.
+    #[test]
+    fn a_moved_clip_carries_its_skin_once() {
+        let c = clip().with_proxy_skin(1.0);
+        let x = Mat4::from_scale_rotation_translation(Vec3::splat(1.5), Quat::from_rotation_y(0.7), Vec3::new(2.0, 0.5, -1.0));
+        let m = c.moved(x);
+        assert!(m.skin.is_some(), "the skin is kept");
+        for f in [0, 17] {
+            let (a, _) = c.skin.as_ref().unwrap().deformed(&c.world_pose(f));
+            let (b, _) = m.skin.as_ref().unwrap().deformed(&m.world_pose(f));
+            for (p, q) in a.iter().zip(&b) {
+                assert!(close(x.transform_point3(*p), *q, 1e-4), "{q} should be {}", x.transform_point3(*p));
+            }
+        }
     }
 
     #[test]

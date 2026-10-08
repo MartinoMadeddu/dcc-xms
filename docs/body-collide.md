@@ -1,18 +1,17 @@
-# Ragdoll: collision cleanup for motion capture
+# Body Collide: collision cleanup for motion capture
 
-A captured performance does not know about the set. The actor sat on a box, the character sits in a car, and the hips are in the cushion, the feet under the floor and a forearm through a thigh. The Ragdoll node keeps the character out of a collider mesh and out of itself, and changes the capture as little as that takes.
+A captured performance does not know about the set. The actor sat on a box, the character sits in a car, and the hips are in the cushion, the feet under the floor and a forearm through a thigh. The Body Collide node keeps the character out of a collider mesh and out of itself, and changes the capture as little as that takes. Underneath it is a ragdoll: a rigid body per bone, joined at the joints.
 
-![The Ragdoll template: the take in the car, the set see-through, the report in the panel](xms_ragdoll.png)
+![Body Collide on the take in the car, showing the hulls it collides, the set see-through, the settings in the panel](xms_body_collide.png)
 
-## The three nodes
+## The nodes
 
-All three are under Animation & Mocap in the add menu.
+| Node | Menu | Does |
+|---|---|---|
+| Load FBX Mesh | File | Reads every mesh of an FBX file, where it stands, as packed primitives. For the set. |
+| Body Collide | Mocap | First input a clip, second input a collider mesh. Puts out the clip, kept out of the collider. |
 
-| Node | Does |
-|---|---|
-| Load FBX Mesh | Reads every mesh of an FBX file, where it stands, as packed primitives. For the set. |
-| Calamari | Cuts the skin into rigid pieces, one per body, or shows the convex hull of each piece. For looking at what will collide. |
-| Ragdoll | First input a clip, second input a collider mesh. Puts out the clip, kept out of the collider. |
+**Display** in the node's properties chooses what the viewport draws of the character: its **Skin**, the skin cut into rigid **Pieces**, one per body, or the convex **Hulls** the solver collides. It changes the drawing only: the node puts out the clip with its skin either way. Graphs saved with the old Calamari node open with that node gone and its choice moved here.
 
 Load FBX now reads a mesh bound to the skeleton, with its weights, and the viewport draws it bending with the joints. Write FBX writes the weights back.
 
@@ -21,7 +20,7 @@ Any mesh can be the collider: a model from Load FBX Mesh or Load USD, a cube, an
 ## Using it
 
 1. Load the take with **Load FBX** and the set with **Load FBX Mesh**. They must already be lined up: the node moves the character, not the set.
-2. Wire the take to the first input of a **Ragdoll** node and the set to the second. Put the view flag on the Ragdoll node. The set is drawn see-through, with the character inside.
+2. Wire the take to the first input of a **Body Collide** node and the set to the second. Put the view flag on the node. The set is drawn see-through, with the character inside.
 3. Press **Solve** in the properties of the node. A bar shows frames done, frames a second and time left. **Stop** stops it.
 4. When it is done the node puts out the solved clip. Scrub it. Wire it on to Write FBX like any clip.
 
@@ -29,7 +28,7 @@ The node solves nothing by itself. Until Solve has run for exactly the clip, col
 
 ## The template
 
-**Ragdoll: into the car** is the take this was built on: an actor who walks through a car and sits in it for six minutes. The take, the car and the solved result ship with the program, in `examples/ragdoll`, and the template opens solved, with no wait. Change a setting and it has to be solved again.
+**Body Collide: into the car** is the take this was built on: an actor who walks through a car and sits in it for six minutes. The take, the car and the solved result ship with the program, in `examples/ragdoll`, and the template opens solved, with no wait. Change a setting and it has to be solved again.
 
 As FBX the take is 205 MB and the car 99 MB, more than GitHub takes in one file. They ship in two compact formats of the program's own:
 
@@ -58,7 +57,7 @@ Load FBX reads `.xmsclip` and Load FBX Mesh reads `.xmsmesh`, by the extension. 
 
 ## When it cannot be resolved
 
-**Walking through the set.** Where the capture takes the trunk through a surface, its middle across one or more than half of it behind one, the character cannot be kept out. The solver sees this ahead of time. Collisions fade out before it, the character follows the capture through, and collisions fade in after. The panel lists these stretches with their timecode.
+**Walking through the set.** Where the capture takes the trunk through a surface, its middle across one or more than half of it behind one, the character cannot be kept out. The solver sees this ahead of time. Collisions fade out before it, the character follows the capture through, and collisions fade in after. The Solve group lists these stretches with their timecode.
 
 **Sunk deep.** The trunk is moved out of the collider by a set distance at most. Sunk deeper than that in the capture, it is moved that far and left in by the rest. A trunk sunk a little in a seat is lifted onto it. One sunk deep is not thrown across the car.
 
@@ -76,20 +75,21 @@ The program still holds a clip as a whole once it is loaded, and the solved clip
 
 ## Settings
 
-| Setting | Default | Does |
-|---|---|---|
-| Soft margin | 1.2 cm | Distance from a surface at which pushing starts |
-| Friction | 0.5 | How much a body pressed into a surface resists sliding along it |
-| Release speed | 60 cm/s | How fast a body is pushed out, and how fast it comes back |
-| Collide with itself | on | |
-| Its parts may overlap by | 3 cm | Convex hulls are fatter than the skin. Less than this is not a collision |
-| Hull detail | Medium | Spacing of the points on the hulls: 3.5, 2.5 or 1.8 cm |
-| Stiffness | 1 | How firmly bodies hold to the capture |
-| Limb lets go at | 45 cm | |
-| Even out over | 2 frames each side | 0 turns it off |
-| Trunk is moved at most | 12 cm | |
-| Trunk may rest in a surface by | 0 cm | A seat gives under a sitter |
-| Fade out, fade in | 6, 10 frames | Around a stretch the trunk passes through the set |
+| Group | Setting | Default | Does |
+|---|---|---|---|
+| Display | Show | Skin | What the viewport draws of the character: Skin, Pieces or Hulls |
+| Contact | Margin | 1.2 cm | Distance from a surface at which pushing starts |
+| | Friction | 0.5 | How much a body pressed into a surface resists sliding along it |
+| | Release speed | 60 cm/s | How fast a body is pushed out, and how fast it comes back |
+| | Self collision | on | Keep the character out of itself |
+| | Self overlap | 3 cm | Convex hulls are fatter than the skin. Less than this is not a collision |
+| | Hull detail | Medium | Spacing of the points on the hulls: 3.5, 2.5 or 1.8 cm |
+| Capture | Stiffness | 1 | How firmly bodies hold to the capture |
+| | Limb release | 45 cm | A limb further than this from its capture lets go |
+| | Smoothing | 2 frames each side | 0 turns it off |
+| Trunk | Max lift | 12 cm | How far the trunk is moved out at most |
+| | Rest depth | 0 cm | A seat gives under a sitter |
+| Pass through | Fade out, Fade in | 6, 10 frames | Around a stretch the trunk passes through the set |
 
 ## Measured
 

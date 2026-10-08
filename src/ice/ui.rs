@@ -64,62 +64,32 @@ pub fn draw_breadcrumb(ui: &mut egui::Ui, subnet_name: &str) -> bool {
 
 // ── Subnet node properties ────────────────────────────────────────────────────
 
+/// The parameters of a node inside an ICE subnet, laid out like every
+/// other node's (see `properties::form`).
 pub fn draw_subnet_node_properties(ui: &mut egui::Ui, graph: &mut SubnetGraph) {
-    ui.heading("Properties");
-    ui.separator();
-    let sel = match graph.selected_node {
-        Some(s) => s,
-        None => { ui.label("No node selected."); return; }
+    use crate::properties::form::{group, Status};
+    let Some(node) = graph.selected_node.and_then(|s| graph.nodes.iter_mut().find(|n| n.id == s)) else {
+        ui.label("Select a node to see its parameters.");
+        return;
     };
-    let node = match graph.nodes.iter_mut().find(|n| n.id == sel) {
-        Some(n) => n,
-        None    => { ui.label("No node selected."); return; }
-    };
-    ui.label(format!("Node: {}", node.name));
-    ui.separator();
+    let title = format!("{}  {}", crate::types::subnet_node_icon(&node.node_type), crate::types::subnet_node_label(&node.node_type));
+    group(ui, &title, None, |f| { f.text("Name", None, &mut node.name, ""); });
     match &mut node.node_type {
-        SubnetNodeType::ConstVec3 { value } => {
-            ui.label("Constant Vec3");
-            ui.horizontal(|ui| {
-                ui.label("X:"); ui.add(egui::DragValue::new(&mut value.x).speed(0.01));
-                ui.label("Y:"); ui.add(egui::DragValue::new(&mut value.y).speed(0.01));
-                ui.label("Z:"); ui.add(egui::DragValue::new(&mut value.z).speed(0.01));
-            });
-        }
-        SubnetNodeType::ConstFloat { value } => {
-            ui.label("Constant Float");
-            ui.add(egui::DragValue::new(value).speed(0.01));
-        }
-        SubnetNodeType::ConstInt { value } => {
-            ui.label("Constant Integer");
-            ui.add(egui::DragValue::new(value).speed(1));
-        }
-        SubnetNodeType::MultiplyVec3 { scalar } => {
-            ui.label("Multiply Vec3");
-            ui.horizontal(|ui| {
-                ui.label("Scalar:");
-                ui.add(egui::DragValue::new(scalar).speed(0.01));
-            });
-        }
-        SubnetNodeType::LerpVec3 { t } => {
-            ui.label("Lerp Vec3");
-            ui.add(egui::Slider::new(t, 0.0..=1.0).text("t"));
-        }
-        SubnetNodeType::ScatterPoints { count, seed } => {
-            ui.label("Scatter Points");
-            ui.horizontal(|ui| {
-                ui.label("Count:");
-                ui.add(egui::DragValue::new(count).speed(1).range(1..=10000));
-            });
-            ui.horizontal(|ui| {
-                ui.label("Seed:");
-                ui.add(egui::DragValue::new(seed).speed(1));
-            });
-        }
-        SubnetNodeType::SubInput  => { ui.label("Subnet Input — no parameters.");  }
-        SubnetNodeType::SubOutput => { ui.label("Subnet Output — no parameters."); }
-        _ => { ui.label("No editable parameters."); }
-
+        SubnetNodeType::ConstVec3 { value } => group(ui, "Value", None, |f| {
+            let mut v = value.to_array();
+            if f.xyz("Value", None, &mut v, 0.01, "") { *value = bevy::math::Vec3::from_array(v); }
+        }),
+        SubnetNodeType::ConstFloat { value } => group(ui, "Value", None, |f| { f.drag("Value", None, value, 0.01, ""); }),
+        SubnetNodeType::ConstInt { value } => group(ui, "Value", None, |f| {
+            f.row("Value", None, |ui| ui.add(egui::DragValue::new(value).speed(1)));
+        }),
+        SubnetNodeType::MultiplyVec3 { scalar } => group(ui, "Multiply", None, |f| { f.drag("Scalar", None, scalar, 0.01, ""); }),
+        SubnetNodeType::LerpVec3 { t } => group(ui, "Blend", None, |f| { f.slider("Amount", None, t, 0.0..=1.0, ""); }),
+        SubnetNodeType::ScatterPoints { count, seed } => group(ui, "Points", None, |f| {
+            f.slider_u32("Count", None, count, 1..=10_000, "");
+            f.row("Seed", None, |ui| ui.add(egui::DragValue::new(seed).speed(1)));
+        }),
+        _ => group(ui, "Parameters", None, |f| f.status(Status::Info, "None")),
     }
 }
 

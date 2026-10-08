@@ -44,12 +44,12 @@ The Templates menu in the node graph header holds ready-made graphs. Picking one
 
 | Template | Shows |
 |---|---|
-| Clip basics | Test Clip, Rename Joints, Trim Clip, Retime and Set Timecode in a chain. Select each node to see the timeline follow |
+| Clip basics | Test Clip, Rename Joints, Trim, Retime and Set Timecode in a chain. Select each node to see the timeline follow |
 | FBX import | The example take loaded with Load FBX and trimmed by a second at each end |
 | T-pose and export | Auto T-Pose, Fix Pose lowering the arms, Proxy Skin and Write FBX |
 | Mocap tools | A character of the example take through the clip tool nodes |
 | Retarget | A character of the example take driving the test skeleton, which rests in another pose |
-| Ragdoll: into the car | A captured actor walks through a car and sits in it, kept out of the seat, the floor and himself. Opens solved. See [Ragdoll](ragdoll.md) |
+| Body Collide: into the car | A captured actor walks through a car and sits in it, kept out of the seat, the floor and himself. Opens solved. See [Body Collide](body-collide.md) |
 | Mocap split (example takes) | The mocap split graph on the example folder: one take of two characters |
 | Mocap split | The same graph with no folder set |
 

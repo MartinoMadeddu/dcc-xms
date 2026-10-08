@@ -4,7 +4,7 @@ pub mod ui;
 use std::collections::HashMap;
 use bevy::prelude::*;
 use bevy_egui::egui;
-use crate::types::{ConnectionId, EvalResult, MeshData, NodeId, NodeType, SubnetId};
+use crate::types::{BodyView, ConnectionId, EvalResult, MeshData, NodeId, NodeType, SubnetId};
 use nodes::evaluate_node_type;
 
 /// Results of one evaluation pass, per node output socket.
@@ -496,6 +496,11 @@ impl NodeGraphState {
                 self.eval_anim_node(src, out, cache, eval_subnet)
             }
             t if t.is_anim() => self.eval_node_out(id, output, cache, eval_subnet),
+            // Transform passes a clip on when it is given one.
+            NodeType::Transform { .. } => match self.eval_node_out(id, output, cache, eval_subnet) {
+                Some(r @ EvalResult::Anim(_)) => Some(r),
+                _ => None,
+            },
             NodeType::Output => {
                 let (src, out) = node.inputs.first()?.connected_output?;
                 self.eval_anim_node(src, out, cache, eval_subnet)
@@ -616,7 +621,7 @@ impl NodeGraphState {
     pub fn display_clips(&self) -> Vec<std::sync::Arc<crate::core::anim::AnimData>> {
         let Some(id) = self.get_viewport_node() else { return vec![] };
         let Some(node) = self.nodes.iter().find(|n| n.id == id) else { return vec![] };
-        match &node.node_type {
+        let clips: Vec<_> = match &node.node_type {
             NodeType::Output => node.inputs.first()
                 .and_then(|i| i.connected_output)
                 .and_then(|(src, out)| self.eval_anim_out(src, out))
@@ -624,22 +629,46 @@ impl NodeGraphState {
             NodeType::SplitSkeleton { picks } =>
                 (0..picks.len()).filter_map(|o| self.eval_anim_out(id, o)).collect(),
             _ => self.eval_anim(id).into_iter().collect(),
+        };
+        // Body Collide can show the bodies it collides instead of the skin.
+        let bodies = self.body_collide_node().and_then(|n| match &n.node_type {
+            NodeType::Ragdoll { settings, view } => Some((*view, settings.detail)), _ => None,
+        });
+        match bodies {
+            Some((view @ (BodyView::Pieces | BodyView::Hulls), detail)) => {
+                clips.into_iter().map(|c| {
+                    let key = format!("bodies:{view:?}:{detail}");
+                    crate::core::anim::memo(&key, Some(&c), || Some(crate::ragdoll::calamari(&c, view == BodyView::Hulls, detail))).unwrap_or(c)
+                }).collect()
+            }
+            _ => clips,
         }
+    }
+
+    /// The Body Collide node the viewed clip comes through, if any: the
+    /// viewed node itself or the nearest one upstream along clips.
+    fn body_collide_node(&self) -> Option<&GraphNode> {
+        let mut id = self.display_source()?;
+        let mut node = self.nodes.iter().find(|n| n.id == id)?;
+        for _ in 0..64 {
+            if !node.node_type.passes_clips() { return None; }
+            if matches!(node.node_type, NodeType::Ragdoll { .. }) && !node.bypassed { return Some(node); }
+            id = node.inputs.first()?.connected_output?.0;
+            node = self.nodes.iter().find(|n| n.id == id)?;
+        }
+        None
+    }
+
+    /// What the viewport draws of the character: set on that Body Collide node.
+    pub fn body_view(&self) -> Option<BodyView> {
+        match &self.body_collide_node()?.node_type { NodeType::Ragdoll { view, .. } => Some(*view), _ => None }
     }
 
     /// The mesh the viewed clip was kept out of, to draw with it: the
     /// collider of the Ragdoll node that is viewed, or of the nearest one
     /// upstream of the viewed node.
     pub fn display_collider(&self) -> Option<std::sync::Arc<MeshData>> {
-        let mut id = self.display_source()?;
-        let mut node = self.nodes.iter().find(|n| n.id == id)?;
-        for _ in 0..64 {
-            if !node.node_type.is_anim() { return None; }
-            if matches!(node.node_type, NodeType::Ragdoll { .. }) && !node.bypassed { break; }
-            id = node.inputs.first()?.connected_output?.0;
-            node = self.nodes.iter().find(|n| n.id == id)?;
-        }
-        if !matches!(node.node_type, NodeType::Ragdoll { .. }) { return None; }
+        let node = self.body_collide_node()?;
         let (src, out) = node.inputs.get(1)?.connected_output?;
         let passthrough = |_: SubnetId, mesh: &MeshData, _: Option<&MeshData>| mesh.clone();
         self.eval_node_out(src, out, &mut HashMap::new(), &passthrough).map(|r| r.shared_mesh())

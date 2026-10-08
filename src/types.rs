@@ -68,6 +68,10 @@ pub enum NodeType {
     PrunePrims   { pattern: String, keep: bool },
     /// Merge packed primitives into one mesh.
     UnpackPrims,
+    /// Moves whatever comes in: a mesh, packed primitives (the picked ones,
+    /// or every one), or a clip. A clip moves by its top joints, so a skinned
+    /// mesh follows its skeleton once and is not moved a second time.
+    /// `rotation` in radians, applied X then Y then Z.
     Transform    {
         #[serde(with = "vec3_array")] translation: Vec3,
         #[serde(with = "vec3_array")] rotation:    Vec3,
@@ -115,7 +119,8 @@ pub enum NodeType {
     SmoothClip   { radius: u32, amount: f32, translations: bool },
     /// Hold the hips over their starting point.
     InPlace      { keep_height: bool, to_root: bool },
-    /// Move, turn (degrees) and scale the whole clip.
+    /// Graphs saved before Transform took clips. Read, then turned into a
+    /// Transform node (`graph_io`).
     TransformClip { translate: [f32; 3], rotate: [f32; 3], scale: f32 },
     /// First input followed by the second, cross-faded over `blend` frames.
     BlendClips   { blend: u32, align: bool },
@@ -132,11 +137,14 @@ pub enum NodeType {
     // ── Ragdoll ──────────────────────────────────────────────────────────────
     /// Every mesh of an FBX file, as packed primitives: a set to collide with.
     LoadFbxMesh  { path: String },
-    /// The skin cut into rigid pieces, one per body, or their convex hulls.
+    /// Graphs saved before Body Collide showed its own bodies. Read, then
+    /// folded into the Body Collide node before it (`graph_io`).
     Calamari     { hulls: bool, detail: u32 },
-    /// Keeps the character out of a collider mesh and out of itself.
-    /// Solving is started from the properties panel.
-    Ragdoll      { settings: crate::ragdoll::Settings },
+    /// Body Collide: keeps the character out of a collider mesh and out of
+    /// itself. Solving is started from the properties panel. Saved under its
+    /// first name, so older graphs open. `view` is what the viewport draws
+    /// of the character, not what the node puts out.
+    Ragdoll      { settings: crate::ragdoll::Settings, #[serde(default)] view: BodyView },
 
     // ── UV ───────────────────────────────────────────────────────────────────
     /// Make texture coordinates. `angle` (degrees) limits how far a chart's
@@ -165,6 +173,18 @@ pub enum NodeType {
     },
 }
 
+/// What the viewport draws of a character that Body Collide works on.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum BodyView {
+    /// Its skin, as the clip carries it.
+    #[default]
+    Skin,
+    /// The skin cut into one rigid piece per body.
+    Pieces,
+    /// The convex hull of each body, as the solver collides it.
+    Hulls,
+}
+
 /// What one output of the Split node keeps.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum SplitPick {
@@ -190,6 +210,9 @@ impl NodeType {
         matches!(self, NodeType::LoadFbx { .. } | NodeType::LoadFbxDir { .. } | NodeType::TestClip { .. })
     }
 
+    /// Nodes a clip goes through: the clip nodes, and Transform.
+    pub fn passes_clips(&self) -> bool { self.is_anim() || matches!(self, NodeType::Transform { .. }) }
+
     /// Nodes whose output is a clip.
     pub fn is_anim(&self) -> bool {
         self.is_anim_generator() || matches!(self,
@@ -206,15 +229,15 @@ impl NodeType {
 pub fn node_type_icon(t: &NodeType) -> &'static str {
     match t {
         NodeType::CreateCube { .. }    => "◼",
-        NodeType::CreateSphere { .. }  => "●",
+        NodeType::CreateSphere { .. }  => "⚪",
         NodeType::CreateGrid { .. }    => "⊞",
         NodeType::LoadUsd { .. }       => "📂",
         NodeType::PickPrims { .. }     => "👆",
-        NodeType::PrunePrims { .. }    => "✂",
+        NodeType::PrunePrims { .. }    => "🚫",
         NodeType::UnpackPrims          => "📦",
         NodeType::Transform { .. }     => "⟲",
-        NodeType::Merge                => "⊕",
-        NodeType::ScatterPoints { .. } => "∷",
+        NodeType::Merge                => "➕",
+        NodeType::ScatterPoints { .. } => "✳",
         NodeType::CopyToPoints         => "❇",
         NodeType::Subnet { .. }        => "▣",
         NodeType::Output               => "▶",
@@ -224,7 +247,7 @@ pub fn node_type_icon(t: &NodeType) -> &'static str {
         NodeType::TrimClip { .. }      => "✂",
         NodeType::Retime { .. }        => "⏱",
         NodeType::SetTimecode { .. }   => "🕐",
-        NodeType::LoadFbxDir { .. }    => "📂",
+        NodeType::LoadFbxDir { .. }    => "📁",
         NodeType::SplitSkeleton { .. } => "Ψ",
         NodeType::AutoTPose { .. }     => "✚",
         NodeType::FixPose { .. }       => "🔧",
@@ -241,9 +264,9 @@ pub fn node_type_icon(t: &NodeType) -> &'static str {
         NodeType::TimeWarp { .. }      => "⏩",
         NodeType::PruneJoints { .. }   => "🌿",
         NodeType::FloorClip { .. }     => "⬇",
-        NodeType::LoadFbxMesh { .. }   => "📂",
+        NodeType::LoadFbxMesh { .. }   => "📥",
         NodeType::Calamari { .. }      => "✂",
-        NodeType::Ragdoll { .. }       => "🚶",
+        NodeType::Ragdoll { .. }       => "💥",
         NodeType::UvUnwrap { .. }      => "🗺",
         NodeType::UvTransform { .. }   => "📌",
         NodeType::UvEdit { .. }        => "✋",
@@ -252,9 +275,9 @@ pub fn node_type_icon(t: &NodeType) -> &'static str {
 
 pub fn node_type_label(t: &NodeType) -> &'static str {
     match t {
-        NodeType::CreateCube { .. }    => "Create Cube",
-        NodeType::CreateSphere { .. }  => "Create Sphere",
-        NodeType::CreateGrid { .. }    => "Create Grid",
+        NodeType::CreateCube { .. }    => "Cube",
+        NodeType::CreateSphere { .. }  => "Sphere",
+        NodeType::CreateGrid { .. }    => "Grid",
         NodeType::LoadUsd { .. }       => "Load USD",
         NodeType::PickPrims { .. }     => "Pick Primitives",
         NodeType::PrunePrims { .. }    => "Prune Primitives",
@@ -263,12 +286,12 @@ pub fn node_type_label(t: &NodeType) -> &'static str {
         NodeType::Merge                => "Merge",
         NodeType::ScatterPoints { .. } => "Scatter Points",
         NodeType::CopyToPoints         => "Copy to Points",
-        NodeType::Subnet { .. }        => "Subnet",
+        NodeType::Subnet { .. }        => "ICE",
         NodeType::Output               => "Output",
         NodeType::LoadFbx { .. }       => "Load FBX",
         NodeType::TestClip { .. }      => "Test Clip",
         NodeType::RenameJoints { .. }  => "Rename Joints",
-        NodeType::TrimClip { .. }      => "Trim Clip",
+        NodeType::TrimClip { .. }      => "Trim",
         NodeType::Retime { .. }        => "Retime",
         NodeType::SetTimecode { .. }   => "Set Timecode",
         NodeType::LoadFbxDir { .. }    => "Load FBX Folder",
@@ -282,7 +305,7 @@ pub fn node_type_label(t: &NodeType) -> &'static str {
         NodeType::SmoothClip { .. }    => "Smooth",
         NodeType::InPlace { .. }       => "In Place",
         NodeType::TransformClip { .. } => "Transform Clip",
-        NodeType::BlendClips { .. }    => "Blend Clips",
+        NodeType::BlendClips { .. }    => "Blend",
         NodeType::LoopClip { .. }      => "Loop",
         NodeType::Retarget             => "Retarget",
         NodeType::TimeWarp { .. }      => "Time Warp",
@@ -290,7 +313,7 @@ pub fn node_type_label(t: &NodeType) -> &'static str {
         NodeType::FloorClip { .. }     => "Floor",
         NodeType::LoadFbxMesh { .. }   => "Load FBX Mesh",
         NodeType::Calamari { .. }      => "Calamari",
-        NodeType::Ragdoll { .. }       => "Ragdoll",
+        NodeType::Ragdoll { .. }       => "Body Collide",
         NodeType::UvUnwrap { .. }      => "UV Unwrap",
         NodeType::UvTransform { .. }   => "UV Transform",
         NodeType::UvEdit { .. }        => "UV Edit",
@@ -321,6 +344,26 @@ pub enum SubnetNodeType {
     CopyToPoints,
 }
 
+pub fn subnet_node_label(t: &SubnetNodeType) -> &'static str {
+    match t {
+        SubnetNodeType::SubInput            => "Subnet Input",
+        SubnetNodeType::SubOutput           => "Subnet Output",
+        SubnetNodeType::AddVec3             => "Add",
+        SubnetNodeType::SubtractVec3        => "Subtract",
+        SubnetNodeType::MultiplyVec3 { .. } => "Multiply",
+        SubnetNodeType::CrossProduct        => "Cross Product",
+        SubnetNodeType::Normalize           => "Normalize",
+        SubnetNodeType::DotProduct          => "Dot Product",
+        SubnetNodeType::LerpVec3 { .. }     => "Blend",
+        SubnetNodeType::ConstVec3 { .. }    => "Vector",
+        SubnetNodeType::ConstFloat { .. }   => "Number",
+        SubnetNodeType::ConstInt { .. }     => "Integer",
+        SubnetNodeType::ScatterPoints { .. } => "Scatter Points",
+        SubnetNodeType::GetTemplate          => "Get Template",
+        SubnetNodeType::CopyToPoints         => "Copy to Points",
+    }
+}
+
 pub fn subnet_node_icon(t: &SubnetNodeType) -> &'static str {
     match t {
         SubnetNodeType::SubInput            => "▶",
@@ -335,7 +378,7 @@ pub fn subnet_node_icon(t: &SubnetNodeType) -> &'static str {
         SubnetNodeType::ConstVec3 { .. }    => "→v",
         SubnetNodeType::ConstFloat { .. }   => "→f",
         SubnetNodeType::ConstInt { .. }     => "→i",
-        SubnetNodeType::ScatterPoints { .. } => "∷",
+        SubnetNodeType::ScatterPoints { .. } => "✳",
         SubnetNodeType::GetTemplate          => "📄",
         SubnetNodeType::CopyToPoints         => "📦",
     }

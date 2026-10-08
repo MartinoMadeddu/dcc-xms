@@ -70,6 +70,32 @@ The list of recent files is kept in `recent.json` in the config folder.
 
 A new node is never left out of sight: the view moves just enough to show it. Templates are laid out with Tidy and framed when they load.
 
+### The add menu
+
+Seven categories, each a submenu, each item a node. A node has one name, the same in the menu, on the node and at the top of its properties. Hover an item for a line on what it does.
+
+| Category | Nodes |
+|---|---|
+| Create | Cube, Sphere, Grid, Test Clip |
+| File | Load USD, Load FBX, Load FBX Folder, Load FBX Mesh, Write FBX |
+| Modify | Transform, Edit Poly, Merge, Scatter Points, Copy to Points, ICE |
+| Primitives | Pick Primitives, Prune Primitives, Unpack |
+| UV | UV Unwrap, UV Transform, UV Edit |
+| Animation | Rename Joints, Trim, Retime, Set Timecode, Time Warp, Blend, Loop, Mirror, Smooth, In Place, Floor, Prune Joints |
+| Mocap | Split Characters, Retarget, Auto T-Pose, Fix Pose, Proxy Skin, Body Collide |
+
+Transform moves anything: a mesh, packed primitives (the picked ones, or each of them), or a clip. A clip moves by its top joints, so a skinned mesh follows its skeleton once and is not moved a second time.
+
+![The add menu, Animation open](xms_add_menu.png)
+
+## Properties
+
+Every node's properties are laid out the same way. The first group is the node's type and its name. Then its parameters, in titled groups. In every group a row is a label, right-aligned in a column of one width, and its value, which fills the rest: sliders, fields and lists line up down the pane. Clip nodes end with a Clip group: what comes In and what goes Out.
+
+Explanations are in tooltips, on a group's title or a row's label, so the pane holds the parameters and the state of the node and little else.
+
+The same words mean the same thing everywhere: Translate, Rotate and Scale on every transform (Transform, UV Transform, UV Edit, Fix Pose, Edit Poly's Transform); Path for every file; In and Out for what passes through. Units are in the value: m, cm, °, cm/s.
+
 ![A template after loading: laid out in rows and framed](xms_graph_layout.png)
 
 ## Node buttons

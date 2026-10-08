@@ -63,7 +63,7 @@ pub const TEMPLATES: &[Template] = &[
         hint: "The example take split, pruned, smoothed, held in place, mirrored and looped" },
     Template { group: "Animation & Mocap", name: "Retarget", build: retarget,
         hint: "A character of the example take driving the test skeleton, which rests in another pose" },
-    Template { group: "Animation & Mocap", name: "Ragdoll: into the car", build: ragdoll,
+    Template { group: "Animation & Mocap", name: "Body Collide: into the car", build: body_collide,
         hint: "A captured actor walks through a car and sits in it for six minutes, kept out of the seat, the floor and himself. Opens solved" },
     Template { group: "Animation & Mocap", name: "Mocap split (example takes)", build: mocap_example,
         hint: "The mocap split graph, pointed at the example folder with a two-character take" },
@@ -547,19 +547,17 @@ fn retarget(g: &mut NodeGraphState, _: &mut SubnetStore) -> String {
     format!("Retarget: a captured performance on the 19-joint test skeleton, which rests with its arms down. Space plays.{}", missing_examples())
 }
 
-fn ragdoll(g: &mut NodeGraphState, _: &mut SubnetStore) -> String {
+fn body_collide(g: &mut NodeGraphState, _: &mut SubnetStore) -> String {
     crate::graph_io::clear(g);
     let take  = g.add_node("Take".into(), NodeType::LoadFbx { path: examples::path(examples::RAGDOLL_TAKE), take: 0 }, p(40.0, 20.0));
     let car   = g.add_node("Car".into(), NodeType::LoadFbxMesh { path: examples::path(examples::RAGDOLL_SET) }, p(300.0, 20.0));
-    let rag   = g.add_node("Ragdoll".into(), NodeType::Ragdoll { settings: Default::default() }, p(170.0, 130.0));
-    let hulls = g.add_node("Hulls".into(), NodeType::Calamari { hulls: true, detail: 1 }, p(170.0, 230.0));
-    g.add_connection(take, 0, rag, 0);
-    g.add_connection(car, 0, rag, 1);
-    g.add_connection(rag, 0, hulls, 0);
-    view(g, rag, p(170.0, 340.0));
-    g.selected_node  = Some(rag);
-    g.selected_nodes = vec![rag];
-    format!("Ragdoll: the actor walks through the car at frame 1341 and is seated by 1473. Scrub to frame 3000: hips on the seat, feet in the footwell. Bypass the Ragdoll node to see the capture. Put the view flag on Hulls for the shapes that collide. The properties of the Ragdoll node show the solve.{}", missing_examples())
+    let body  = g.add_node("BodyCollide".into(), NodeType::Ragdoll { settings: Default::default(), view: Default::default() }, p(170.0, 130.0));
+    g.add_connection(take, 0, body, 0);
+    g.add_connection(car, 0, body, 1);
+    view(g, body, p(170.0, 240.0));
+    g.selected_node  = Some(body);
+    g.selected_nodes = vec![body];
+    format!("Body Collide: the actor walks through the car at frame 1341 and is seated by 1473. Scrub to frame 3000: hips on the seat, feet in the footwell. Bypass the node to see the capture. Display: Hulls shows the shapes that collide.{}", missing_examples())
 }
 
 fn mocap_example(g: &mut NodeGraphState, _: &mut SubnetStore) -> String {

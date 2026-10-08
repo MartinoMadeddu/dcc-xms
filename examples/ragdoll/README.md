@@ -1,4 +1,4 @@
-# Files of the Ragdoll template
+# Files of the Body Collide template
 
 | File | What |
 |---|---|

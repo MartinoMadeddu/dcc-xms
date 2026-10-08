@@ -51,7 +51,8 @@ pub fn to_json(graph: &NodeGraphState) -> String {
 /// Replace the contents of `graph` with a saved graph. View settings (pan,
 /// zoom) are kept.
 pub fn from_json(graph: &mut NodeGraphState, json: &str) -> Result<(), String> {
-    let saved: SavedGraph = serde_json::from_str(json).map_err(|e| e.to_string())?;
+    let mut saved: SavedGraph = serde_json::from_str(json).map_err(|e| e.to_string())?;
+    upgrade(&mut saved);
     if !saved.nodes.iter().any(|n| matches!(n.node_type, NodeType::Output)) {
         return Err("graph has no Output node".into());
     }
@@ -72,6 +73,41 @@ pub fn from_json(graph: &mut NodeGraphState, json: &str) -> Result<(), String> {
     }
     graph.view_flag = saved.view_flag.map(NodeId).filter(|v| graph.nodes.iter().any(|n| n.id == *v));
     Ok(())
+}
+
+/// Bring a graph saved by an older version up to date:
+/// - Transform Clip becomes Transform, which now moves clips too. The turn
+///   is the same rotation, written in Transform's convention.
+/// - Calamari goes. Its display moves onto the Body Collide node it came
+///   after, and the wires through it are joined up.
+fn upgrade(saved: &mut SavedGraph) {
+    use bevy::math::{EulerRot, Quat, Vec3};
+    for n in saved.nodes.iter_mut() {
+        if let NodeType::TransformClip { translate, rotate, scale } = n.node_type.clone() {
+            let q = Quat::from_euler(EulerRot::YXZ, rotate[1].to_radians(), rotate[0].to_radians(), rotate[2].to_radians());
+            let (x, y, z) = q.to_euler(EulerRot::XYZ);
+            n.node_type = NodeType::Transform { translation: Vec3::from_array(translate), rotation: Vec3::new(x, y, z), scale: Vec3::splat(scale) };
+        }
+    }
+    let calamari: Vec<(usize, bool)> = saved.nodes.iter()
+        .filter_map(|n| match n.node_type { NodeType::Calamari { hulls, .. } => Some((n.id, hulls)), _ => None }).collect();
+    for (id, hulls) in calamari {
+        let from = saved.connections.iter().find(|c| c[2] == id && c[3] == 0).map(|c| (c[0], c[1]));
+        let to: Vec<(usize, usize)> = saved.connections.iter().filter(|c| c[0] == id).map(|c| (c[2], c[3])).collect();
+        saved.connections.retain(|c| c[0] != id && c[2] != id);
+        if let Some((src, out)) = from {
+            for (dst, input) in to { saved.connections.push([src, out, dst, input]); }
+            if let Some(n) = saved.nodes.iter_mut().find(|n| n.id == src) {
+                if let NodeType::Ragdoll { view, .. } = &mut n.node_type {
+                    *view = if hulls { crate::types::BodyView::Hulls } else { crate::types::BodyView::Pieces };
+                }
+            }
+            if saved.view_flag == Some(id) { saved.view_flag = Some(src); }
+        } else if saved.view_flag == Some(id) {
+            saved.view_flag = None;
+        }
+        saved.nodes.retain(|n| n.id != id);
+    }
 }
 
 pub fn save(graph: &NodeGraphState, path: &Path) -> Result<(), String> {
@@ -225,5 +261,35 @@ mod tests {
         assert!(from_json(&mut g, "{ not json").is_err());
         assert!(from_json(&mut g, r#"{"version":1,"nodes":[],"connections":[],"view_flag":null}"#).is_err());
         assert_eq!(to_json(&g), before);
+    }
+
+    /// A graph saved before Body Collide had its display and Transform took
+    /// clips: Calamari folds into Body Collide, Transform Clip becomes
+    /// Transform with the same rotation.
+    #[test]
+    fn older_graphs_are_brought_up_to_date() {
+        let json = r#"{"version":1,"nodes":[
+            {"id":0,"name":"Output","position":[0,500],"node_type":"Output"},
+            {"id":2,"name":"Take","position":[0,0],"node_type":{"TestClip":{"seconds":1.0,"fps_num":30,"fps_den":1}}},
+            {"id":3,"name":"Turn","position":[0,50],"node_type":{"TransformClip":{"translate":[1.0,0.0,0.0],"rotate":[0.0,90.0,0.0],"scale":2.0}}},
+            {"id":4,"name":"Ragdoll","position":[0,100],"node_type":{"Ragdoll":{"settings":{"margin":1.2,"friction":0.5,"self_collision":true,"self_slack":3.0,"stiffness":1.0,"release":60.0,"ghost_depth":12.0,"sink":0.0,"fade_out":6,"fade_in":10,"limb_limit":45.0,"smooth":2,"detail":1}}}},
+            {"id":5,"name":"Hulls","position":[0,200],"node_type":{"Calamari":{"hulls":true,"detail":1}}}
+        ],"connections":[[2,0,3,0],[3,0,4,0],[4,0,5,0],[5,0,0,0]],"view_flag":5}"#;
+        let mut g = NodeGraphState::default();
+        from_json(&mut g, json).unwrap();
+        assert!(!g.nodes.iter().any(|n| matches!(n.node_type, NodeType::Calamari { .. } | NodeType::TransformClip { .. })));
+        let rag = g.nodes.iter().find(|n| n.id == NodeId(4)).unwrap();
+        assert!(matches!(rag.node_type, NodeType::Ragdoll { view: crate::types::BodyView::Hulls, .. }));
+        assert_eq!(g.view_flag, Some(NodeId(4)));
+        let out = g.nodes.iter().find(|n| matches!(n.node_type, NodeType::Output)).unwrap();
+        assert_eq!(out.inputs[0].connected_output, Some((NodeId(4), 0)), "Output is wired to Body Collide now");
+        // Same motion as the old Transform Clip.
+        let old = crate::core::anim::create_test_clip(1.0, crate::core::anim::FrameRate::new(30, 1))
+            .transformed(bevy::math::Vec3::new(1.0, 0.0, 0.0), bevy::math::Vec3::new(0.0, 90.0, 0.0), 2.0);
+        let new = g.eval_anim(NodeId(3)).unwrap();
+        for f in [0, 11] {
+            let (a, b) = (old.world_pose(f), new.world_pose(f));
+            for j in 0..a.len() { assert!((a[j].w_axis - b[j].w_axis).length() < 1e-4); }
+        }
     }
 }

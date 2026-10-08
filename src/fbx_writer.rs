@@ -967,7 +967,7 @@ mod tests {
         std::env::set_var("XMS_CACHE_DIR", std::env::temp_dir().join("xms_ragdoll_none"));
         let mut g = crate::node_graph::NodeGraphState::default();
         let mut subnets = crate::ice::SubnetStore::default();
-        let t = crate::templates::TEMPLATES.iter().find(|t| t.name.starts_with("Ragdoll")).unwrap();
+        let t = crate::templates::TEMPLATES.iter().find(|t| t.name.starts_with("Body Collide")).unwrap();
         (t.build)(&mut g, &mut subnets);
         let id = g.nodes.iter().find(|n| matches!(n.node_type, crate::types::NodeType::Ragdoll { .. })).unwrap().id;
         let (take, _) = g.ragdoll_inputs(id);

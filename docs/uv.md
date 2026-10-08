@@ -9,8 +9,8 @@ UV nodes are in the "UV" sub-menu of the add-node menu. UVs are stored per polyg
 | Node | What it does |
 |---|---|
 | UV Unwrap | Makes UVs for the incoming mesh |
-| UV Transform | Offsets, turns and scales the whole layout |
-| UV Edit | Holds a list of edits to single islands: offset, turn, scale, flip U, flip V |
+| UV Transform | Translates, rotates and scales the whole layout |
+| UV Edit | Holds a list of edits to single islands: translate, rotate, scale, flip U, flip V |
 
 ### UV Unwrap
 

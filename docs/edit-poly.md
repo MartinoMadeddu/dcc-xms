@@ -15,7 +15,7 @@ Sources:
 
 | Source | Selects |
 |---|---|
-| Picked in viewport | What you click or box-select |
+| Picked | What you click or box-select in the viewport |
 | All | Everything at the current level |
 | By normal | Polygons facing within an angle of a direction |
 | In box | Components inside an axis-aligned box |

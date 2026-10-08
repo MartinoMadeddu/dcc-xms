@@ -297,7 +297,7 @@
         <li><a href="#uv"><b>UVs and UDIMs that think</b><span>LSCM unwrap, tiles chosen by size.</span></a></li>
         <li><a href="#mocap"><b>From take to engine</b><span>Split, retarget, write FBX by the folder.</span></a></li>
         <li><a href="#ui"><b>The workbench</b><span>Eight panes, seven ways to navigate.</span></a></li>
-        <li><a href="#ref"><b>Reference card</b><span>Keys, formats and all 41 nodes.</span></a></li>
+        <li><a href="#ref"><b>Reference card</b><span>Keys, formats and all 39 nodes.</span></a></li>
         <li><a href="#build-it"><b>Type-in</b><span>Build it yourself in three lines.</span></a></li>
         <li><a href="#gaps"><b>Known gaps</b><span>What it does not do yet.</span></a></li>
         <li><a href="#credits"><b>Credits</b><span>Who made it.</span></a></li>
@@ -366,7 +366,7 @@
             <tr><td>Modelling</td><td>Edit Poly: tower, panels, goblet, bridge, sea mine, bolt</td></tr>
             <tr><td>UV</td><td>Unwrap the sea mine · UDIM tiles · Edit UV islands</td></tr>
             <tr><td>USD</td><td>Heavy model · Pick and edit · Prune</td></tr>
-            <tr><td>Animation &amp; Mocap</td><td>Clip basics · FBX import · T-pose and export · Mocap tools · Retarget · Ragdoll: into the car · Mocap split (two versions)</td></tr>
+            <tr><td>Animation &amp; Mocap</td><td>Clip basics · FBX import · T-pose and export · Mocap tools · Retarget · Body Collide: into the car · Mocap split (two versions)</td></tr>
           </table></div>
         </div>
       </div>
@@ -481,7 +481,7 @@
           <p>A clip holds a skeleton, per-frame transforms, a rational frame rate and timecode, drop-frame included. The timeline has no range of its own: it takes range, rate and timecode from whichever node is selected.</p>
           <p>Retarget puts the motion of one skeleton on another. Joints are matched by name, ignoring prefixes and namespaces, and bones are aligned in the rest pose, so the two may rest differently.</p>
           <p>Nodes that choose joints by name take comma-separated regular expressions, with a picker listing the joints coming in and a live match count. <code>thumb, index, middle</code> works. So does <code>^Left.*(Arm|Hand)$</code>.</p>
-          <p>Ragdoll keeps a captured character out of a set and out of itself. The actor sat on a box; the character sits in the car, on the seat, feet on the floor. 12,227 frames against 1.7 million triangles solve in under five minutes on two cores.</p>
+          <p>Body Collide keeps a captured character out of a set and out of itself. The actor sat on a box; the character sits in the car, on the seat, feet on the floor. 12,227 frames against 1.7 million triangles solve in under five minutes on two cores.</p>
           <p>Write FBX sends a clip back out with the skeleton it came in with, whatever was done to it on the way: the same joints, the same Root, the same axes and unit as the source. The engine sees an animation of the skeleton it already has. Motion only, or with the mesh, for one file or every file of the folder, in the background.</p>
         </div>
         <div class="box">
@@ -492,11 +492,12 @@
             <tr><td>Auto T-Pose · Fix Pose</td><td>Zero the rotations, then correct by hand</td></tr>
             <tr><td>Trim · Retime · Set Timecode</td><td>Range, rate and start</td></tr>
             <tr><td>Mirror · Smooth · In Place</td><td>Swap sides, filter jitter, hold the root</td></tr>
-            <tr><td>Blend Clips · Loop</td><td>Join two clips, or a clip to itself</td></tr>
+            <tr><td>Blend · Loop</td><td>Join two clips, or a clip to itself</td></tr>
             <tr><td>Retarget · Time Warp</td><td>Another skeleton, another speed</td></tr>
             <tr><td>Prune Joints · Floor</td><td>Drop fingers, sit on the ground</td></tr>
             <tr><td>Proxy Skin · Write FBX</td><td>A body to look at, a file to ship</td></tr>
-            <tr><td>Calamari · Ragdoll</td><td>Out of the set and out of itself</td></tr>
+            <tr><td>Transform</td><td>Move a clip, its skin with it, once</td></tr>
+            <tr><td>Body Collide</td><td>Out of the set and out of itself</td></tr>
           </table></div>
         </div>
       </div>
@@ -566,17 +567,15 @@
         </table></div>
       </div>
       <div class="box">
-        <h3>The 41 nodes</h3>
+        <h3>The 39 nodes</h3>
         <div class="in scroll"><table>
-          <tr><td>Generate</td><td>Cube · Sphere · Grid</td></tr>
-          <tr><td>Modify</td><td>Transform · Edit Poly · Merge</td></tr>
-          <tr><td>Scatter</td><td>Scatter Points · Copy to Points</td></tr>
-          <tr><td>ICE</td><td>Subnet: a graph inside a node</td></tr>
-          <tr><td>USD</td><td>Load USD · Pick Primitives · Prune Primitives · Unpack</td></tr>
+          <tr><td>Create</td><td>Cube · Sphere · Grid · Test Clip</td></tr>
+          <tr><td>File</td><td>Load USD · Load FBX · Load FBX Folder · Load FBX Mesh · Write FBX</td></tr>
+          <tr><td>Modify</td><td>Transform · Edit Poly · Merge · Scatter Points · Copy to Points · ICE</td></tr>
+          <tr><td>Primitives</td><td>Pick Primitives · Prune Primitives · Unpack</td></tr>
           <tr><td>UV</td><td>UV Unwrap · UV Transform · UV Edit</td></tr>
-          <tr><td>Clips</td><td>Load FBX · Load FBX Folder · Test Clip · Rename Joints · Trim · Retime · Set Timecode · Split Characters · Auto T-Pose · Fix Pose · Proxy Skin · Write FBX</td></tr>
-          <tr><td>Mocap tools</td><td>Mirror · Smooth · In Place · Transform Clip · Blend Clips · Loop · Retarget · Time Warp · Prune Joints · Floor</td></tr>
-          <tr><td>Ragdoll</td><td>Load FBX Mesh · Calamari · Ragdoll</td></tr>
+          <tr><td>Animation</td><td>Rename Joints · Trim · Retime · Set Timecode · Time Warp · Blend · Loop · Mirror · Smooth · In Place · Floor · Prune Joints</td></tr>
+          <tr><td>Mocap</td><td>Split Characters · Retarget · Auto T-Pose · Fix Pose · Proxy Skin · Body Collide</td></tr>
         </table></div>
       </div>
     </div>

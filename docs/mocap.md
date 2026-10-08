@@ -14,7 +14,7 @@ The timeline has no range of its own. It takes range, rate and timecode from the
 | Load FBX Folder | One file out of a folder, picked by index or from a dropdown of file names |
 | Test Clip | A generated clip for trying things out |
 | Rename Joints | Renames joints. Find is a regular expression, picked from the joint list or typed. Replace may use `$1`, `$2` for its groups |
-| Trim Clip | Cuts the clip to a range |
+| Trim | Cuts the clip to a range |
 | Retime | Changes the frame rate |
 | Set Timecode | Sets the start timecode |
 | Split Characters | One output per character, by position or by root joint |
@@ -32,8 +32,7 @@ In the "Mocap tools" section of the same sub-menu.
 | Mirror | Swaps left and right joints and mirrors the motion across X |
 | Smooth | Averages rotations, and optionally translations, over a radius in frames |
 | In Place | Removes horizontal travel of the root. Optionally keeps the height, or moves the travel to a root joint |
-| Transform Clip | Moves, turns and scales the whole clip |
-| Blend Clips | Plays the first clip, then the second, with a blend in frames. Can align the second clip to where the first ends |
+| Blend | Plays the first clip, then the second, with a blend in frames. Can align the second clip to where the first ends |
 | Loop | Blends the end of a clip into its start |
 | Retarget | Puts the motion of the first input on the skeleton of the second. Joints are matched by name, ignoring prefixes and namespaces. Bones are aligned in the rest pose, so the two skeletons may rest differently |
 | Time Warp | Changes speed, or reverses |
@@ -56,13 +55,13 @@ With a clip node selected, the Primitive Inspector shows a Joint tab (name, pare
 
 ## Writing FBX for an engine
 
-A clip read from a file is written back with the skeleton it came in with, after any process: trims, retimes, mocap tools, a ragdoll solve. Same joint names and hierarchy, same kinds (an FBX "Root" stays a Root, a "LimbNode" a LimbNode), the same axes and unit as the source (Z up in centimetres for a file from Unreal), and the same local values on every joint that was not changed. An engine that imported the source as a skeleton sees the file as an animation of that skeleton.
+A clip read from a file is written back with the skeleton it came in with, after any process: trims, retimes, mocap tools, a Body Collide solve. Same joint names and hierarchy, same kinds (an FBX "Root" stays a Root, a "LimbNode" a LimbNode), the same axes and unit as the source (Z up in centimetres for a file from Unreal), and the same local values on every joint that was not changed. An engine that imported the source as a skeleton sees the file as an animation of that skeleton.
 
 The properties of the Write node say which space a file goes out in, such as "Z up, cm, as the source file". A clip made in the program (Test Clip) goes out Y up in centimetres.
 
 "Mesh" adds the skinned mesh, its skin and bind pose. Leave it off to import motion onto a skeleton the engine already has: the file then holds the skeleton and its animation only. New Write nodes start with it off; graphs saved before the switch existed keep writing the mesh.
 
-How this is checked: the take of the ragdoll template, written as it ships and written after the shipped solve, is compared with the source FBX read without any conversion. Names, parents, kinds, axes and unit match on all 342 joints. As shipped, the largest difference in a local rotation is 0.003 degrees (the packed clip stores rotations in 16 bits); written straight from the FBX it is 0.00003 degrees, and 0 in position. Import into Unreal itself has not been tried here.
+How this is checked: the take of the Body Collide template, written as it ships and written after the shipped solve, is compared with the source FBX read without any conversion. Names, parents, kinds, axes and unit match on all 342 joints. As shipped, the largest difference in a local rotation is 0.003 degrees (the packed clip stores rotations in 16 bits); written straight from the FBX it is 0.00003 degrees, and 0 in position. Import into Unreal itself has not been tried here.
 
 Earlier builds wrote every file Y up, put the source's axis turn and a 0.01 scale on the top joint, and wrote the other joints a hundred times too long, so an engine saw a different skeleton. Rotations within a degree of 90 on Y could also be written half a degree out. Both are fixed.
 
@@ -80,6 +79,10 @@ Open, Recent, Save and Save as in the node graph header read and write the graph
 
 Timeline zoom and pan, curve cleanup, IK, foot planting, characterization. Written files are checked against their source, not yet by importing them into Unreal.
 
-## Ragdoll
+## Moving a clip
 
-Keeping a captured character out of a set and out of itself has a page of its own: [Ragdoll](ragdoll.md).
+Transform, the same node that moves meshes, moves a clip: Translate, Rotate and one Scale for the whole skeleton. It moves the joints at the top of the hierarchy and everything under them follows. A mesh skinned to the skeleton is not moved itself: it follows its joints when it is posed, so it moves once, with them. Graphs saved with the old Transform Clip node open with a Transform node in its place, turning the clip the same way.
+
+## Body Collide
+
+Keeping a captured character out of a set and out of itself has a page of its own: [Body Collide](body-collide.md).

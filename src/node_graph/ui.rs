@@ -352,21 +352,9 @@ pub fn draw_node_graph(ui: &mut egui::Ui, graph: &mut NodeGraphState) -> Option<
 // SINGLE NODE
 // ============================================================================
 
-fn node_type_label(t: &NodeType) -> &'static str {
-    match t {
-        NodeType::CreateCube { .. }    => "Create Cube",
-        NodeType::CreateSphere { .. }  => "Create Sphere",
-        NodeType::CreateGrid { .. }    => "Create Grid",
-        NodeType::LoadUsd { .. }       => "Load USD",
-        NodeType::Transform { .. }     => "Transform",
-        NodeType::Merge                => "Merge",
-        NodeType::ScatterPoints { .. } => "Scatter Points",
-        NodeType::CopyToPoints         => "Copy to Points",
-        NodeType::Subnet { .. }        => "Integrated Creation Engine",
-        NodeType::Output               => "Output",
-        other                          => crate::types::node_type_label(other),
-    }
-}
+/// One name per node type, the same in the menu, on the node and in the
+/// properties.
+fn node_type_label(t: &NodeType) -> &'static str { crate::types::node_type_label(t) }
 
 fn draw_node(
     ui:          &mut egui::Ui,
@@ -617,155 +605,91 @@ fn draw_node(
 // ADD-NODE MENU
 // ============================================================================
 
+/// Every node the menu offers, by category: the node as it is made, and
+/// one line on what it does. Names and icons come from the node types, so
+/// the menu, the node and the properties say the same thing.
+pub fn catalog() -> Vec<(&'static str, &'static str, Vec<(NodeType, &'static str)>)> {
+    use crate::types::SplitPick;
+    vec![
+        ("◼", "Create", vec![
+            (NodeType::CreateCube { size: 1.0 }, "A cube"),
+            (NodeType::CreateSphere { radius: 0.5, segments: 32 }, "A sphere"),
+            (NodeType::CreateGrid { rows: 10, cols: 10, size: 2.0 }, "A flat grid of quads"),
+            (NodeType::TestClip { seconds: 4.0, fps_num: 30, fps_den: 1 }, "A walk on the spot, to try the animation nodes"),
+        ]),
+        ("📂", "File", vec![
+            (NodeType::LoadUsd { path: String::new() }, "A USD file, as packed primitives"),
+            (NodeType::LoadFbx { path: String::new(), take: 0 }, "A skeleton and one take from an FBX file, with its skinned mesh"),
+            (NodeType::LoadFbxDir { dir: String::new(), index: 0, take: 0 }, "One FBX of a folder at a time; Write FBX can run over all of them"),
+            (NodeType::LoadFbxMesh { path: String::new() }, "Every mesh of an FBX file, as packed primitives: a set to collide with"),
+            (NodeType::WriteFbx { path: crate::types::DEFAULT_WRITE_PATH.into(), mesh: false }, "Write the clip as FBX, with the skeleton it came in with"),
+        ]),
+        ("🔨", "Modify", vec![
+            (NodeType::Transform { translation: Vec3::ZERO, rotation: Vec3::ZERO, scale: Vec3::ONE }, "Translate, rotate and scale anything: a mesh, primitives or a clip"),
+            (NodeType::EditPoly { ops: vec![], pending: Default::default(), edit: None, auto_collapse: false }, "Polygon modelling in one node"),
+            (NodeType::Merge, "Two meshes as one"),
+            (NodeType::ScatterPoints { count: 100, seed: 42 }, "Points spread over a surface"),
+            (NodeType::CopyToPoints, "A copy of the first input on every point of the second"),
+            (NodeType::Subnet { id: SubnetId(usize::MAX), name: "ICE".into() }, "A graph inside a node"),
+        ]),
+        ("📦", "Primitives", vec![
+            (NodeType::PickPrims { pattern: String::new() }, "Choose packed primitives for the nodes after this one to work on"),
+            (NodeType::PrunePrims { pattern: String::new(), keep: false }, "Remove packed primitives, or keep only some"),
+            (NodeType::UnpackPrims, "Merge packed primitives into one mesh"),
+        ]),
+        ("🗺", "UV", vec![
+            (NodeType::UvUnwrap { method: crate::core::uv::UvMethod::Conformal, angle: 66.0, margin: 0.02, axis: 1, tiles: 1 }, "Make texture coordinates"),
+            (NodeType::UvTransform { offset: [0.0; 2], rotate: 0.0, scale: [1.0; 2] }, "Translate, rotate and scale the whole UV layout"),
+            (NodeType::UvEdit { edits: vec![] }, "Move single UV islands, in the UV Editor"),
+        ]),
+        ("🎬", "Animation", vec![
+            (NodeType::RenameJoints { find: String::new(), replace: String::new(), strip_namespace: true, prefix: String::new() }, "Rename joints by pattern"),
+            (NodeType::TrimClip { head: 0, tail: 0 }, "Cut frames from the start and the end"),
+            (NodeType::Retime { fps_num: 30, fps_den: 1, mode: RetimeMode::Resample }, "Change the frame rate"),
+            (NodeType::SetTimecode { hours: 1, minutes: 0, seconds: 0, frames: 0, drop_frame: false }, "Change where the clip starts"),
+            (NodeType::TimeWarp { speed: 1.0, reverse: false }, "Play faster, slower or backwards"),
+            (NodeType::BlendClips { blend: 15, align: true }, "One clip, then another, blended"),
+            (NodeType::LoopClip { blend: 15 }, "Ease the end into the start, so the clip cycles"),
+            (NodeType::MirrorClip, "Swap left and right"),
+            (NodeType::SmoothClip { radius: 3, amount: 1.0, translations: true }, "Filter out jitter"),
+            (NodeType::InPlace { keep_height: true, to_root: false }, "Hold the hips over their starting point"),
+            (NodeType::FloorClip { height: 0.0 }, "Put the lowest point on the floor"),
+            (NodeType::PruneJoints { words: "finger, thumb".into() }, "Remove joints and everything below them"),
+        ]),
+        ("🏃", "Mocap", vec![
+            (NodeType::SplitSkeleton { picks: vec![SplitPick::Character(0), SplitPick::Character(1)] }, "One output per character in the take"),
+            (NodeType::Retarget, "The motion of one skeleton on another"),
+            (NodeType::AutoTPose { set_hip_height: false, hip_height: 90.0 }, "A neutral pose, one frame"),
+            (NodeType::FixPose { edits: vec![] }, "Correct joints by hand, on every frame"),
+            (NodeType::ProxySkin { thickness: 1.0 }, "A body of spheres and cylinders, bound to the skeleton"),
+            (NodeType::Ragdoll { settings: Default::default(), view: Default::default() }, "Keep the character out of the set and out of itself"),
+        ]),
+    ]
+}
+
+/// Name for a new node of this type: its label without spaces.
+pub fn default_name(t: &NodeType) -> String {
+    node_type_label(t).chars().filter(|c| c.is_alphanumeric()).collect()
+}
+
 fn add_node_menu(ui: &mut egui::Ui, graph: &mut NodeGraphState, cp: egui::Pos2) -> bool {
     let mut added = false;
-    ui.label(egui::RichText::new("Generate").strong());
-    if ui.button("◼  Cube").clicked() {
-        graph.add_node("Cube".into(), NodeType::CreateCube { size: 1.0 }, cp); added = true;
+    ui.set_min_width(150.0);
+    // Categories look like the items in them: menu rows, not buttons.
+    ui.visuals_mut().button_frame = false;
+    for (icon, category, nodes) in catalog() {
+        ui.menu_button(format!("{icon}  {category}"), |ui| {
+            ui.set_min_width(170.0);
+            for (t, hint) in nodes {
+                let label = format!("{}  {}", node_type_icon(&t), node_type_label(&t));
+                if ui.button(label).on_hover_text(hint).clicked() {
+                    let name = default_name(&t);
+                    graph.add_node(name, t, cp);
+                    added = true;
+                }
+            }
+        });
     }
-    if ui.button("●  Sphere").clicked() {
-        graph.add_node("Sphere".into(), NodeType::CreateSphere { radius: 0.5, segments: 32 }, cp); added = true;
-    }
-    if ui.button("⊞  Grid").clicked() {
-        graph.add_node("Grid".into(), NodeType::CreateGrid { rows: 10, cols: 10, size: 2.0 }, cp); added = true;
-    }
-    if ui.button("📂  Load USD").clicked() {
-        graph.add_node("LoadUSD".into(), NodeType::LoadUsd { path: String::new() }, cp); added = true;
-    }
-    ui.separator();
-    ui.label(egui::RichText::new("Modify").strong());
-    if ui.button("⟲  Transform").clicked() {
-        graph.add_node("Transform".into(), NodeType::Transform {
-            translation: Vec3::ZERO, rotation: Vec3::ZERO, scale: Vec3::ONE }, cp); added = true;
-    }
-    if ui.button("🔨  Edit Poly").clicked() {
-        graph.add_node("EditPoly".into(), NodeType::EditPoly {
-            ops: vec![], pending: Default::default(), edit: None, auto_collapse: false }, cp); added = true;
-    }
-    if ui.button("⊕  Merge").clicked() {
-        graph.add_node("Merge".into(), NodeType::Merge, cp); added = true;
-    }
-    ui.separator();
-    ui.label(egui::RichText::new("Scatter").strong());
-    if ui.button("∷  Scatter Points").clicked() {
-        graph.add_node("ScatterPoints".into(), NodeType::ScatterPoints { count: 100, seed: 42 }, cp); added = true;
-    }
-    if ui.button("❇  Copy to Points").clicked() {
-        graph.add_node("CopyToPoints".into(), NodeType::CopyToPoints, cp); added = true;
-    }
-    ui.separator();
-    ui.label(egui::RichText::new("Integrated Creation Engine").strong());
-    if ui.button("▣  ICE").clicked() {
-        graph.add_node("ICE".into(), NodeType::Subnet {
-            id: SubnetId(usize::MAX), name: "ICE".into() }, cp); added = true;
-    }
-    ui.separator();
-    // Animation and mocap nodes live in their own sub-menu.
-    ui.menu_button("🎬  Animation & Mocap", |ui| {
-        ui.set_min_width(190.0);
-        ui.label(egui::RichText::new("Animation").strong());
-        if ui.button("🎬  Load FBX").clicked() {
-            graph.add_node("LoadFBX".into(), NodeType::LoadFbx { path: String::new(), take: 0 }, cp); added = true;
-        }
-        if ui.button("🚶  Test Clip").clicked() {
-            graph.add_node("TestClip".into(), NodeType::TestClip {
-                seconds: 4.0, fps_num: 30, fps_den: 1 }, cp); added = true;
-        }
-        if ui.button("✏  Rename Joints").clicked() {
-            graph.add_node("Rename".into(), NodeType::RenameJoints {
-                find: String::new(), replace: String::new(),
-                strip_namespace: true, prefix: String::new() }, cp); added = true;
-        }
-        if ui.button("✂  Trim Clip").clicked() {
-            graph.add_node("Trim".into(), NodeType::TrimClip { head: 0, tail: 0 }, cp); added = true;
-        }
-        if ui.button("⏱  Retime").clicked() {
-            graph.add_node("Retime".into(), NodeType::Retime {
-                fps_num: 30, fps_den: 1, mode: RetimeMode::Resample }, cp); added = true;
-        }
-        if ui.button("🕐  Set Timecode").clicked() {
-            graph.add_node("SetTimecode".into(), NodeType::SetTimecode {
-                hours: 1, minutes: 0, seconds: 0, frames: 0, drop_frame: false }, cp); added = true;
-        }
-        ui.separator();
-        ui.label(egui::RichText::new("Batch / Export").strong());
-        if ui.button("📂  Load FBX Folder").clicked() {
-            graph.add_node("Takes".into(), NodeType::LoadFbxDir { dir: String::new(), index: 0, take: 0 }, cp); added = true;
-        }
-        if ui.button("Ψ  Split Characters").clicked() {
-            graph.add_node("Split".into(), NodeType::SplitSkeleton {
-                picks: vec![crate::types::SplitPick::Character(0), crate::types::SplitPick::Character(1)] }, cp); added = true;
-        }
-        if ui.button("✚  Auto T-Pose").clicked() {
-            graph.add_node("TPose".into(), NodeType::AutoTPose { set_hip_height: false, hip_height: 90.0 }, cp); added = true;
-        }
-        if ui.button("🔧  Fix Pose").clicked() {
-            graph.add_node("FixPose".into(), NodeType::FixPose { edits: vec![] }, cp); added = true;
-        }
-        if ui.button("⬟  Proxy Skin").clicked() {
-            graph.add_node("ProxySkin".into(), NodeType::ProxySkin { thickness: 1.0 }, cp); added = true;
-        }
-        if ui.button("💾  Write FBX").clicked() {
-            graph.add_node("Write".into(), NodeType::WriteFbx {
-                path: crate::types::DEFAULT_WRITE_PATH.into(), mesh: false }, cp); added = true;
-        }
-        ui.separator();
-        ui.label(egui::RichText::new("Mocap tools").strong());
-        let tools: [(&str, &str, NodeType); 10] = [
-            ("↔  Mirror", "Mirror", NodeType::MirrorClip),
-            ("〰  Smooth", "Smooth", NodeType::SmoothClip { radius: 3, amount: 1.0, translations: true }),
-            ("📍  In Place", "InPlace", NodeType::InPlace { keep_height: true, to_root: false }),
-            ("🔃  Transform Clip", "TransformClip", NodeType::TransformClip { translate: [0.0; 3], rotate: [0.0; 3], scale: 1.0 }),
-            ("🔀  Blend Clips", "Blend", NodeType::BlendClips { blend: 15, align: true }),
-            ("🔁  Loop", "Loop", NodeType::LoopClip { blend: 15 }),
-            ("👥  Retarget", "Retarget", NodeType::Retarget),
-            ("⏩  Time Warp", "TimeWarp", NodeType::TimeWarp { speed: 1.0, reverse: false }),
-            ("🌿  Prune Joints", "Prune", NodeType::PruneJoints { words: "finger, thumb".into() }),
-            ("⬇  Floor", "Floor", NodeType::FloorClip { height: 0.0 }),
-        ];
-        for (label, name, node) in tools {
-            if ui.button(label).clicked() { graph.add_node(name.into(), node, cp); added = true; }
-        }
-        ui.separator();
-        ui.label(egui::RichText::new("Ragdoll").strong());
-        if ui.button("📂  Load FBX Mesh").on_hover_text("The meshes of an FBX file: a set to collide with").clicked() {
-            graph.add_node("Set".into(), NodeType::LoadFbxMesh { path: String::new() }, cp); added = true;
-        }
-        if ui.button("✂  Calamari").on_hover_text("The skin in rigid pieces, one per body, or their convex hulls").clicked() {
-            graph.add_node("Calamari".into(), NodeType::Calamari { hulls: true, detail: 1 }, cp); added = true;
-        }
-        if ui.button("🚶  Ragdoll").on_hover_text("Keep the character out of a collider and out of itself").clicked() {
-            graph.add_node("Ragdoll".into(), NodeType::Ragdoll { settings: Default::default() }, cp); added = true;
-        }
-    });
-    ui.menu_button("📂  USD", |ui| {
-        ui.set_min_width(190.0);
-        if ui.button("📂  Load USD").clicked() {
-            graph.add_node("LoadUSD".into(), NodeType::LoadUsd { path: String::new() }, cp); added = true;
-        }
-        if ui.button("👆  Pick Primitives").on_hover_text("Choose packed primitives for the nodes that follow to work on").clicked() {
-            graph.add_node("Pick".into(), NodeType::PickPrims { pattern: String::new() }, cp); added = true;
-        }
-        if ui.button("✂  Prune Primitives").on_hover_text("Remove packed primitives, or keep only some").clicked() {
-            graph.add_node("Prune".into(), NodeType::PrunePrims { pattern: String::new(), keep: false }, cp); added = true;
-        }
-        if ui.button("📦  Unpack").on_hover_text("Merge packed primitives into one mesh").clicked() {
-            graph.add_node("Unpack".into(), NodeType::UnpackPrims, cp); added = true;
-        }
-    });
-    ui.menu_button("🗺  UV", |ui| {
-        ui.set_min_width(170.0);
-        if ui.button("🗺  UV Unwrap").clicked() {
-            graph.add_node("UVUnwrap".into(), NodeType::UvUnwrap {
-                method: crate::core::uv::UvMethod::Conformal, angle: 66.0, margin: 0.02, axis: 1, tiles: 1 }, cp); added = true;
-        }
-        if ui.button("📌  UV Transform").clicked() {
-            graph.add_node("UVTransform".into(), NodeType::UvTransform { offset: [0.0; 2], rotate: 0.0, scale: [1.0; 2] }, cp); added = true;
-        }
-        if ui.button("✋  UV Edit").clicked() {
-            graph.add_node("UVEdit".into(), NodeType::UvEdit { edits: vec![] }, cp); added = true;
-        }
-    });
     if added { ui.close_menu(); }
     added
 }

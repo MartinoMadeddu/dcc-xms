@@ -53,9 +53,19 @@ pub fn evaluate_node_type(
         }),
         NodeType::UnpackPrims => inputs.first().map(|r| EvalResult::Single(r.as_mesh())),
 
-        NodeType::Transform { translation, rotation, scale } =>
-            inputs.first()
-                .map(|r| r.map_mesh(|m| transform(&m, *translation, *rotation, *scale))),
+        NodeType::Transform { translation, rotation, scale } => inputs.first().and_then(|r| match r {
+            // A clip moves by its top joints; its skin follows when posed.
+            EvalResult::Anim(clip) => {
+                let x = transform_matrix(*translation, *rotation, Vec3::splat(clip_scale(*scale)));
+                anim::memo(&format!("{node_type:?}"), Some(clip), || Some(clip.moved(x))).map(EvalResult::Anim)
+            }
+            // Packed primitives with none picked: each one moves and stays
+            // a primitive of its own.
+            EvalResult::Named(prims) if !prims.iter().any(|p| p.picked) => Some(EvalResult::Named(prims.iter().map(|p| NamedMesh {
+                mesh: Arc::new(transform(&p.mesh, *translation, *rotation, *scale)), ..p.clone()
+            }).collect())),
+            other => Some(other.map_mesh(|m| transform(&m, *translation, *rotation, *scale))),
+        }),
 
         NodeType::Merge => {
             let meshes: Vec<MeshData> = inputs.iter().map(|r| r.as_mesh()).collect();
@@ -151,6 +161,7 @@ pub fn evaluate_node_type(
             anim_op(node_type, inputs, |a| a.smoothed(*radius, *amount, *translations)),
         NodeType::InPlace { keep_height, to_root } =>
             anim_op(node_type, inputs, |a| a.in_place(*keep_height, *to_root)),
+        // Read from older graphs only: `graph_io` turns it into Transform.
         NodeType::TransformClip { translate, rotate, scale } =>
             anim_op(node_type, inputs, |a| a.transformed(Vec3::from_array(*translate), Vec3::from_array(*rotate), *scale)),
         NodeType::LoopClip { blend } => anim_op(node_type, inputs, |a| a.looped(*blend)),
@@ -170,7 +181,7 @@ pub fn evaluate_node_type(
         }
         NodeType::Calamari { hulls, detail } =>
             anim_op(node_type, inputs, |a| crate::ragdoll::calamari(a, *hulls, *detail)),
-        NodeType::Ragdoll { settings } => {
+        NodeType::Ragdoll { settings, .. } => {
             // The clip, and the collider when one is wired. Nothing is solved
             // here: the node puts out the result of a solve when there is
             // one for exactly these inputs and settings.
@@ -310,6 +321,15 @@ pub fn create_grid(rows: u32, cols: u32, size: f32) -> MeshData {
 }
 
 // ── Operators ─────────────────────────────────────────────────────────────────
+
+/// The matrix of a Transform node: scale, then rotation X, Y, Z (radians),
+/// then translation.
+pub fn transform_matrix(t: Vec3, r: Vec3, s: Vec3) -> bevy::math::Mat4 {
+    bevy::math::Mat4::from_scale_rotation_translation(s, Quat::from_euler(EulerRot::XYZ, r.x, r.y, r.z), t)
+}
+
+/// A skeleton scales the same on every axis: a clip takes the X scale.
+pub fn clip_scale(s: Vec3) -> f32 { if s.x.abs() > 1e-6 { s.x } else { 1e-6 } }
 
 pub fn transform(mesh: &MeshData, t: Vec3, r: Vec3, s: Vec3) -> MeshData {
     let rot = Quat::from_euler(EulerRot::XYZ, r.x, r.y, r.z);
@@ -513,8 +533,10 @@ mod packed_tests {
         assert!(std::sync::Arc::ptr_eq(&p[0].mesh, &prims(&input)[0].mesh), "the body is passed through as it is");
         assert!(max_y(&p[0].mesh) < 1.0 && max_y(&p[1].mesh) > 10.0 && p[1].picked);
         assert_eq!(p[1].mesh.vertices.len(), 2 * create_cube(1.0).vertices.len());
-        // Without a pick the whole model goes through, as one mesh.
-        assert!(matches!(run(lift, &input), EvalResult::Single(m) if m.vertices.iter().all(|v| v[1] > 9.0)));
+        // Without a pick Transform moves every primitive and keeps them apart.
+        let all = run(lift, &input);
+        assert_eq!(prims(&all).len(), prims(&input).len());
+        assert!(prims(&all).iter().all(|p| p.mesh.vertices.iter().all(|v| v[1] > 9.0)));
     }
 
     #[test]
