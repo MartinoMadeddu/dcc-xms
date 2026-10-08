@@ -8,7 +8,7 @@ A fixed line across the top of the window, for things that belong to the whole p
 
 ## Panes
 
-Eight panes: Viewport, Node Graph, UV Editor, Scene Explorer, Operator Stack, Properties, Primitive Inspector, Timeline. Each one is a tab. The UV Editor starts as a tab behind the Node Graph and is described in [UV](uv.md).
+Nine panes: Viewport, Node Graph, UV Editor, Scene Explorer, Operator Stack, History, Properties, Primitive Inspector, Timeline. Each one is a tab. The UV Editor starts as a tab behind the Node Graph and is described in [UV](uv.md). History starts as a tab behind the Operator Stack and is described in [Undo](undo.md). A layout saved before the History pane existed does not have it: tick it in the Panes menu.
 
 | To | Do this |
 |---|---|

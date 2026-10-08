@@ -83,6 +83,19 @@ A take of 12,227 frames against a car of 1.7 million triangles solves in under f
 
 ![Ragdoll: the take in the car](docs/xms_ragdoll.png)
 
+## Undo, with a history you can see
+
+Ctrl+Z and Ctrl+Shift+Z undo and redo everything in the scene: nodes, parameters, Edit Poly operations, wires, names, bypass, node positions. The camera, the layout and the selection are not part of it, so undo never moves your view.
+
+- **One step per gesture:** a slider dragged over two hundred frames is one step, made when the mouse is let go
+- **Named from what changed:** "SeaMine: #6 Bevel height 0.12 to 0.29", "Connect Cube to SeaMine", "Template: Edit Poly: sea mine". Nobody writes the names; they come from the difference
+- **History pane:** every step, the current one marked. Click any step to go there
+- **Nothing is lost:** undo, then change something, and the undone steps stay as a branch you can go back to
+- **Picks fold in:** picking polygons and extruding them is one step
+- **Cheap:** a step stores only the nodes that changed. Pin a step to keep it whatever the memory
+
+![The History pane: a moved node, a Bevel changed, a bypass, and two undone steps kept as a branch](docs/xms_history.png)
+
 ## An interface that gets out of the way
 
 - **Bypass any node:** the ring at the left of a node switches it off and passes its input through
@@ -130,11 +143,11 @@ On Ubuntu or Debian, first:
 
 ## Documentation
 
-[docs/](docs/README.md): interface, templates, Edit Poly, UV, USD, viewport navigation, animation and mocap, builds and releases.
+[docs/](docs/README.md): interface, undo, templates, Edit Poly, UV, USD, viewport navigation, animation and mocap, ragdoll, builds and releases.
 
 ## Not done yet
 
-- Undo
+- Undo inside ICE subnets, and history saved with the graph
 - Edit Poly: interactive cut and quickslice, extrude along spline, target weld, attach, smoothing groups, material IDs, paint deformation, constraints
 - USD: normal and roughness maps in the viewport, cameras, animation and skinning, references to other files, instancing, writing USD
 - UV: editing single UV vertices and edges, a checker in the viewport, UVs kept through Edit Poly and Copy To Points, UVs in FBX files. Unwrapping is LSCM only: ABF++, SLIM and BFF are not implemented

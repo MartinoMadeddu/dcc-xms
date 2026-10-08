@@ -24,6 +24,7 @@ mod examples;
 mod templates;
 mod ragdoll;
 mod packed;
+mod history;
 
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts, EguiPlugin};
@@ -80,12 +81,14 @@ fn main() {
         .init_resource::<uv_editor::UvEditorState>()
         .init_resource::<node_graph::GraphRevision>()
         .init_resource::<viewport::nav::NavSettings>()
+        .init_resource::<history::History>()
         .add_systems(Startup, (open_splash, setup_scene, setup_egui_theme, setup_gizmos, modelling::setup_gizmos))
         .add_systems(Update, (
             dcc_ui,
             close_splash,
             set_window_icon,
-            track_revision.after(dcc_ui).after(modelling::pick_system),
+            history_system.after(dcc_ui).after(modelling::pick_system),
+            track_revision.after(history_system),
             update_operator_stack.after(track_revision),
             update_scene_hierarchy.after(track_revision),
             update_generated_meshes.after(track_revision),
@@ -227,7 +230,7 @@ fn dcc_ui(
     mut graph_file: ResMut<GraphFile>,
     mut poly_tool:  ResMut<modelling::PolyTool>,
     mut nav_settings: ResMut<viewport::nav::NavSettings>,
-    (mut layout, revision, mut uv_state): (ResMut<Layout>, Res<node_graph::GraphRevision>, ResMut<uv_editor::UvEditorState>),
+    (mut layout, revision, mut uv_state, mut history): (ResMut<Layout>, Res<node_graph::GraphRevision>, ResMut<uv_editor::UvEditorState>, ResMut<history::History>),
     batch:          Res<BatchState>,
     time:           Res<Time>,
 ) {
@@ -254,7 +257,11 @@ fn dcc_ui(
             }
             BrowseTarget::OpenGraph => {
                 graph_file.message = match graph_io::load(&mut graph, &path) {
-                    Ok(())  => format!("Opened {}", path.display()),
+                    Ok(())  => {
+                        let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                        history::note(format!("Open {name}"));
+                        format!("Opened {}", path.display())
+                    }
                     Err(e)  => format!("Could not open {}: {e}", path.display()),
                 };
             }
@@ -370,7 +377,7 @@ fn dcc_ui(
             dt: time.delta_seconds_f64(), keys_free,
             space_plays: nav_settings.style != viewport::nav::NavStyle::Houdini,
             revision: revision.0, locked, toggle_float: &mut toggle_float, tab_pressed: &mut tab_pressed,
-            uv_state: &mut uv_state,
+            uv_state: &mut uv_state, history: &mut history,
         };
         let mut style = egui_dock::Style::from_egui(ctx.style().as_ref());
         style.tab_bar.fill_tab_bar = true;
@@ -591,6 +598,7 @@ struct Panes<'a> {
     /// Pane whose tab the mouse button went down on this frame.
     tab_pressed:    &'a mut Option<Pane>,
     uv_state:       &'a mut uv_editor::UvEditorState,
+    history:        &'a mut history::History,
 }
 
 impl egui_dock::TabViewer for Panes<'_> {
@@ -648,6 +656,10 @@ impl egui_dock::TabViewer for Panes<'_> {
             Pane::SceneExplorer => {
                 egui::ScrollArea::both().id_source("scene_explorer_scroll").auto_shrink([false, false])
                     .show(ui, |ui| draw_scene_explorer(ui, self.hierarchy, self.graph));
+            }
+
+            Pane::History => {
+                history::draw(ui, self.history, self.graph.selected_node);
             }
 
             Pane::OperatorStack => {
@@ -722,6 +734,7 @@ impl egui_dock::TabViewer for Panes<'_> {
                                     for t in templates::TEMPLATES.iter().filter(|t| t.group == group) {
                                         if ui.button(t.name).on_hover_text(t.hint).clicked() {
                                             self.graph_file.message = t.load(self.graph, self.subnets);
+                                            history::note(format!("Template: {}", t.name));
                                             self.nav.current_subnet = None;
                                             ui.close_menu();
                                         }
@@ -759,6 +772,45 @@ impl egui_dock::TabViewer for Panes<'_> {
                     }
                 }
             },
+        }
+    }
+}
+
+/// Undo history: turn the changes of this frame into a step once the
+/// gesture making them is over, and carry out undo, redo and jumps.
+/// Ctrl+Z undoes, Ctrl+Shift+Z or Ctrl+Y redoes (Cmd on macOS), except while
+/// a text field has the keyboard: there they edit the text.
+fn history_system(
+    mut contexts: EguiContexts,
+    mut graph:    ResMut<NodeGraphState>,
+    mut history:  ResMut<history::History>,
+    mut nav:      ResMut<GraphNavigation>,
+    mouse:        Res<ButtonInput<MouseButton>>,
+    browser:      Res<FileBrowser>,
+) {
+    let ctx = contexts.ctx_mut();
+    let typing = ctx.wants_keyboard_input();
+    if !typing && !browser.is_open() {
+        let (redo, undo) = ctx.input_mut(|i| {
+            use egui::{Key, Modifiers};
+            let redo = i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z) || i.consume_key(Modifiers::COMMAND, Key::Y);
+            let undo = !redo && i.consume_key(Modifiers::COMMAND, Key::Z);
+            (redo, undo)
+        });
+        if redo { history.request = Some(history::Request::Redo); }
+        if undo { history.request = Some(history::Request::Undo); }
+    }
+    let busy = typing || browser.is_open()
+        || mouse.get_pressed().next().is_some()
+        || ctx.is_using_pointer()
+        || ctx.input(|i| i.pointer.any_down());
+    // Look without touching: only an actual change marks the graph changed.
+    if history.update(graph.bypass_change_detection(), busy) {
+        graph.set_changed();
+        // Leave a subnet whose node is gone.
+        if let Some(sid) = nav.current_subnet {
+            let there = graph.nodes.iter().any(|n| matches!(&n.node_type, NodeType::Subnet { id, .. } if *id == sid));
+            if !there { nav.current_subnet = None; }
         }
     }
 }

@@ -519,7 +519,8 @@
       </div>
       <div>
         <div class="copy">
-          <p>Eight panes: Viewport, Node Graph, UV Editor, Scene Explorer, Operator Stack, Properties, Primitive Inspector, Timeline. Drag a tab onto another pane, or to a side of the window to span that whole side. One padlock freezes the layout; dividers still resize.</p>
+          <p>Nine panes: Viewport, Node Graph, UV Editor, Scene Explorer, Operator Stack, History, Properties, Primitive Inspector, Timeline. Drag a tab onto another pane, or to a side of the window to span that whole side. One padlock freezes the layout; dividers still resize.</p>
+          <p>Undo keeps a history you can see. Every gesture is one step, named from what changed: "SeaMine: #6 Bevel height 0.12 to 0.29". Click any step to go back to it. Undo, change your mind, and the undone steps wait on a branch. The camera and the layout are never undone, so your view stays put.</p>
           <p>The Primitive Inspector is a spreadsheet of the selected node: vertices, edges, polygons and face corners for a mesh, joints and bones for a clip. It is rebuilt when the graph changes and draws only the rows in view.</p>
           <p>Layout, floating windows, theme, display mode and navigation style come back at the next start.</p>
         </div>
@@ -540,6 +541,8 @@
       <div class="box">
         <h3>Keys</h3>
         <div class="in scroll"><table>
+          <tr><td><kbd>Ctrl</kbd> <kbd>Z</kbd></td><td>Undo</td></tr>
+          <tr><td><kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>Z</kbd> / <kbd>Ctrl</kbd> <kbd>Y</kbd></td><td>Redo</td></tr>
           <tr><td><kbd>Tab</kbd> / right-click</td><td>Add a node</td></tr>
           <tr><td>Right-click an output</td><td>Add the next node, wired</td></tr>
           <tr><td><kbd>F</kbd> <kbd>G</kbd> <kbd>Z</kbd> <kbd>.</kbd></td><td>Frame the selection, down to vertices, edges and polygons</td></tr>
@@ -611,7 +614,7 @@
     <h2>Known gaps</h2>
     <p class="standfirst">It is early days. This is what the program does not do yet.</p>
     <div class="grid3">
-      <div class="box"><h3>General</h3><div class="in"><ul><li>Undo</li><li>Timeline zoom and pan</li><li>ICE subnet contents in saved graphs</li><li>Signed builds</li></ul></div></div>
+      <div class="box"><h3>General</h3><div class="in"><ul><li>Undo inside ICE subnets</li><li>Timeline zoom and pan</li><li>ICE subnet contents in saved graphs</li><li>Signed builds</li></ul></div></div>
       <div class="box"><h3>Modelling and UV</h3><div class="in"><ul><li>Interactive cut, target weld, attach, smoothing groups, material IDs</li><li>Editing single UV vertices and edges</li><li>UVs kept through Edit Poly</li></ul></div></div>
       <div class="box"><h3>USD and mocap</h3><div class="in"><ul><li>Normal and roughness maps in the viewport</li><li>USD cameras, animation, skinning, instancing, references to other files</li><li>IK and foot planting</li></ul></div></div>
     </div>

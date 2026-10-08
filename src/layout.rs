@@ -9,12 +9,12 @@ use egui_dock::{DockState, NodeIndex};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum Pane { Viewport, NodeGraph, SceneExplorer, OperatorStack, Properties, PrimInspector, Timeline, UvEditor }
+pub enum Pane { Viewport, NodeGraph, SceneExplorer, OperatorStack, Properties, PrimInspector, Timeline, UvEditor, History }
 
 impl Pane {
-    pub const ALL: [Pane; 8] = [
+    pub const ALL: [Pane; 9] = [
         Pane::Viewport, Pane::NodeGraph, Pane::SceneExplorer, Pane::OperatorStack,
-        Pane::Properties, Pane::PrimInspector, Pane::Timeline, Pane::UvEditor,
+        Pane::Properties, Pane::PrimInspector, Pane::Timeline, Pane::UvEditor, Pane::History,
     ];
 
     pub fn title(self) -> &'static str {
@@ -27,6 +27,7 @@ impl Pane {
             Pane::PrimInspector => "Primitive Inspector",
             Pane::Timeline      => "Timeline",
             Pane::UvEditor      => "UV Editor",
+            Pane::History       => "History",
         }
     }
 }
@@ -78,7 +79,8 @@ pub struct Layout {
 
 /// Viewport on the left with the inspector under it, then the node graph,
 /// the scene and stack column, and the properties. Timeline along the bottom.
-/// The UV editor is a tab behind the node graph.
+/// The UV editor is a tab behind the node graph, the history a tab behind
+/// the operator stack.
 pub fn default_dock() -> DockState<Pane> {
     let mut dock = DockState::new(vec![Pane::Viewport]);
     let s = dock.main_surface_mut();
@@ -91,6 +93,10 @@ pub fn default_dock() -> DockState<Pane> {
     // The UV editor shares the node graph's place, as a second tab behind it.
     if let Some((surface, node, _)) = dock.find_tab(&Pane::NodeGraph) {
         dock[surface][node].append_tab(Pane::UvEditor);
+        dock.set_active_tab((surface, node, egui_dock::TabIndex(0)));
+    }
+    if let Some((surface, node, _)) = dock.find_tab(&Pane::OperatorStack) {
+        dock[surface][node].append_tab(Pane::History);
         dock.set_active_tab((surface, node, egui_dock::TabIndex(0)));
     }
     dock
