@@ -482,7 +482,7 @@
           <p>Retarget puts the motion of one skeleton on another. Joints are matched by name, ignoring prefixes and namespaces, and bones are aligned in the rest pose, so the two may rest differently.</p>
           <p>Nodes that choose joints by name take comma-separated regular expressions, with a picker listing the joints coming in and a live match count. <code>thumb, index, middle</code> works. So does <code>^Left.*(Arm|Hand)$</code>.</p>
           <p>Ragdoll keeps a captured character out of a set and out of itself. The actor sat on a box; the character sits in the car, on the seat, feet on the floor. 12,227 frames against 1.7 million triangles solve in under five minutes on two cores.</p>
-          <p>Write FBX writes binary files with skeleton, animation, mesh, skin and bind pose, for one file or every file of the folder, in the background.</p>
+          <p>Write FBX sends a clip back out with the skeleton it came in with, whatever was done to it on the way: the same joints, the same Root, the same axes and unit as the source. The engine sees an animation of the skeleton it already has. Motion only, or with the mesh, for one file or every file of the folder, in the background.</p>
         </div>
         <div class="box">
           <h3>The clip nodes</h3>
@@ -541,6 +541,7 @@
       <div class="box">
         <h3>Keys</h3>
         <div class="in scroll"><table>
+          <tr><td><kbd>Ctrl</kbd> <kbd>S</kbd></td><td>Save</td></tr>
           <tr><td><kbd>Ctrl</kbd> <kbd>Z</kbd></td><td>Undo</td></tr>
           <tr><td><kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>Z</kbd> / <kbd>Ctrl</kbd> <kbd>Y</kbd></td><td>Redo</td></tr>
           <tr><td><kbd>Tab</kbd> / right-click</td><td>Add a node</td></tr>

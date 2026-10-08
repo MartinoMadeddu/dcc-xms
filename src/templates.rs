@@ -498,7 +498,7 @@ fn tpose(g: &mut NodeGraphState, _: &mut SubnetStore) -> String {
     let fix   = g.add_node("FixPose".into(), NodeType::FixPose {
         edits: vec![arm("Take01:LeftArm", -20.0), arm("Take01:RightArm", 20.0)] }, p(x, 200.0));
     let skin  = g.add_node("ProxySkin".into(), NodeType::ProxySkin { thickness: 1.6 }, p(x, 290.0));
-    let write = g.add_node("WriteTPose".into(), NodeType::WriteFbx { path: DEFAULT_WRITE_PATH.replace(".fbx", "_tpose.fbx") }, p(x, 380.0));
+    let write = g.add_node("WriteTPose".into(), NodeType::WriteFbx { path: DEFAULT_WRITE_PATH.replace(".fbx", "_tpose.fbx"), mesh: true }, p(x, 380.0));
     g.add_connection(clip, 0, pose, 0);
     g.add_connection(pose, 0, fix, 0);
     g.add_connection(fix, 0, skin, 0);

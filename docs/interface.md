@@ -38,6 +38,25 @@ The layout, the lock and the place of every floating window are saved when they 
 
 When the Viewport pane is closed or hidden behind another tab, the 3D view is not drawn.
 
+## Files
+
+The graph is saved as a JSON file. The top bar shows its name, and "(unsaved)" while it differs from the file.
+
+| To | Do this |
+|---|---|
+| Open a graph | Open, in the node graph header |
+| Open one used lately | Recent: the last ten graphs opened or saved. Files no longer there are greyed out. "Clear the list" empties it |
+| Save | Save or Ctrl+S (Cmd+S on macOS): to the current file, or asks where when there is none yet |
+| Save to a new file | Save as |
+
+Opening a graph is a step in the [history](undo.md): undo goes back to the graph before it.
+
+Closing the window with unsaved changes asks first: Save, Don't save, or Cancel (Esc). Save writes to the current file, or opens the browser for a graph never saved; the program closes once it is written. With nothing unsaved it closes straight away.
+
+![Closing with unsaved changes](xms_unsaved.png)
+
+The list of recent files is kept in `recent.json` in the config folder.
+
 ## Node graph
 
 | To | Do this |

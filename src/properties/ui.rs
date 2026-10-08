@@ -554,12 +554,14 @@ pub fn draw_properties(
                 });
             }
 
-            NodeType::WriteFbx { path } => {
+            NodeType::WriteFbx { path, mesh } => {
                 section_label(ui, "Output file");
                 section(ui, |ui| {
                     path_row(ui, path, crate::types::DEFAULT_WRITE_PATH, io, sel_id, BrowseMode::Folder, "Choose output folder", &["fbx"]);
                     ui.colored_label(xsi::DIM(), egui::RichText::new(
                         "{dir} source folder   {file} source file\n{char} character   {take} take name").small());
+                    ui.checkbox(mesh, "Mesh").on_hover_text(
+                        "Also write the skinned mesh, its skin and bind pose.\nOff: skeleton and motion only, for importing onto a skeleton the engine already has");
                     match &anim.output {
                         Some(c) => {
                             ui.colored_label(xsi::LABEL(), format!("Writes: {}", crate::fbx_writer::resolve_path(path, c).display()));
@@ -567,7 +569,8 @@ pub fn draw_properties(
                                 "{} joints, {}{}",
                                 c.joints.len(),
                                 if c.frames > 1 { format!("{} frames", c.frames) } else { "pose only".into() },
-                                match &c.skin { Some(s) => format!(", mesh {} verts", s.positions.len()), None => String::new() }));
+                                match (&c.skin, *mesh) { (Some(s), true) => format!(", mesh {} verts", s.positions.len()), _ => String::new() }));
+                            ui.colored_label(xsi::DIM(), space_line(c));
                         }
                         None => { ui.colored_label(xsi::DIM(), "No clip connected."); }
                     }
@@ -1541,6 +1544,17 @@ fn detail_combo(ui: &mut egui::Ui, id: &str, detail: &mut u32) {
             for (i, n) in NAMES.iter().enumerate() { ui.selectable_value(detail, i as u32, *n); }
         });
     });
+}
+
+/// The axes and unit a clip is written in.
+fn space_line(c: &crate::core::anim::AnimData) -> String {
+    let axis = |(a, sgn): (i32, i32)| format!("{}{}", if sgn < 0 { "-" } else { "" }, ["X", "Y", "Z"][a.clamp(0, 2) as usize]);
+    let unit = |cm: f64| match cm { x if (x - 1.0).abs() < 1e-9 => "cm".to_string(), x if (x - 100.0).abs() < 1e-9 => "m".into(),
+        x if (x - 0.1).abs() < 1e-9 => "mm".into(), x if (x - 2.54).abs() < 1e-9 => "inches".into(), x => format!("{x} cm units") };
+    match c.space.as_deref() {
+        Some(sp) => format!("{} up, {}, as the source file", axis(sp.up), unit(sp.unit_cm)),
+        None => "Y up, cm (made in this program)".into(),
+    }
 }
 
 fn section_label(ui: &mut egui::Ui, label: &str) {

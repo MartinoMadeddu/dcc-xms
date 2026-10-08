@@ -59,12 +59,12 @@ pub fn file_count(graph: &NodeGraphState, loaders: &[NodeId]) -> usize {
 fn write_once(graph: &NodeGraphState, targets: &[NodeId], progress: &Mutex<Progress>) {
     for id in targets {
         let Some(node) = graph.nodes.iter().find(|n| n.id == *id) else { continue };
-        let NodeType::WriteFbx { path } = &node.node_type else { continue };
+        let NodeType::WriteFbx { path, mesh } = &node.node_type else { continue };
         let line = match graph.eval_anim(*id) {
             None => Err(format!("{}: no clip reaches this node", node.name)),
             Some(clip) => {
                 let out = resolve_path(path, &clip);
-                match write_fbx(&out, &clip, true) {
+                match write_fbx(&out, &clip, true, *mesh) {
                     Ok(s) => Ok(format!(
                         "{}  ({} joints, {}{})",
                         out.display(), s.joints,
@@ -169,7 +169,7 @@ mod tests {
         }
         let two = crate::core::anim::AnimData { joints, tracks: std::sync::Arc::new(tracks), ..c };
         for take in ["take_A", "take_B", "take_C"] {
-            write_fbx(&dir.join(format!("{take}.fbx")), &two, true).unwrap();
+            write_fbx(&dir.join(format!("{take}.fbx")), &two, true, true).unwrap();
         }
 
         let mut g = NodeGraphState::default();

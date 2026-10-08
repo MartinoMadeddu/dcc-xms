@@ -111,6 +111,12 @@ impl FileBrowser {
     /// The chosen path, once. Returned the frame after the user confirms.
     pub fn take_result(&mut self) -> Option<(BrowseTarget, PathBuf)> { self.result.take() }
 
+    /// A path has been chosen and not yet taken.
+    pub fn has_result(&self) -> bool { self.result.is_some() }
+
+    /// Start the next browse in this folder.
+    pub fn set_dir(&mut self, dir: &Path) { if dir.is_dir() { self.dir = dir.to_path_buf(); } }
+
     fn go(&mut self, dir: PathBuf) {
         if !dir.is_dir() { return; }
         self.dir = dir;

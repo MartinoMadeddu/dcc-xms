@@ -12,7 +12,7 @@ use std::time::SystemTime;
 use bevy::math::{Mat4, Quat, Vec3};
 use bevy::prelude::Transform;
 
-use crate::core::anim::{AnimData, FrameRate, Joint, SkinMesh, Track};
+use crate::core::anim::{AnimData, FileSpace, FrameRate, Joint, SkinMesh, Track};
 use crate::types::MeshData;
 
 #[derive(Clone)]
@@ -170,6 +170,29 @@ pub fn load_meshes_cached(path: &str) -> Result<Vec<(String, Arc<MeshData>)>, St
     result
 }
 
+/// Axes, unit and joint kinds as the file has them, from its raw
+/// GlobalSettings: the loader's own conversion does not change those.
+fn file_space(scene: &ufbx::Scene, order: &[usize]) -> FileSpace {
+    let props = &scene.settings.props;
+    let int = |name: &str, default: i32| props.props.iter().find(|p| p.name.as_ref() as &str == name)
+        .map(|p| p.value_int as i32).unwrap_or(default);
+    let real = |name: &str, default: f64| props.props.iter().find(|p| p.name.as_ref() as &str == name)
+        .map(|p| p.value_vec4.x as f64).unwrap_or(default);
+    let mut space = FileSpace::new(
+        (int("UpAxis", 1), int("UpAxisSign", 1)),
+        (int("FrontAxis", 2), int("FrontAxisSign", 1)),
+        (int("CoordAxis", 0), int("CoordAxisSign", 1)),
+        real("UnitScaleFactor", 1.0),
+    );
+    space.root_joints = order.iter().map(|i| &scene.nodes[*i])
+        .filter(|n| n.bone.as_ref().map_or(false, |b| b.is_root))
+        .map(|n| n.element.name.to_string()).collect();
+    space.mesh_name = scene.meshes.iter().find(|m| !m.skin_deformers.is_empty())
+        .and_then(|m| m.element.instances.first().map(|n| n.element.name.to_string()))
+        .unwrap_or_default();
+    space
+}
+
 pub fn load_fbx(path: &str, take: u32) -> Result<LoadedFbx, String> {
     let opts = ufbx::LoadOpts {
         ignore_embedded:    true,
@@ -245,6 +268,7 @@ pub fn load_fbx(path: &str, take: u32) -> Result<LoadedFbx, String> {
     }
 
     let skin = read_skin(&scene, &joint_of, &order).map(Arc::new);
+    let space = Some(Arc::new(file_space(&scene, &order)));
 
     let p    = std::path::Path::new(path);
     let stem = p.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
@@ -276,6 +300,7 @@ pub fn load_fbx(path: &str, take: u32) -> Result<LoadedFbx, String> {
             source_dir:  dir.clone(),
             subject:     String::new(),
             skin:        skin.clone(),
+            space:       space.clone(),
         }
     } else {
         let stack  = &scene.anim_stacks[(take as usize).min(scene.anim_stacks.len() - 1)];
@@ -303,6 +328,7 @@ pub fn load_fbx(path: &str, take: u32) -> Result<LoadedFbx, String> {
             source_dir:  dir.clone(),
             subject:     String::new(),
             skin:        skin.clone(),
+            space:       space.clone(),
         }
     };
 

@@ -102,7 +102,11 @@ pub enum NodeType {
     /// Spheres and cylinders bound to the skeleton.
     ProxySkin    { thickness: f32 },
     /// Passes the clip through. Writing happens from the properties panel.
-    WriteFbx     { path: String },
+    /// `mesh`: also write the skinned mesh, skin and bind pose. Off, the
+    /// file holds the skeleton and its motion only, which is what an engine
+    /// imports onto a skeleton it already has. Graphs saved before the
+    /// switch existed wrote the mesh, and still do.
+    WriteFbx     { path: String, #[serde(default = "yes")] mesh: bool },
 
     // ── Mocap tools ──────────────────────────────────────────────────────────
     /// Swap left and right.
@@ -928,4 +932,6 @@ pub fn rebuild(&mut self, entries: Vec<(NodeId, String, EvalResult)>) {
         }
     }
 }
+fn yes() -> bool { true }
+
 fn one_tile() -> u32 { 1 }

@@ -1,23 +1,29 @@
 //! Binary FBX export (version 7500).
 //!
 //! Writes a clip as a skeleton with baked Translation / Rotation curves, and
-//! its bound mesh, if any, as geometry with a skin deformer and a bind pose.
-//! The layout follows what Motive and the FBX SDK write: Y-up, centimetres,
-//! XYZ Euler rotations, one key per frame.
+//! its bound mesh, if wanted, as geometry with a skin deformer and a bind
+//! pose. XYZ Euler rotations, one key per frame.
+//!
+//! A clip read from a file is written in that file's axes and unit, with
+//! its joints as they were: the same names, hierarchy, kinds ("Root" or
+//! "LimbNode") and local values. An engine that imported the source sees
+//! the same skeleton. A clip made in the program is written Y up, in
+//! centimetres.
 //!
 //! The file is built as a tree of nodes in memory and serialised in one pass.
 
 use std::io::Write;
 use std::path::Path;
 
-use bevy::math::{EulerRot, Mat4, Quat, Vec3};
+use bevy::math::{Mat4, Quat, Vec3};
+use bevy::prelude::Transform;
 use flate2::{write::ZlibEncoder, Compression};
 
-use crate::core::anim::{AnimData, FrameRate, SkinMesh};
+use crate::core::anim::{AnimData, FileSpace, FrameRate, SkinMesh};
 
 /// FBX time units per second.
 const KTIME: i128 = 46_186_158_000;
-/// Internal unit is the metre; files are written in centimetres.
+/// Internal unit is the metre; a clip made in the program is written in centimetres.
 const CM: f32 = 100.0;
 const VERSION: u32 = 7500;
 
@@ -171,9 +177,25 @@ fn time_mode(rate: FrameRate, drop_frame: bool) -> (i32, f64) {
 }
 
 /// Quaternion to FBX XYZ Euler angles in degrees (R = Rz * Ry * Rx).
+/// From the rotation matrix, in double precision, with Y from atan2: a
+/// library conversion that treats anything near 90 degrees of Y as the
+/// singular case was half a degree out on a captured clavicle at 89.7.
 fn euler_xyz(q: Quat) -> [f64; 3] {
-    let (z, y, x) = q.to_euler(EulerRot::ZYX);
-    [x.to_degrees() as f64, y.to_degrees() as f64, z.to_degrees() as f64]
+    let q = bevy::math::DQuat::from_xyzw(q.x as f64, q.y as f64, q.z as f64, q.w as f64).normalize();
+    let m = bevy::math::DMat3::from_quat(q);
+    // m.col(c)[r] is row r, column c. R = Rz * Ry * Rx.
+    let (m00, m10, m20) = (m.x_axis.x, m.x_axis.y, m.x_axis.z);
+    let (m21, m22) = (m.y_axis.z, m.z_axis.z);
+    let cy = (m00 * m00 + m10 * m10).sqrt();
+    let y = (-m20).atan2(cy);
+    let (x, z) = if cy > 1e-12 {
+        (m21.atan2(m22), m10.atan2(m00))
+    } else {
+        // Exactly at 90 degrees: X and Z turn about the same axis; put it all on X.
+        let (m01, m11) = (m.y_axis.x, m.y_axis.y);
+        ((-m01 * m20.signum()).atan2(m11), 0.0)
+    };
+    [x.to_degrees(), y.to_degrees(), z.to_degrees()]
 }
 
 /// Pick the representation of `e` closest to `prev`, so curves stay
@@ -188,9 +210,7 @@ fn unroll(prev: [f64; 3], e: [f64; 3]) -> [f64; 3] {
 }
 
 fn matrix(m: Mat4) -> Prop {
-    let mut a = m.to_cols_array();
-    for i in 12..15 { a[i] *= CM; }
-    Prop::ArrF64(a.iter().map(|x| *x as f64).collect())
+    Prop::ArrF64(m.to_cols_array().iter().map(|x| *x as f64).collect())
 }
 
 // ============================================================================
@@ -224,9 +244,12 @@ fn curve(id: i64, times: &[i64], values: Vec<f32>) -> Node {
     ])
 }
 
-fn geometry(id: i64, name: &str, skin: &SkinMesh) -> Node {
+/// The skinned mesh, in the file's space (`to_file`).
+fn geometry(id: i64, name: &str, skin: &SkinMesh, to_file: Mat4) -> Node {
+    let turn = bevy::math::Mat3::from_mat4(to_file);
     let verts: Vec<f64> = skin.positions.iter()
-        .flat_map(|v| [(v.x * CM) as f64, (v.y * CM) as f64, (v.z * CM) as f64])
+        .map(|v| to_file.transform_point3(*v))
+        .flat_map(|v| [v.x as f64, v.y as f64, v.z as f64])
         .collect();
     let mut index: Vec<i32> = vec![];
     let mut normals: Vec<f64> = vec![];
@@ -235,7 +258,7 @@ fn geometry(id: i64, name: &str, skin: &SkinMesh) -> Node {
         for (k, vi) in f[..n].iter().enumerate() {
             // The last index of a polygon is stored bit-inverted.
             index.push(if k == n - 1 { !(*vi as i32) } else { *vi as i32 });
-            let nr = skin.normals[*vi as usize];
+            let nr = (turn * skin.normals[*vi as usize]).normalize_or_zero();
             normals.extend([nr.x as f64, nr.y as f64, nr.z as f64]);
         }
     }
@@ -270,10 +293,27 @@ fn geometry(id: i64, name: &str, skin: &SkinMesh) -> Node {
 
 /// Write `clip` to `path`. With `animation` false, or a single-frame clip,
 /// the file holds the pose of the first frame and no animation.
-pub fn write_fbx(path: &Path, clip: &AnimData, animation: bool) -> std::io::Result<WriteStats> {
+pub fn write_fbx(path: &Path, clip: &AnimData, animation: bool, with_mesh: bool) -> std::io::Result<WriteStats> {
     if clip.joints.is_empty() {
         return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "clip has no joints"));
     }
+    // From this program's space to the file's. The joints at the top of the
+    // hierarchy carry the conversion (`pre` then their own transform then
+    // `post`); the joints under them only change unit (`post` on both sides).
+    // A clip from a file: its top joints hold the file-to-program turn and
+    // scale, which `pre` takes off, and the joints under them are already
+    // in the file's unit. A clip made here: metres to centimetres throughout.
+    let (space, pre, post) = match clip.space.as_deref() {
+        Some(sp) => (sp.clone(), sp.to_internal.inverse(), Mat4::IDENTITY),
+        None => (FileSpace::y_up_cm(), Mat4::from_scale(Vec3::splat(CM)), Mat4::from_scale(Vec3::splat(1.0 / CM))),
+    };
+    let post_inv = post.inverse();
+    let to_file = |j: usize, l: &Transform| -> Transform {
+        let m = l.compute_matrix();
+        let f = if clip.joints[j].parent.is_none() { pre * m * post } else { post_inv * m * post };
+        Transform::from_matrix(f)
+    };
+    let bind_matrix = |m: &Mat4| matrix(pre * *m * post);
     let frames    = clip.frames.max(1);
     let animated  = animation && frames > 1;
     let take      = if clip.name.is_empty() { "Take 001" } else { clip.name.as_str() };
@@ -286,19 +326,21 @@ pub fn write_fbx(path: &Path, clip: &AnimData, animation: bool) -> std::io::Resu
     // ── Skeleton ─────────────────────────────────────────────────────────────
     let joint_ids: Vec<i64> = clip.joints.iter().map(|_| ids.next()).collect();
     for (j, joint) in clip.joints.iter().enumerate() {
-        let (class, flags) = if joint.is_bone { ("LimbNode", "Skeleton") } else { ("Null", "Null") };
+        let is_root = joint.is_bone && space.root_joints.iter().any(|r| *r == joint.name);
+        let (class, flags): (&str, &[&str]) = if is_root { ("Root", &["Null", "Skeleton", "Root"]) }
+            else if joint.is_bone { ("LimbNode", &["Skeleton"]) } else { ("Null", &["Null"]) };
         let attr = ids.next();
         objects.push(node("NodeAttribute", vec![Prop::I64(attr), named(&joint.name, "NodeAttribute"), s(class)], vec![
-            leaf("TypeFlags", vec![s(flags)]),
+            leaf("TypeFlags", flags.iter().map(|f| s(f)).collect()),
         ]));
 
         let has_track = animated && clip.tracks.get(j).map(|t| t.len() > 1).unwrap_or(false);
         let flag = if has_track { "A+" } else { "A" };
-        let l = clip.local(j, 0);
+        let l = to_file(j, &clip.local(j, 0));
         let mut props = vec![
             p_int("DefaultAttributeIndex", 0),
             p_vec("Lcl Translation", flag,
-                [(l.translation.x * CM) as f64, (l.translation.y * CM) as f64, (l.translation.z * CM) as f64]),
+                [l.translation.x as f64, l.translation.y as f64, l.translation.z as f64]),
             p_vec("Lcl Rotation", flag, euler_xyz(l.rotation)),
         ];
         if (l.scale - Vec3::ONE).abs().max_element() > 1e-6 {
@@ -334,12 +376,13 @@ pub fn write_fbx(path: &Path, clip: &AnimData, animation: bool) -> std::io::Resu
 
             let mut tr: [Vec<f32>; 3] = Default::default();
             let mut ro: [Vec<f32>; 3] = Default::default();
-            let mut prev = euler_xyz(track[0].rotation);
+            let mut prev = euler_xyz(to_file(j, &track[0]).rotation);
             for t in &track[..n] {
+                let t = to_file(j, t);
                 let e = unroll(prev, euler_xyz(t.rotation));
                 prev = e;
                 for a in 0..3 {
-                    tr[a].push(t.translation[a] * CM);
+                    tr[a].push(t.translation[a]);
                     ro[a].push(e[a] as f32);
                 }
             }
@@ -364,13 +407,13 @@ pub fn write_fbx(path: &Path, clip: &AnimData, animation: bool) -> std::io::Resu
 
     // ── Mesh, skin, bind pose ────────────────────────────────────────────────
     let mut vertices = 0;
-    if let Some(skin) = clip.skin.as_ref().filter(|s| !s.positions.is_empty() && s.bind.len() == clip.joints.len()) {
+    if let Some(skin) = clip.skin.as_ref().filter(|s| with_mesh && !s.positions.is_empty() && s.bind.len() == clip.joints.len()) {
         vertices = skin.positions.len();
         let base = if clip.subject.is_empty() { take } else { clip.subject.as_str() };
-        let mesh_name = format!("{base}_Mesh");
+        let mesh_name = if space.mesh_name.is_empty() { format!("{base}_Mesh") } else { space.mesh_name.clone() };
         let (mesh, geo, deformer, pose) = (ids.next(), ids.next(), ids.next(), ids.next());
 
-        objects.push(geometry(geo, &mesh_name, skin));
+        objects.push(geometry(geo, &mesh_name, skin, pre));
         objects.push(node("Model", vec![Prop::I64(mesh), named(&mesh_name, "Model"), s("Mesh")], vec![
             leaf("Version", vec![Prop::I32(232)]),
             node("Properties70", vec![], vec![p_int("DefaultAttributeIndex", 0)]),
@@ -407,8 +450,8 @@ pub fn write_fbx(path: &Path, clip: &AnimData, animation: bool) -> std::io::Resu
                 leaf("Indexes", vec![Prop::ArrI32(verts)]),
                 leaf("Weights", vec![Prop::ArrF64(weights)]),
                 // Mesh space to joint space at bind time, and the joint's world matrix.
-                leaf("Transform", vec![matrix(skin.bind[j].inverse())]),
-                leaf("TransformLink", vec![matrix(skin.bind[j])]),
+                leaf("Transform", vec![matrix((pre * skin.bind[j] * post).inverse())]),
+                leaf("TransformLink", vec![bind_matrix(&skin.bind[j])]),
             ]));
             conns.extend([oo(cluster, deformer), oo(joint_ids[j], cluster)]);
         }
@@ -418,7 +461,7 @@ pub fn write_fbx(path: &Path, clip: &AnimData, animation: bool) -> std::io::Resu
         ])];
         for (j, m) in skin.bind.iter().enumerate() {
             pose_nodes.push(node("PoseNode", vec![], vec![
-                leaf("Node", vec![Prop::I64(joint_ids[j])]), leaf("Matrix", vec![matrix(*m)]),
+                leaf("Node", vec![Prop::I64(joint_ids[j])]), leaf("Matrix", vec![bind_matrix(m)]),
             ]));
         }
         let mut kids = vec![
@@ -480,11 +523,11 @@ pub fn write_fbx(path: &Path, clip: &AnimData, animation: bool) -> std::io::Resu
         node("GlobalSettings", vec![], vec![
             leaf("Version", vec![Prop::I32(1000)]),
             node("Properties70", vec![], vec![
-                p_int("UpAxis", 1), p_int("UpAxisSign", 1),
-                p_int("FrontAxis", 2), p_int("FrontAxisSign", 1),
-                p_int("CoordAxis", 0), p_int("CoordAxisSign", 1),
-                p_int("OriginalUpAxis", -1), p_int("OriginalUpAxisSign", 1),
-                p_double("UnitScaleFactor", 1.0), p_double("OriginalUnitScaleFactor", 1.0),
+                p_int("UpAxis", space.up.0), p_int("UpAxisSign", space.up.1),
+                p_int("FrontAxis", space.front.0), p_int("FrontAxisSign", space.front.1),
+                p_int("CoordAxis", space.coord.0), p_int("CoordAxisSign", space.coord.1),
+                p_int("OriginalUpAxis", space.up.0), p_int("OriginalUpAxisSign", space.up.1),
+                p_double("UnitScaleFactor", space.unit_cm), p_double("OriginalUnitScaleFactor", space.unit_cm),
                 p("AmbientColor", "ColorRGB", "Color", "", vec![Prop::F64(0.0), Prop::F64(0.0), Prop::F64(0.0)]),
                 p("DefaultCamera", "KString", "", "", vec![s("Producer Perspective")]),
                 p_enum("TimeMode", mode), p_enum("TimeProtocol", 2), p_enum("SnapOnFrameMode", 0),
@@ -589,7 +632,7 @@ mod tests {
         for rate in [FrameRate::new(30, 1), FrameRate::new(120, 1), FrameRate::new(30000, 1001)] {
             let c = create_test_clip(2.0, rate);
             let path = tmp(&format!("anim_{}", rate.num));
-            let stats = write_fbx(&path, &c, true).unwrap();
+            let stats = write_fbx(&path, &c, true, true).unwrap();
             assert_eq!(stats.frames, c.frames);
 
             let back = load_fbx(path.to_str().unwrap(), 0).unwrap().anim;
@@ -632,7 +675,7 @@ mod tests {
             prev = e;
         }
         let path = tmp("spin");
-        write_fbx(&path, &c, true).unwrap();
+        write_fbx(&path, &c, true, true).unwrap();
         let back = load_fbx(path.to_str().unwrap(), 0).unwrap().anim;
         let j = remap(&c, &back)[13];
         for f in 0..c.frames {
@@ -644,7 +687,7 @@ mod tests {
     fn static_pose_has_no_animation() {
         let t = create_test_clip(2.0, FrameRate::new(30, 1)).auto_tpose(None);
         let path = tmp("static");
-        assert_eq!(write_fbx(&path, &t, true).unwrap().frames, 0);
+        assert_eq!(write_fbx(&path, &t, true, true).unwrap().frames, 0);
         let loaded = load_fbx(path.to_str().unwrap(), 0).unwrap();
         assert!(loaded.takes.is_empty());
         assert_eq!(loaded.anim.frames, 1);
@@ -667,7 +710,7 @@ mod tests {
             .with_proxy_skin(1.0);
         let skin = t.skin.clone().unwrap();
         let path = tmp("skin");
-        let stats = write_fbx(&path, &t, true).unwrap();
+        let stats = write_fbx(&path, &t, true, true).unwrap();
         assert_eq!(stats.vertices, skin.positions.len());
 
         let scene = ufbx::load_file(path.to_str().unwrap(), ufbx::LoadOpts::default()).unwrap();
@@ -734,5 +777,211 @@ mod tests {
         assert_eq!(ktime(1, FrameRate::new(30, 1)), 1_539_538_600);
         assert_eq!(ktime(120, FrameRate::new(120, 1)), 46_186_158_000);
         assert_eq!(ktime(30000, FrameRate::new(30000, 1001)), 46_186_158_000 * 1001);
+    }
+
+    // ── Same skeleton out as in ──────────────────────────────────────────────
+
+    /// What an importer sees, read without any conversion: axes, unit, and
+    /// per node its name, parent, kind and local transform at some frames.
+    struct Raw {
+        settings: (i64, i64, i64, i64, i64, i64, f64),
+        nodes: std::collections::HashMap<String, (String, String, Vec<(Vec3, Quat, Vec3)>)>,
+    }
+
+    fn raw(path: &std::path::Path, frames: &[i64], fps: f64) -> Raw {
+        let scene = ufbx::load_file(path.to_str().unwrap(), ufbx::LoadOpts { ignore_geometry: true, ignore_embedded: true, ..Default::default() }).unwrap();
+        let props = &scene.settings.props;
+        let int = |n: &str| props.props.iter().find(|p| p.name.as_ref() as &str == n).map(|p| p.value_int).unwrap_or(-9);
+        let real = |n: &str| props.props.iter().find(|p| p.name.as_ref() as &str == n).map(|p| p.value_vec4.x as f64).unwrap_or(-9.0);
+        let settings = (int("UpAxis"), int("UpAxisSign"), int("FrontAxis"), int("FrontAxisSign"), int("CoordAxis"), int("CoordAxisSign"), real("UnitScaleFactor"));
+        let anim = scene.anim_stacks.first().map(|s| &s.anim);
+        let mut nodes = std::collections::HashMap::new();
+        for n in scene.nodes.iter().filter(|n| n.bone.is_some()) {
+            let kind = if n.bone.as_ref().unwrap().is_root { "Root" } else { "LimbNode" }.to_string();
+            let parent = n.parent.as_ref().map(|p| p.element.name.to_string()).unwrap_or_default();
+            let samples = frames.iter().map(|f| {
+                let t = match &anim { Some(a) => ufbx::evaluate_transform(a, n, *f as f64 / fps), None => n.local_transform.clone() };
+                (Vec3::new(t.translation.x as f32, t.translation.y as f32, t.translation.z as f32),
+                 Quat::from_xyzw(t.rotation.x as f32, t.rotation.y as f32, t.rotation.z as f32, t.rotation.w as f32),
+                 Vec3::new(t.scale.x as f32, t.scale.y as f32, t.scale.z as f32))
+            }).collect();
+            nodes.insert(n.element.name.to_string(), (parent, kind, samples));
+        }
+        Raw { settings, nodes }
+    }
+
+    /// Largest differences between two files: translation (file units),
+    /// rotation (degrees), scale. Panics if the skeletons differ in names,
+    /// parents, kinds, axes or unit.
+    fn same_skeleton(a: &Raw, b: &Raw) -> (f32, f32, f32) {
+        assert_eq!(a.settings, b.settings, "axes and unit");
+        assert_eq!(a.nodes.len(), b.nodes.len(), "number of bones");
+        let (mut dt, mut dr, mut ds) = (0.0f32, 0.0f32, 0.0f32);
+        for (name, (pa, ka, sa)) in &a.nodes {
+            let (pb, kb, sb) = b.nodes.get(name).unwrap_or_else(|| panic!("{name} missing"));
+            assert_eq!((pa, ka), (pb, kb), "parent and kind of {name}");
+            for (x, y) in sa.iter().zip(sb) {
+                dt = dt.max((x.0 - y.0).length());
+                // Small angles: from the sine, which keeps its precision near zero.
+                let d = x.1.inverse() * y.1;
+                dr = dr.max((2.0 * d.xyz().length().min(1.0).asin()).to_degrees());
+                ds = ds.max((x.2 - y.2).abs().max_element());
+            }
+        }
+        (dt, dr, ds)
+    }
+
+    #[test]
+    fn a_file_read_and_written_again_has_the_same_skeleton() {
+        let c = create_test_clip(1.0, FrameRate::new(30, 1));
+        let a = tmp("same_a");
+        write_fbx(&a, &c, true, false).unwrap();
+        let back = load_fbx(a.to_str().unwrap(), 0).unwrap().anim;
+        assert!(back.space.is_some());
+        let b = tmp("same_b");
+        write_fbx(&b, &back, true, false).unwrap();
+        let frames: Vec<i64> = (0..30).map(|k| c.start_frame + k).collect();
+        let (dt, dr, ds) = same_skeleton(&raw(&a, &frames, 30.0), &raw(&b, &frames, 30.0));
+        assert!(dt < 1e-3 && dr < 1e-2 && ds < 1e-5, "{dt} {dr} {ds}");
+    }
+
+    /// A Z-up file in centimetres, as Unreal writes: read into Y-up metres,
+    /// written back Z-up in centimetres with the top joint as it was.
+    #[test]
+    fn a_z_up_clip_goes_back_out_z_up() {
+        let c = create_test_clip(1.0, FrameRate::new(30, 1));
+        // The clip as the loader holds a Z-up centimetre file: the joints
+        // under the top in centimetres, the top carrying the conversion.
+        let space = FileSpace::z_up_cm();
+        let cm = Mat4::from_scale(Vec3::splat(100.0));
+        let tracks: Vec<Vec<Transform>> = c.tracks.iter().enumerate().map(|(j, tr)| tr.iter().map(|t| {
+            let m = t.compute_matrix();
+            Transform::from_matrix(if c.joints[j].parent.is_none() { m * cm.inverse() } else { cm * m * cm.inverse() })
+        }).collect()).collect();
+        let mut zc = AnimData { tracks: std::sync::Arc::new(tracks), space: Some(std::sync::Arc::new(space)), ..c.clone() };
+        for j in zc.joints.iter_mut() {
+            let m = j.rest.compute_matrix();
+            j.rest = Transform::from_matrix(if j.parent.is_none() { m * cm.inverse() } else { cm * m * cm.inverse() });
+        }
+        let path = tmp("zup");
+        write_fbx(&path, &zc, true, false).unwrap();
+        // Raw: Z up, centimetres, the hips at 95 cm up Z.
+        let frames: Vec<i64> = vec![c.start_frame];
+        let r = raw(&path, &frames, 30.0);
+        assert_eq!(r.settings, (2, 1, 1, -1, 0, 1, 1.0));
+        let hips = &r.nodes["Take01:Hips"].2[0];
+        assert!(close(hips.0, Vec3::new(0.0, 0.0, c.tracks[0][0].translation.y * 100.0), 1e-3), "{:?}", hips.0);
+        // Read back: the same world motion as the original clip.
+        let back = load_fbx(path.to_str().unwrap(), 0).unwrap().anim;
+        assert_eq!(back.space.as_ref().unwrap().up, (2, 1));
+        for f in [0, 7, 21] {
+            let (wa, wb) = (c.world_pose(f), back.world_pose(f));
+            for j in 0..c.joints.len() {
+                let k = back.joints.iter().position(|x| x.name == c.joints[j].name).unwrap();
+                assert!(close(wa[j].w_axis.truncate(), wb[k].w_axis.truncate(), 1e-4), "joint {j} frame {f}");
+            }
+        }
+        // And written again, the same file.
+        let again = tmp("zup_again");
+        write_fbx(&again, &back, true, false).unwrap();
+        let frames: Vec<i64> = (0..30).map(|k| c.start_frame + k).collect();
+        let (dt, dr, ds) = same_skeleton(&raw(&path, &frames, 30.0), &raw(&again, &frames, 30.0));
+        assert!(dt < 1e-3 && dr < 1e-2 && ds < 1e-5, "{dt} {dr} {ds}");
+    }
+
+    #[test]
+    fn root_joints_stay_root_joints() {
+        let mut c = create_test_clip(0.5, FrameRate::new(30, 1));
+        let mut sp = FileSpace::y_up_cm();
+        sp.root_joints = vec![c.joints[0].name.clone()];
+        let cm = Mat4::from_scale(Vec3::splat(100.0));
+        let tracks: Vec<Vec<Transform>> = c.tracks.iter().enumerate().map(|(j, tr)| tr.iter().map(|t| {
+            let m = t.compute_matrix();
+            Transform::from_matrix(if c.joints[j].parent.is_none() { m * cm.inverse() } else { cm * m * cm.inverse() })
+        }).collect()).collect();
+        c.tracks = std::sync::Arc::new(tracks);
+        c.space = Some(std::sync::Arc::new(sp));
+        let path = tmp("rootkind");
+        write_fbx(&path, &c, true, false).unwrap();
+        let r = raw(&path, &[c.start_frame], 30.0);
+        assert_eq!(r.nodes["Take01:Hips"].1, "Root");
+        assert_eq!(r.nodes["Take01:Spine"].1, "LimbNode");
+        let back = load_fbx(path.to_str().unwrap(), 0).unwrap().anim;
+        assert_eq!(back.space.as_ref().unwrap().root_joints, vec!["Take01:Hips".to_string()]);
+    }
+
+    /// A real take, read and written: every bone the same as in the source,
+    /// names, parents, kinds, axes, unit and local values. Set
+    /// XMS_SAME_SKELETON to an FBX file to run it; XMS_SAME_SKELETON_RAGDOLL
+    /// to a collider mesh to put a ragdoll solve in between.
+    #[test]
+    #[ignore]
+    fn real_take_has_the_same_skeleton() {
+        let Ok(src) = std::env::var("XMS_SAME_SKELETON") else { return };
+        let clip = load_fbx(&src, 0).unwrap().anim;
+        let fps = clip.rate.fps();
+        let a = clip.start_frame + 3000.min(clip.frames as i64 - 1);
+        let trimmed = clip.trimmed(3000.min(clip.frames - 1), clip.frames.saturating_sub(3300).min(clip.frames - 1));
+        let out = tmp("real_same");
+        write_fbx(&out, &trimmed, true, false).unwrap();
+        let frames: Vec<i64> = (a..a + 300).step_by(7).collect();
+        let (dt, dr, ds) = same_skeleton(&raw(std::path::Path::new(&src), &frames, fps), &raw(&out, &frames, fps));
+        println!("same skeleton: largest difference {dt} units, {dr} degrees, scale {ds}");
+        let with_mesh = tmp("real_same_mesh");
+        let s = write_fbx(&with_mesh, &trimmed, true, true).unwrap();
+        println!("with mesh: {} vertices", s.vertices);
+        let r = raw(&with_mesh, &frames[..1], fps);
+        assert_eq!(r.nodes.len(), raw(std::path::Path::new(&src), &frames[..1], fps).nodes.len());
+    }
+
+    /// Euler angles give back the rotation they came from, near and at 90
+    /// degrees of Y too.
+    #[test]
+    fn euler_angles_hold_near_gimbal_lock() {
+        let back = |e: [f64; 3]| {
+            let r = |a: f64| a.to_radians();
+            bevy::math::DQuat::from_rotation_z(r(e[2])) * bevy::math::DQuat::from_rotation_y(r(e[1])) * bevy::math::DQuat::from_rotation_x(r(e[0]))
+        };
+        let mut seed = 7u64;
+        let mut rnd = move || { seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407); ((seed >> 11) as f64 / (1u64 << 53) as f64) * 2.0 - 1.0 };
+        let mut worst = 0.0f64;
+        for k in 0..4000 {
+            let y = match k % 4 { 0 => 90.0, 1 => -90.0, 2 => 89.7 + rnd() * 0.3, _ => rnd() * 180.0 };
+            let q = Quat::from_rotation_z((rnd() * 180.0).to_radians() as f32)
+                * Quat::from_rotation_y((y as f32).to_radians())
+                * Quat::from_rotation_x((rnd() * 180.0).to_radians() as f32);
+            let e = euler_xyz(q);
+            let d = bevy::math::DQuat::from_xyzw(q.x as f64, q.y as f64, q.z as f64, q.w as f64).normalize().inverse() * back(e);
+            worst = worst.max((2.0 * d.xyz().length().min(1.0).asin()).to_degrees());
+        }
+        assert!(worst < 1e-3, "worst {worst} degrees");
+    }
+
+    /// The ragdoll template's take, as shipped (packed) and after the shipped
+    /// solve, written out: the skeleton of the source FBX, bone for bone.
+    /// XMS_SAME_SKELETON: the source FBX of the take.
+    #[test]
+    #[ignore]
+    fn ragdoll_template_writes_the_source_skeleton() {
+        let Ok(src) = std::env::var("XMS_SAME_SKELETON") else { return };
+        std::env::set_var("XMS_CACHE_DIR", std::env::temp_dir().join("xms_ragdoll_none"));
+        let mut g = crate::node_graph::NodeGraphState::default();
+        let mut subnets = crate::ice::SubnetStore::default();
+        let t = crate::templates::TEMPLATES.iter().find(|t| t.name.starts_with("Ragdoll")).unwrap();
+        (t.build)(&mut g, &mut subnets);
+        let id = g.nodes.iter().find(|n| matches!(n.node_type, crate::types::NodeType::Ragdoll { .. })).unwrap().id;
+        let (take, _) = g.ragdoll_inputs(id);
+        let take = take.unwrap();
+        let solved = g.eval_anim(id).unwrap();
+        assert!(!std::sync::Arc::ptr_eq(&take, &solved), "the shipped solve is applied");
+        let fps = take.rate.fps();
+        let frames: Vec<i64> = (2000..2600).step_by(13).collect();
+        let source = raw(std::path::Path::new(&src), &frames, fps);
+        for (name, clip) in [("packed take", &take), ("after the ragdoll", &solved)] {
+            let out = tmp("ragdoll_out");
+            write_fbx(&out, clip, true, false).unwrap();
+            let (dt, dr, ds) = same_skeleton(&source, &raw(&out, &frames, fps));
+            println!("{name}: same names, parents, kinds, axes and unit; largest difference {dt} cm, {dr} degrees, scale {ds}");
+        }
     }
 }

@@ -707,7 +707,7 @@ fn add_node_menu(ui: &mut egui::Ui, graph: &mut NodeGraphState, cp: egui::Pos2) 
         }
         if ui.button("💾  Write FBX").clicked() {
             graph.add_node("Write".into(), NodeType::WriteFbx {
-                path: crate::types::DEFAULT_WRITE_PATH.into() }, cp); added = true;
+                path: crate::types::DEFAULT_WRITE_PATH.into(), mesh: false }, cp); added = true;
         }
         ui.separator();
         ui.label(egui::RichText::new("Mocap tools").strong());

@@ -67,7 +67,7 @@ Load a folder of FBX takes, split the characters, fix the pose, skin a proxy and
 - **Clip tools:** mirror, smooth, in place, transform, blend, loop, retarget, time warp, prune joints, floor
 - **Name patterns, not typing:** nodes that work on joints by name take comma-separated regular expressions, with a picker listing the joints coming in and a live match count
 - **Batch nodes:** split characters, auto T-pose, fix pose, proxy skin, write FBX
-- **Write FBX:** skeleton, animation, mesh, skin and bind pose, for one file or the whole folder, in the background
+- **Write FBX, the skeleton it came in with:** after any process, a clip goes back out with the source file's joint names, hierarchy, Root and LimbNode kinds, axes and unit, so an engine sees an animation of the skeleton it already has. Motion only, or with the mesh, skin and bind pose. One file or the whole folder, in the background
 
 ![A two-character motion capture take, loaded from FBX](docs/xms_mocap.png)
 
@@ -105,6 +105,7 @@ Ctrl+Z and Ctrl+Shift+Z undo and redo everything in the scene: nodes, parameters
 - **Frame it:** F, G, Z or . frames the selection, down to selected vertices, edges and polygons. A or H frames everything
 - **Your navigation:** Maya, Houdini, XSI, Blender, Max, Modo or Unreal viewport controls, from a menu
 - **Remembered:** layout, floating windows, theme and navigation style come back at the next start
+- **Files:** Open, Recent (the last ten), Save, Save as, Ctrl+S. The top bar shows the file and whether it is saved; closing with unsaved changes asks first
 - **Fast:** the graph is cooked when its content changes, not on every frame
 - **Three themes, all editable:** Light, Dark, and ADHD (dark blues, with orange for whatever is selected or active). A colour editor changes any of them
 - **Layouts as files:** save a layout, load it back, pass it to someone else
@@ -157,7 +158,7 @@ On Ubuntu or Debian, first:
 - ICE subnet contents in saved graphs
 - The program icon inside the file itself (Windows Explorer, macOS dock). The window and task bar icon is set on X11 and Windows
 - Viewport interaction has been tested with simulated input, not yet thoroughly by hand
-- Import into Unreal has not been tested. Written files were checked by reading them back and against a reference script, on one OptiTrack Motive take
+- Import into Unreal has not been tried here. Written files are compared with their source FBX bone for bone (names, parents, kinds, axes, unit, local values), on a MetaHuman take
 
 ## Example files
 

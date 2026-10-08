@@ -217,6 +217,10 @@ pub struct History {
     /// History pane: list only the steps that touched the selected node.
     pub only_selected: bool,
     started: bool,
+    /// The document as last opened or saved, to tell unsaved changes.
+    clean:   Option<u64>,
+    clean_pending: bool,
+    dirty:   bool,
 }
 
 impl Default for History {
@@ -236,7 +240,8 @@ fn take_note() -> Option<(String, Kind)> { NOTE.lock().ok().and_then(|mut n| n.t
 
 impl History {
     pub fn with_budget(budget: usize) -> Self {
-        Self { steps: vec![], root: 0, current: 0, bytes: 0, budget, request: None, only_selected: false, started: false }
+        Self { steps: vec![], root: 0, current: 0, bytes: 0, budget, request: None, only_selected: false, started: false,
+               clean: None, clean_pending: false, dirty: false }
     }
 
     pub fn step(&self, i: usize) -> Option<&Step> { self.steps.get(i).and_then(|s| s.as_ref()) }
@@ -246,6 +251,14 @@ impl History {
     pub fn len(&self) -> usize { self.steps.iter().flatten().count() }
     pub fn can_undo(&self) -> bool { self.step(self.current).map_or(false, |s| s.parent.is_some()) }
     pub fn can_redo(&self) -> bool { self.redo_target().is_some() }
+
+    /// The scene differs from the file it was last opened from or saved to
+    /// (or, before any, from how the program started).
+    pub fn is_dirty(&self) -> bool { self.dirty }
+
+    /// The scene now matches its file: just opened or saved. Taken at the
+    /// next `update`, once the frame's changes are in.
+    pub fn mark_clean(&mut self) { self.clean_pending = true; }
 
     fn redo_target(&self) -> Option<usize> {
         let s = self.step(self.current)?;
@@ -264,6 +277,9 @@ impl History {
         self.current = 0;
         self.bytes = bytes;
         self.started = true;
+        self.clean = Some(core);
+        self.clean_pending = false;
+        self.dirty = false;
         take_note();
     }
 
@@ -275,12 +291,16 @@ impl History {
         if !self.started { self.start(g); return false; }
         if busy { return false; }
         self.commit(g);
-        match self.request.take() {
+        let changed = match self.request.take() {
             Some(Request::Undo) => self.undo(g),
             Some(Request::Redo) => self.redo(g),
             Some(Request::Jump(i)) => self.jump(g, i),
             None => false,
-        }
+        };
+        let core = doc_hashes(g).1;
+        if self.clean_pending { self.clean = Some(core); self.clean_pending = false; }
+        self.dirty = self.clean != Some(core);
+        changed
     }
 
     /// Make a step if the document differs from the current one.
@@ -1052,5 +1072,29 @@ mod tests {
             while h.redo(&mut g) {}
             assert_eq!(doc_hashes(&g).0, end);
         }
+    }
+
+    #[test]
+    fn unsaved_changes_are_known() {
+        let mut g = graph();
+        let mut h = History::default();
+        h.update(&mut g, false);
+        assert!(!h.is_dirty());
+        let c = cube(&mut g, 1.0);
+        h.update(&mut g, false);
+        assert!(h.is_dirty());
+        h.mark_clean();
+        h.update(&mut g, false);
+        assert!(!h.is_dirty(), "saved");
+        set_size(&mut g, c, 2.0);
+        h.update(&mut g, false);
+        assert!(h.is_dirty());
+        h.undo(&mut g);
+        h.update(&mut g, false);
+        assert!(!h.is_dirty(), "undone back to what was saved");
+        // Picking components alone is not a change worth saving for.
+        g.selected_node = None;
+        h.update(&mut g, false);
+        assert!(!h.is_dirty());
     }
 }

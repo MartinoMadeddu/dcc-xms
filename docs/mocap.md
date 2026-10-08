@@ -21,7 +21,7 @@ The timeline has no range of its own. It takes range, rate and timecode from the
 | Auto T-Pose | Rotations zeroed, root at the origin, optional hip height |
 | Fix Pose | Manual rotation and position corrections. Each correction takes a joint pattern and applies to every joint it matches. An exact joint name applies to that joint only |
 | Proxy Skin | A sphere per bone and a cylinder per link, bound to the skeleton |
-| Write FBX | Binary FBX with skeleton, animation, mesh, skin and bind pose |
+| Write FBX | Binary FBX with skeleton and animation, and with "Mesh" ticked the mesh, skin and bind pose too. A clip from a file goes out with that file's skeleton |
 
 ## Clip tools
 
@@ -54,6 +54,18 @@ Joint fields take patterns, described in [Interface](interface.md#name-patterns)
 
 With a clip node selected, the Primitive Inspector shows a Joint tab (name, parent, position and rotation at the current frame) and a Bone tab (one row per bone: the joint it starts at, the joint it points to, and its length).
 
+## Writing FBX for an engine
+
+A clip read from a file is written back with the skeleton it came in with, after any process: trims, retimes, mocap tools, a ragdoll solve. Same joint names and hierarchy, same kinds (an FBX "Root" stays a Root, a "LimbNode" a LimbNode), the same axes and unit as the source (Z up in centimetres for a file from Unreal), and the same local values on every joint that was not changed. An engine that imported the source as a skeleton sees the file as an animation of that skeleton.
+
+The properties of the Write node say which space a file goes out in, such as "Z up, cm, as the source file". A clip made in the program (Test Clip) goes out Y up in centimetres.
+
+"Mesh" adds the skinned mesh, its skin and bind pose. Leave it off to import motion onto a skeleton the engine already has: the file then holds the skeleton and its animation only. New Write nodes start with it off; graphs saved before the switch existed keep writing the mesh.
+
+How this is checked: the take of the ragdoll template, written as it ships and written after the shipped solve, is compared with the source FBX read without any conversion. Names, parents, kinds, axes and unit match on all 342 joints. As shipped, the largest difference in a local rotation is 0.003 degrees (the packed clip stores rotations in 16 bits); written straight from the FBX it is 0.00003 degrees, and 0 in position. Import into Unreal itself has not been tried here.
+
+Earlier builds wrote every file Y up, put the source's axis turn and a 0.01 scale on the top joint, and wrote the other joints a hundred times too long, so an engine saw a different skeleton. Rotations within a degree of 90 on Y could also be written half a degree out. Both are fixed.
+
 ## Batch export
 
 Write FBX writes the current file or every file of the folder, in the background. The Templates menu has "Mocap split", which builds the whole graph for splitting a two-character take into animation files and skinned T-pose files.
@@ -62,11 +74,11 @@ Every path field has a folder button that opens the file browser. It reopens in 
 
 ## Graphs
 
-Open and Save in the node graph header read and write the graph as JSON. The contents of ICE subnets are not saved.
+Open, Recent, Save and Save as in the node graph header read and write the graph as JSON. See [Interface](interface.md#files). The contents of ICE subnets are not saved.
 
 ## Not done yet
 
-Meshes and skinning read from FBX, timeline zoom and pan, curve cleanup, IK, foot planting, characterization. Import into Unreal has not been tested.
+Timeline zoom and pan, curve cleanup, IK, foot planting, characterization. Written files are checked against their source, not yet by importing them into Unreal.
 
 ## Ragdoll
 

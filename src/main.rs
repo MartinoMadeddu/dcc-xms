@@ -25,6 +25,7 @@ mod templates;
 mod ragdoll;
 mod packed;
 mod history;
+mod recent;
 
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts, EguiPlugin};
@@ -60,6 +61,8 @@ fn main() {
                 visible: false,
                 ..default()
             }),
+            // Closing asks first when there are unsaved changes: `quit_system`.
+            close_when_requested: false,
             ..default()
         }))
         .add_plugins(EguiPlugin)
@@ -82,6 +85,8 @@ fn main() {
         .init_resource::<node_graph::GraphRevision>()
         .init_resource::<viewport::nav::NavSettings>()
         .init_resource::<history::History>()
+        .init_resource::<recent::Recent>()
+        .init_resource::<QuitState>()
         .add_systems(Startup, (open_splash, setup_scene, setup_egui_theme, setup_gizmos, modelling::setup_gizmos))
         .add_systems(Update, (
             dcc_ui,
@@ -89,6 +94,7 @@ fn main() {
             set_window_icon,
             history_system.after(dcc_ui).after(modelling::pick_system),
             track_revision.after(history_system),
+            quit_system.after(history_system),
             update_operator_stack.after(track_revision),
             update_scene_hierarchy.after(track_revision),
             update_generated_meshes.after(track_revision),
@@ -230,7 +236,7 @@ fn dcc_ui(
     mut graph_file: ResMut<GraphFile>,
     mut poly_tool:  ResMut<modelling::PolyTool>,
     mut nav_settings: ResMut<viewport::nav::NavSettings>,
-    (mut layout, revision, mut uv_state, mut history): (ResMut<Layout>, Res<node_graph::GraphRevision>, ResMut<uv_editor::UvEditorState>, ResMut<history::History>),
+    (mut layout, revision, mut uv_state, mut history, mut recent): (ResMut<Layout>, Res<node_graph::GraphRevision>, ResMut<uv_editor::UvEditorState>, ResMut<history::History>, ResMut<recent::Recent>),
     batch:          Res<BatchState>,
     time:           Res<Time>,
 ) {
@@ -246,7 +252,7 @@ fn dcc_ui(
                         NodeType::LoadUsd { path } | NodeType::LoadFbx { path, .. } | NodeType::LoadFbxMesh { path } => *path = text,
                         NodeType::LoadFbxDir { dir, index, .. } => { *dir = text; *index = 0; }
                         // A folder was picked: keep the file name pattern.
-                        NodeType::WriteFbx { path } => {
+                        NodeType::WriteFbx { path, .. } => {
                             let name = path.rsplit(['/', '\\']).next().filter(|n| !n.is_empty())
                                 .unwrap_or("{file}_{char}.fbx").to_string();
                             *path = std::path::Path::new(&text).join(name).to_string_lossy().to_string();
@@ -256,14 +262,8 @@ fn dcc_ui(
                 }
             }
             BrowseTarget::OpenGraph => {
-                graph_file.message = match graph_io::load(&mut graph, &path) {
-                    Ok(())  => {
-                        let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-                        history::note(format!("Open {name}"));
-                        format!("Opened {}", path.display())
-                    }
-                    Err(e)  => format!("Could not open {}: {e}", path.display()),
-                };
+                open_graph(&mut graph, &path, &mut graph_file, &mut history, &mut recent);
+                nav.current_subnet = None;
             }
             BrowseTarget::OpenLayout => {
                 graph_file.message = match layout.load_from(&path) {
@@ -278,12 +278,15 @@ fn dcc_ui(
                 };
             }
             BrowseTarget::SaveGraph => {
-                graph_file.message = match graph_io::save(&graph, &path) {
-                    Ok(())  => format!("Saved {}", path.display()),
-                    Err(e)  => format!("Could not save {}: {e}", path.display()),
-                };
+                save_graph(&graph, &path, &mut graph_file, &mut history, &mut recent);
             }
         }
+    }
+
+    // Ctrl+S (Cmd+S): save to the current file, or ask where.
+    if !ctx.wants_keyboard_input() && !browser.is_open()
+        && ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::S)) {
+        save_or_ask(&graph, &mut graph_file, &mut history, &mut recent, &mut browser);
     }
 
     // Range, rate and timecode come from the clip of the selected node.
@@ -321,6 +324,16 @@ fn dcc_ui(
             ui.horizontal_centered(|ui| {
                 draw_logo(ui);
                 ui.label(egui::RichText::new("XMS | Imago").strong().color(theme::c(243, 243, 243)));
+                // The file the graph is in, and whether it has changed since.
+                let doc = graph_file.path.as_deref().map(file_name).unwrap_or_else(|| "Untitled".into());
+                let unsaved = history.is_dirty();
+                ui.label(egui::RichText::new(format!("  {doc}{}", if unsaved { "  (unsaved)" } else { "" }))
+                    .color(theme::c(200, 200, 200)))
+                    .on_hover_text(match (&graph_file.path, unsaved) {
+                        (Some(p), true)  => format!("{}\nChanged since it was saved. Ctrl+S saves", p.display()),
+                        (Some(p), false) => format!("{}\nSaved", p.display()),
+                        (None, _)        => "Not saved to a file yet. Ctrl+S saves".into(),
+                    });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     // Right to left: the lock sits at the far right, the menu before it.
                     {
@@ -377,7 +390,7 @@ fn dcc_ui(
             dt: time.delta_seconds_f64(), keys_free,
             space_plays: nav_settings.style != viewport::nav::NavStyle::Houdini,
             revision: revision.0, locked, toggle_float: &mut toggle_float, tab_pressed: &mut tab_pressed,
-            uv_state: &mut uv_state, history: &mut history,
+            uv_state: &mut uv_state, history: &mut history, recent: &mut recent,
         };
         let mut style = egui_dock::Style::from_egui(ctx.style().as_ref());
         style.tab_bar.fill_tab_bar = true;
@@ -599,6 +612,7 @@ struct Panes<'a> {
     tab_pressed:    &'a mut Option<Pane>,
     uv_state:       &'a mut uv_editor::UvEditorState,
     history:        &'a mut history::History,
+    recent:         &'a mut recent::Recent,
 }
 
 impl egui_dock::TabViewer for Panes<'_> {
@@ -716,8 +730,39 @@ impl egui_dock::TabViewer for Panes<'_> {
                         if ui.button("📂 Open").on_hover_text("Load a saved graph").clicked() {
                             self.browser.open(BrowseTarget::OpenGraph, BrowseMode::File, "Open graph", &["json"], "");
                         }
-                        if ui.button("💾 Save").on_hover_text("Save this graph").clicked() {
-                            self.browser.open(BrowseTarget::SaveGraph, BrowseMode::Save, "Save graph", &["json"], "graph.json");
+                        let mut open = None;
+                        ui.menu_button("Recent", |ui| {
+                            if self.recent.files.is_empty() {
+                                ui.label(egui::RichText::new("No graphs opened or saved yet").weak());
+                            }
+                            for f in self.recent.files.clone() {
+                                let name = f.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                                let there = f.is_file();
+                                let label = if there { name } else { format!("{name} (missing)") };
+                                if ui.add_enabled(there, egui::Button::new(label)).on_hover_text(f.display().to_string())
+                                    .on_disabled_hover_text(format!("{}\nNot found", f.display())).clicked() {
+                                    open = Some(f.clone());
+                                    ui.close_menu();
+                                }
+                            }
+                            if !self.recent.files.is_empty() {
+                                ui.separator();
+                                if ui.button("Clear the list").clicked() { self.recent.clear(); ui.close_menu(); }
+                            }
+                        }).response.on_hover_text("Graphs opened or saved lately");
+                        if let Some(path) = open {
+                            open_graph(self.graph, &path, self.graph_file, self.history, self.recent);
+                            self.nav.current_subnet = None;
+                        }
+                        let save_tip = match &self.graph_file.path {
+                            Some(p) => format!("Save to {} (Ctrl+S)", p.display()),
+                            None => "Save this graph (Ctrl+S)".into(),
+                        };
+                        if ui.button("💾 Save").on_hover_text(save_tip).clicked() {
+                            save_or_ask(self.graph, self.graph_file, self.history, self.recent, self.browser);
+                        }
+                        if ui.button("Save as").on_hover_text("Save this graph to a new file").clicked() {
+                            ask_where_to_save(self.graph_file, self.browser);
                         }
                         if ui.button("Tidy").on_hover_text("Lay the nodes out in rows, top to bottom, and bring them into view").clicked() {
                             self.graph.auto_layout();
@@ -734,6 +779,8 @@ impl egui_dock::TabViewer for Panes<'_> {
                                     for t in templates::TEMPLATES.iter().filter(|t| t.group == group) {
                                         if ui.button(t.name).on_hover_text(t.hint).clicked() {
                                             self.graph_file.message = t.load(self.graph, self.subnets);
+                                            // A template is not a file: saving asks where.
+                                            self.graph_file.path = None;
                                             history::note(format!("Template: {}", t.name));
                                             self.nav.current_subnet = None;
                                             ui.close_menu();
@@ -838,10 +885,146 @@ fn track_revision(
     }
 }
 
-/// Feedback line for graph open / save.
+/// Feedback line for graph open / save, and the file the graph is in.
 #[derive(Resource, Default)]
 struct GraphFile {
     message: String,
+    /// Last opened from or saved to. None: never saved, or a template.
+    path:    Option<std::path::PathBuf>,
+}
+
+fn file_name(path: &std::path::Path) -> String {
+    path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()
+}
+
+/// Open a saved graph. It replaces the scene as one undoable step, becomes
+/// the current file, and goes to the top of Recent.
+fn open_graph(graph: &mut NodeGraphState, path: &std::path::Path, file: &mut GraphFile, history: &mut history::History, recent: &mut recent::Recent) {
+    match graph_io::load(graph, path) {
+        Ok(()) => {
+            history::note(format!("Open {}", file_name(path)));
+            history.mark_clean();
+            recent.add(path);
+            file.path = Some(path.to_path_buf());
+            file.message = format!("Opened {}", path.display());
+        }
+        Err(e) => file.message = format!("Could not open {}: {e}", path.display()),
+    }
+}
+
+/// Write the graph to `path`. Returns whether it was written.
+fn save_graph(graph: &NodeGraphState, path: &std::path::Path, file: &mut GraphFile, history: &mut history::History, recent: &mut recent::Recent) -> bool {
+    match graph_io::save(graph, path) {
+        Ok(()) => {
+            history.mark_clean();
+            recent.add(path);
+            file.path = Some(path.to_path_buf());
+            file.message = format!("Saved {}", path.display());
+            true
+        }
+        Err(e) => { file.message = format!("Could not save {}: {e}", path.display()); false }
+    }
+}
+
+/// Open the browser to choose where to save, starting at the current file.
+fn ask_where_to_save(file: &GraphFile, browser: &mut FileBrowser) {
+    let name = file.path.as_deref().map(file_name).unwrap_or_else(|| "graph.json".into());
+    if let Some(dir) = file.path.as_deref().and_then(|p| p.parent()) { browser.set_dir(dir); }
+    browser.open(BrowseTarget::SaveGraph, BrowseMode::Save, "Save graph", &["json"], &name);
+}
+
+/// Save to the current file, or ask where when there is none.
+/// Returns whether the graph was written now.
+fn save_or_ask(graph: &NodeGraphState, file: &mut GraphFile, history: &mut history::History, recent: &mut recent::Recent, browser: &mut FileBrowser) -> bool {
+    match file.path.clone() {
+        Some(p) => save_graph(graph, &p, file, history, recent),
+        None => { ask_where_to_save(file, browser); false }
+    }
+}
+
+/// Where closing the program stands.
+#[derive(Resource, Default, PartialEq, Eq, Clone, Copy, Debug)]
+enum QuitState {
+    #[default]
+    Running,
+    /// The window was closed with unsaved changes: Save, Don't save or Cancel.
+    Asking,
+    /// Save was chosen for a graph with no file: the browser asks where.
+    SavingAs,
+}
+
+/// Closing the window: straight away when everything is saved, otherwise
+/// ask whether to save first.
+fn quit_system(
+    mut contexts:   EguiContexts,
+    mut requests:   EventReader<bevy::window::WindowCloseRequested>,
+    primary:        Query<Entity, With<bevy::window::PrimaryWindow>>,
+    mut exit:       EventWriter<AppExit>,
+    mut quit:       ResMut<QuitState>,
+    mut history:    ResMut<history::History>,
+    mut recent:     ResMut<recent::Recent>,
+    mut graph_file: ResMut<GraphFile>,
+    mut browser:    ResMut<FileBrowser>,
+    graph:          Res<NodeGraphState>,
+) {
+    let main = primary.get_single().ok();
+    for r in requests.read() {
+        if Some(r.window) != main { continue; }
+        if history.is_dirty() { *quit = QuitState::Asking; } else { exit.send(AppExit::Success); return; }
+    }
+    match *quit {
+        QuitState::Running => {}
+        QuitState::SavingAs => {
+            if !history.is_dirty() { exit.send(AppExit::Success); }
+            // The browser was closed without saving, or the save failed.
+            else if !browser.is_open() && !browser.has_result() { *quit = QuitState::Running; }
+        }
+        QuitState::Asking => {
+            let ctx = contexts.ctx_mut();
+            let screen = ctx.screen_rect();
+            // Dim everything behind the question, and take the clicks meant for it.
+            egui::Area::new(egui::Id::new("quit_dim")).order(egui::Order::Foreground).fixed_pos(screen.min)
+                .show(ctx, |ui| {
+                    let (rect, _) = ui.allocate_exact_size(screen.size(), egui::Sense::click_and_drag());
+                    ui.painter().rect_filled(rect, 0.0, egui::Color32::from_black_alpha(170));
+                });
+            let what = match &graph_file.path {
+                Some(p) => format!("Save the changes to {} before closing?", file_name(p)),
+                None => "Save this graph before closing?".into(),
+            };
+            let mut choice = None;
+            egui::Window::new("Unsaved changes")
+                .order(egui::Order::Tooltip)
+                .collapsible(false).resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                .show(ctx, |ui| {
+                    ui.label(what);
+                    ui.label(egui::RichText::new("Closing without saving loses them.").small().weak());
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        if ui.button("💾 Save").clicked() { choice = Some(0); }
+                        if ui.button("Don't save").clicked() { choice = Some(1); }
+                        if ui.button("Cancel").clicked() { choice = Some(2); }
+                    });
+                });
+            if ctx.input(|i| i.key_pressed(egui::Key::Escape)) { choice = Some(2); }
+            match choice {
+                Some(0) => {
+                    if save_or_ask(&graph, &mut graph_file, &mut history, &mut recent, &mut browser) {
+                        exit.send(AppExit::Success);
+                    } else if browser.is_open() {
+                        *quit = QuitState::SavingAs;
+                    } else {
+                        // The save failed: its message is under the graph's buttons.
+                        *quit = QuitState::Running;
+                    }
+                }
+                Some(1) => { exit.send(AppExit::Success); }
+                Some(2) => { *quit = QuitState::Running; }
+                _ => {}
+            }
+        }
+    }
 }
 
 // ── Systems ───────────────────────────────────────────────────────────────────

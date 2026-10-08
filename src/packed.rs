@@ -18,7 +18,7 @@ use bevy::math::{Mat4, Quat, Vec3};
 use bevy::prelude::Transform;
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 
-use crate::core::anim::{AnimData, FrameRate, Joint, SkinMesh, Track};
+use crate::core::anim::{AnimData, FileSpace, FrameRate, Joint, SkinMesh, Track};
 use crate::types::MeshData;
 
 pub const CLIP_EXT: &str = "xmsclip";
@@ -131,6 +131,16 @@ pub fn write_clip(clip: &AnimData, path: &str) -> Result<(), String> {
             for m in &s.bind { for x in m.to_cols_array() { o.f32(x); } }
         }
     }
+    // The source file's axes and unit, at the end: files written before
+    // they were kept simply stop before it.
+    if let Some(sp) = &clip.space {
+        o.u8(1);
+        for (a, s) in [sp.up, sp.front, sp.coord] { o.u8(a as u8); o.u8((s < 0) as u8); }
+        o.0.extend(sp.unit_cm.to_le_bytes());
+        o.u32(sp.root_joints.len() as u32);
+        for r in &sp.root_joints { o.text(r); }
+        o.text(&sp.mesh_name);
+    }
     o.finish(path, CLIP_MAGIC)
 }
 
@@ -195,9 +205,19 @@ pub fn read_clip(path: &str) -> Result<AnimData, String> {
         s.normals = normals.into_iter().map(|v| v.normalize_or(Vec3::Y)).collect();
         Some(Arc::new(s))
     };
+    let space = if i.at < i.data.len() && i.u8()? == 1 {
+        let mut axis = || -> Result<(i32, i32), String> { Ok((i.u8()? as i32, if i.u8()? != 0 { -1 } else { 1 })) };
+        let (up, front, coord) = (axis()?, axis()?, axis()?);
+        let unit_cm = f64::from_le_bytes(i.take(8)?.try_into().unwrap());
+        let mut sp = FileSpace::new(up, front, coord, unit_cm);
+        let n = i.count(4)?;
+        for _ in 0..n { sp.root_joints.push(i.text()?); }
+        sp.mesh_name = i.text()?;
+        Some(Arc::new(sp))
+    } else { None };
     let p = std::path::Path::new(path);
     Ok(AnimData {
-        name, joints, rate, drop_frame, start_frame, frames,
+        name, joints, rate, drop_frame, start_frame, frames, space,
         tracks: Arc::new(tracks),
         source: p.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default(),
         source_dir: p.parent().map(|s| s.to_string_lossy().to_string()).unwrap_or_default(),

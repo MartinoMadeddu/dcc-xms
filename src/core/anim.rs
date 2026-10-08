@@ -238,6 +238,56 @@ pub struct AnimData {
     pub subject:     String,
     /// Optional mesh bound to the skeleton.
     pub skin:        Option<Arc<SkinMesh>>,
+    /// Axes and unit of the file the clip came from. Written files use them
+    /// again, so a clip goes back out with the skeleton it came in with.
+    pub space:       Option<Arc<FileSpace>>,
+}
+
+/// The axes, unit and joint kinds of a source file.
+///
+/// Files are read into this program's space: Y up, metres. The conversion
+/// is put on the joints at the top of the hierarchy, as ufbx does it; the
+/// joints under them keep their values as written, in the file's unit. To
+/// write the clip back as it came, `to_internal` is taken off those top
+/// joints again and the file says the axes and unit it had.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FileSpace {
+    /// FBX axis numbers (0 X, 1 Y, 2 Z) and signs, as in GlobalSettings.
+    pub up:          (i32, i32),
+    pub front:       (i32, i32),
+    pub coord:       (i32, i32),
+    /// Centimetres per file unit (FBX UnitScaleFactor).
+    pub unit_cm:     f64,
+    /// File world to this program's world: the axis turn and the unit.
+    pub to_internal: Mat4,
+    /// Joints that are FBX "Root" skeleton nodes rather than "LimbNode".
+    pub root_joints: Vec<String>,
+    /// Name of the skinned mesh in the file.
+    pub mesh_name:   String,
+}
+
+impl FileSpace {
+    /// The space of a file with these axes and unit. `to_internal` turns
+    /// the file's right, up and front onto +X, +Y, +Z and scales its unit
+    /// to metres.
+    pub fn new(up: (i32, i32), front: (i32, i32), coord: (i32, i32), unit_cm: f64) -> Self {
+        let axis = |(a, sgn): (i32, i32)| {
+            let mut v = Vec3::ZERO;
+            v[a.clamp(0, 2) as usize] = if sgn < 0 { -1.0 } else { 1.0 };
+            v
+        };
+        let basis = Mat4::from_cols(axis(coord).extend(0.0), axis(up).extend(0.0), axis(front).extend(0.0), bevy::math::Vec4::W);
+        let unit = (unit_cm * 0.01) as f32;
+        let to_internal = Mat4::from_scale(Vec3::splat(unit)) * basis.transpose();
+        Self { up, front, coord, unit_cm, to_internal, root_joints: vec![], mesh_name: String::new() }
+    }
+
+    /// Y up, +Z front, +X right, centimetres: what this program writes for
+    /// a clip that did not come from a file.
+    pub fn y_up_cm() -> Self { Self::new((1, 1), (2, 1), (0, 1), 1.0) }
+
+    /// Z up, -Y front, +X right, centimetres: Unreal's space.
+    pub fn z_up_cm() -> Self { Self::new((2, 1), (1, -1), (0, 1), 1.0) }
 }
 
 impl AnimData {
@@ -692,6 +742,7 @@ pub fn create_test_clip(seconds: f32, rate: FrameRate) -> AnimData {
         source_dir:  String::new(),
         subject:     String::new(),
         skin:        None,
+        space:       None,
     }
 }
 

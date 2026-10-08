@@ -115,7 +115,7 @@ pub fn mocap_split_template(graph: &mut NodeGraphState) {
         let x = 20.0 + c as f32 * 420.0;
         let n = c + 1;
         let anim = graph.add_node(format!("WriteAnim{n}"),
-            NodeType::WriteFbx { path: DEFAULT_WRITE_PATH.into() }, p(x, 240.0));
+            NodeType::WriteFbx { path: DEFAULT_WRITE_PATH.into(), mesh: false }, p(x, 240.0));
         let tpose = graph.add_node(format!("TPose{n}"),
             NodeType::AutoTPose { set_hip_height: false, hip_height: 90.0 }, p(x + 200.0, 240.0));
         let fix = graph.add_node(format!("FixPose{n}"),
@@ -123,7 +123,7 @@ pub fn mocap_split_template(graph: &mut NodeGraphState) {
         let skin = graph.add_node(format!("ProxySkin{n}"),
             NodeType::ProxySkin { thickness: 1.0 }, p(x + 200.0, 440.0));
         let write = graph.add_node(format!("WriteTPose{n}"),
-            NodeType::WriteFbx { path: tpose_path.clone() }, p(x + 200.0, 540.0));
+            NodeType::WriteFbx { path: tpose_path.clone(), mesh: true }, p(x + 200.0, 540.0));
         graph.add_connection(split, c, anim, 0);
         graph.add_connection(split, c, tpose, 0);
         graph.add_connection(tpose, 0, fix, 0);

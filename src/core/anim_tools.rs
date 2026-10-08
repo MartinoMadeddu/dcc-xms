@@ -401,6 +401,7 @@ impl AnimData {
             source_dir:  self.source_dir.clone(),
             subject:     target.subject.clone(),
             skin:        target.skin.clone(),
+            space:       target.space.clone(),
         }, matched)
     }
 
