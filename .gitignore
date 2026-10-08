@@ -1,1 +1,5 @@
 /target
+_site/
+/crates/*/target
+/crates/*/Cargo.lock
+/examples/ragdoll/*.fbx

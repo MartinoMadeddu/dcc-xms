@@ -10,29 +10,33 @@ const SOCKET_HIT:      f32 = 22.0;
 const NODE_ROUNDING:   f32 = 8.0;
 
 mod xsi {
+    // Light-theme colours. `theme::c` returns the dark counterpart in dark mode.
+    #![allow(non_snake_case)]
     use bevy_egui::egui::Color32;
-    pub const BG:             Color32 = Color32::from_rgb(100, 100, 100);
-    pub const GRID:           Color32 = Color32::from_rgb( 90,  90,  90);
-    pub const NODE_BODY:      Color32 = Color32::from_rgb(130, 130, 130);
-    pub const NODE_BODY_SEL:  Color32 = Color32::from_rgb(110, 120, 135);
-    pub const NODE_TITLE:     Color32 = Color32::from_rgb(105, 105, 105);
-    pub const NODE_TITLE_SUB: Color32 = Color32::from_rgb( 80,  90, 100);
-    pub const BORDER:         Color32 = Color32::from_rgb( 70,  70,  70);
-    pub const BORDER_SEL:     Color32 = Color32::from_rgb(180, 200, 220);
-    pub const TEXT:           Color32 = Color32::from_rgb(230, 230, 230);
-    pub const TEXT_DIM:       Color32 = Color32::from_rgb(190, 190, 190);
-    pub const WIRE:           Color32 = Color32::from_rgb(160, 160, 155);
-    pub const WIRE_HOV:       Color32 = Color32::from_rgb(220, 185,  90);
-    pub const SOCK_IN:        Color32 = Color32::from_rgb(100, 140, 100);
-    pub const SOCK_IN_CONN:   Color32 = Color32::from_rgb(130, 175, 130);
-    pub const SOCK_IN_HOV:    Color32 = Color32::from_rgb(170, 215, 170);
-    pub const SOCK_OUT:       Color32 = Color32::from_rgb(150, 120,  85);
-    pub const SOCK_OUT_HOV:   Color32 = Color32::from_rgb(200, 165, 120);
-    pub const SOCK_OUT_DRAG:  Color32 = Color32::from_rgb(230, 195, 100);
-    pub const SEL_RECT:       Color32 = Color32::from_rgba_premultiplied(100, 140, 200, 40);
-    pub const SEL_RECT_BORDER:Color32 = Color32::from_rgb(120, 160, 220);
-    pub const VIEW_FLAG:      Color32 = Color32::from_rgb(100, 180, 255); // 👁️ NEW - Blue for active view flag
-    pub const VIEW_FLAG_HOV:  Color32 = Color32::from_rgb(150, 210, 255); // 👁️ NEW - Lighter blue on hover
+    pub fn BG() -> Color32 { crate::theme::c(100, 100, 100) }
+    pub fn GRID() -> Color32 { crate::theme::c( 90,  90,  90) }
+    pub fn NODE_BODY() -> Color32 { crate::theme::raised(130, 130, 130) }
+    pub fn NODE_BODY_SEL() -> Color32 { crate::theme::c(110, 120, 135) }
+    pub fn NODE_TITLE() -> Color32 { crate::theme::raised(105, 105, 105) }
+    pub fn NODE_TITLE_SUB() -> Color32 { crate::theme::c( 80,  90, 100) }
+    pub fn BORDER() -> Color32 { crate::theme::outline( 70,  70,  70) }
+    pub fn BORDER_SEL() -> Color32 { crate::theme::c(180, 200, 220) }
+    pub fn TEXT() -> Color32 { crate::theme::c(248, 248, 248) }
+    pub fn TEXT_DIM() -> Color32 { crate::theme::c(210, 210, 210) }
+    pub fn WIRE() -> Color32 { crate::theme::c(160, 160, 155) }
+    pub fn WIRE_HOV() -> Color32 { crate::theme::c(220, 185,  90) }
+    pub fn SOCK_IN() -> Color32 { crate::theme::c(100, 140, 100) }
+    pub fn SOCK_IN_CONN() -> Color32 { crate::theme::c(130, 175, 130) }
+    pub fn SOCK_IN_HOV() -> Color32 { crate::theme::c(170, 215, 170) }
+    pub fn SOCK_OUT() -> Color32 { crate::theme::c(150, 120,  85) }
+    pub fn SOCK_OUT_HOV() -> Color32 { crate::theme::c(200, 165, 120) }
+    pub fn SOCK_OUT_DRAG() -> Color32 { crate::theme::c(230, 195, 100) }
+    pub fn SEL_RECT() -> Color32 { Color32::from_rgba_premultiplied(100, 140, 200, 40) }
+    pub fn SEL_RECT_BORDER() -> Color32 { crate::theme::c(120, 160, 220) }
+    pub fn VIEW_FLAG() -> Color32 { crate::theme::c(100, 180, 255) } // 👁️ NEW - Blue for active view flag
+    pub fn BYPASS() -> Color32 { crate::theme::c(235, 170, 60) }
+    pub fn BYPASS_VEIL() -> Color32 { Color32::from_rgba_unmultiplied(128, 128, 128, 120) }
+    pub fn VIEW_FLAG_HOV() -> Color32 { crate::theme::c(150, 210, 255) } // 👁️ NEW - Lighter blue on hover
 }
 
 // ============================================================================
@@ -74,36 +78,111 @@ pub fn draw_node_graph(ui: &mut egui::Ui, graph: &mut NodeGraphState) -> Option<
                    (p.y - canvas_rect.min.y - pan.y) / zoom)
     };
 
-    // ── Tab menu ─────────────────────────────────────────────────────────────
+    // ── Frame every node ─────────────────────────────────────────────────────
+    let frame_key = response.hovered() && !ui.ctx().wants_keyboard_input()
+        && ui.input(|i| i.key_pressed(egui::Key::F) || i.key_pressed(egui::Key::A));
+    if (graph.frame_request || frame_key) && canvas_rect.width() > 40.0 && !graph.nodes.is_empty() {
+        graph.frame_request = false;
+        let mut bounds = egui::Rect::NOTHING;
+        for node in &graph.nodes {
+            bounds = bounds.union(egui::Rect::from_min_size(node.position, egui::vec2(NODE_WIDTH, NODE_HEIGHT)));
+        }
+        let room = canvas_rect.size() - egui::vec2(60.0, 70.0);
+        // Not so small that the names cannot be read: a graph too large
+        // for that is shown from its middle.
+        graph.zoom = (room.x / bounds.width()).min(room.y / bounds.height()).clamp(0.45, 1.0);
+        let middle = bounds.center().to_vec2() * graph.zoom;
+        graph.pan_offset = canvas_rect.size() * 0.5 - middle;
+        ui.ctx().request_repaint();
+    }
+
+    // ── Add-node menu: Tab, right-click, or right-click on an output ─────────
+    let mut opened_now = false;
     if response.hovered() && ui.input(|i| i.key_pressed(egui::Key::Tab)) {
         let cursor = ui.input(|i| i.pointer.hover_pos()).unwrap_or(canvas_rect.center());
         graph.tab_menu_screen_pos = Some(cursor);
         graph.tab_menu_canvas_pos = Some(to_canvas(cursor));
+        graph.menu_from = None;
+        opened_now = true;
+    }
+    // A right-click anywhere on the canvas. Over an output socket the menu
+    // belongs to that socket; over a wire it is left to the wire.
+    let right_click = ui.input(|i| if i.pointer.secondary_clicked() { i.pointer.interact_pos() } else { None })
+        .filter(|p| canvas_rect.contains(*p) && ui.rect_contains_pointer(canvas_rect));
+    if let Some(cursor) = right_click {
+        let socket = graph.nodes.iter().find_map(|node| (0..node.outputs.len()).find(|o| {
+            to_screen(output_socket_pos(node, *o)).distance(cursor) <= SOCKET_HIT * 0.5 + 2.0
+        }).map(|o| (node.id, o)));
+        if socket.is_some() || response.secondary_clicked() {
+            graph.tab_menu_screen_pos = Some(cursor);
+            graph.tab_menu_canvas_pos = Some(to_canvas(cursor));
+            graph.menu_from = socket;
+            graph.connecting_from = None;
+            opened_now = true;
+        }
     }
     if let Some(screen_pos) = graph.tab_menu_screen_pos {
         let canvas_pos = graph.tab_menu_canvas_pos.unwrap_or_default();
+        let before: Vec<NodeId> = graph.nodes.iter().map(|n| n.id).collect();
         let mut close  = false;
         let area_resp = egui::Area::new(egui::Id::new("tab_add_node"))
             .fixed_pos(screen_pos)
             .order(egui::Order::Foreground)
+            .constrain(true)
             .show(ui.ctx(), |ui| {
                 egui::Frame::popup(ui.style()).show(ui, |ui| {
                     ui.set_min_width(180.0);
+                    if let Some((from, _)) = graph.menu_from {
+                        if let Some(node) = graph.nodes.iter().find(|n| n.id == from) {
+                            ui.label(egui::RichText::new(format!("After {}", node.name)).small());
+                            ui.separator();
+                        }
+                    }
                     if add_node_menu(ui, graph, canvas_pos) { close = true; }
                 });
             });
+        // Where the new node goes: under the socket it was asked from and
+        // wired to it, or centred on the place that was clicked.
+        let fresh: Vec<NodeId> = graph.nodes.iter().map(|n| n.id).filter(|id| !before.contains(id)).collect();
+        if let Some(new_id) = fresh.first().copied() {
+            let from = graph.menu_from.and_then(|(id, out)| graph.nodes.iter().find(|n| n.id == id).map(|n| (id, out, n.position)));
+            let mut at = match from {
+                Some((_, _, pos)) => pos + egui::vec2(0.0, NODE_HEIGHT + 50.0),
+                None => canvas_pos - egui::vec2(NODE_WIDTH * 0.5, NODE_HEIGHT * 0.5),
+            };
+            // Step sideways until the place is free.
+            let taken = |p: egui::Pos2, graph: &NodeGraphState| graph.nodes.iter().any(|n| n.id != new_id
+                && (n.position.x - p.x).abs() < NODE_WIDTH + 10.0 && (n.position.y - p.y).abs() < NODE_HEIGHT + 10.0);
+            for _ in 0..40 { if !taken(at, graph) { break; } at.x += NODE_WIDTH + 30.0; }
+            if let Some(node) = graph.nodes.iter_mut().find(|n| n.id == new_id) { node.position = at; }
+            if let Some((src, out, _)) = from {
+                let has_input = graph.nodes.iter().find(|n| n.id == new_id).map(|n| !n.inputs.is_empty()).unwrap_or(false);
+                if has_input { graph.add_connection(src, out, new_id, 0); }
+            }
+            graph.selected_node = Some(new_id);
+            graph.selected_nodes = vec![new_id];
+            // Never leave a new node out of sight: move the view just enough.
+            let rect = egui::Rect::from_min_size(to_screen(at), egui::vec2(NODE_WIDTH, NODE_HEIGHT) * zoom);
+            let view = canvas_rect.shrink(12.0);
+            let mut shift = egui::Vec2::ZERO;
+            if rect.max.x > view.max.x { shift.x = view.max.x - rect.max.x; }
+            if rect.min.x + shift.x < view.min.x { shift.x = view.min.x - rect.min.x; }
+            if rect.max.y > view.max.y { shift.y = view.max.y - rect.max.y; }
+            if rect.min.y + shift.y < view.min.y { shift.y = view.min.y - rect.min.y; }
+            graph.pan_offset += shift;
+        }
         if ui.input(|i| i.key_pressed(egui::Key::Escape)) { close = true; }
-        if ui.input(|i| i.pointer.any_click()) && !area_resp.response.contains_pointer() {
+        if !opened_now && ui.input(|i| i.pointer.any_click()) && !area_resp.response.contains_pointer()
+            && !ui.ctx().memory(|m| m.any_popup_open()) {
             close = true;
         }
         if close {
             graph.tab_menu_screen_pos = None;
             graph.tab_menu_canvas_pos = None;
+            graph.menu_from = None;
         }
     }
 
-    // ── Background + grid ────────────────────────────────────────────────────
-    painter.rect_filled(canvas_rect, 0.0, xsi::BG);
     let grid_spacing = 50.0 * zoom;
     let offset_x = pan.x % grid_spacing;
     let offset_y = pan.y % grid_spacing;
@@ -111,14 +190,14 @@ pub fn draw_node_graph(ui: &mut egui::Ui, graph: &mut NodeGraphState) -> Option<
     while x < canvas_rect.max.x {
         painter.line_segment(
             [egui::pos2(x, canvas_rect.min.y), egui::pos2(x, canvas_rect.max.y)],
-            egui::Stroke::new(1.0, xsi::GRID));
+            egui::Stroke::new(1.0, xsi::GRID()));
         x += grid_spacing;
     }
     let mut y = canvas_rect.min.y + offset_y;
     while y < canvas_rect.max.y {
         painter.line_segment(
             [egui::pos2(canvas_rect.min.x, y), egui::pos2(canvas_rect.max.x, y)],
-            egui::Stroke::new(1.0, xsi::GRID));
+            egui::Stroke::new(1.0, xsi::GRID()));
         y += grid_spacing;
     }
 
@@ -217,8 +296,8 @@ pub fn draw_node_graph(ui: &mut egui::Ui, graph: &mut NodeGraphState) -> Option<
 
             // Draw the marquee rectangle in screen space
             let sr = egui::Rect::from_two_pos(to_screen(start), to_screen(cur));
-            painter.rect_filled(sr, 2.0, xsi::SEL_RECT);
-            painter.rect_stroke(sr, 2.0, egui::Stroke::new(1.0, xsi::SEL_RECT_BORDER));
+            painter.rect_filled(sr, 2.0, xsi::SEL_RECT());
+            painter.rect_stroke(sr, 2.0, egui::Stroke::new(1.0, xsi::SEL_RECT_BORDER()));
         }
     }
 
@@ -266,13 +345,6 @@ pub fn draw_node_graph(ui: &mut egui::Ui, graph: &mut NodeGraphState) -> Option<
         }
     }
 
-    // ── RMB context menu ──────────────────────────────────────────────────────
-    response.context_menu(|ui| {
-        let ptr = ui.input(|i| i.pointer.hover_pos().unwrap_or_default());
-        let cp  = to_canvas(ptr);
-        add_node_menu(ui, graph, cp);
-    });
-
     dive_into
 }
 
@@ -315,27 +387,27 @@ fn draw_node(
 
     // ── Node body ─────────────────────────────────────────────────────────────
     painter.rect_filled(rect, NODE_ROUNDING * zoom,
-        if is_sel { xsi::NODE_BODY_SEL } else { xsi::NODE_BODY });
+        if is_sel { xsi::NODE_BODY_SEL() } else { xsi::NODE_BODY() });
     painter.rect_stroke(rect, NODE_ROUNDING * zoom, egui::Stroke::new(
         if is_sel { 2.0 } else { 1.0 },
-        if is_sel { xsi::BORDER_SEL } else { xsi::BORDER }));
+        if is_sel { xsi::BORDER_SEL() } else { xsi::BORDER() }));
 
     let title_h    = 32.0 * zoom;
     let title_rect = egui::Rect::from_min_size(np, egui::vec2(NODE_WIDTH * zoom, title_h));
     painter.rect_filled(title_rect,
         egui::Rounding { nw: NODE_ROUNDING * zoom, ne: NODE_ROUNDING * zoom, sw: 0.0, se: 0.0 },
-        if is_sub { xsi::NODE_TITLE_SUB } else { xsi::NODE_TITLE });
+        if is_sub { xsi::NODE_TITLE_SUB() } else { xsi::NODE_TITLE() });
 
     painter.text(
         egui::pos2(np.x + NODE_WIDTH * zoom / 2.0, np.y + 11.0 * zoom),
         egui::Align2::CENTER_CENTER,
         &format!("{} {}", node_type_icon(&node.node_type), node.name),
-        egui::FontId::proportional(12.0 * zoom), xsi::TEXT);
+        egui::FontId::proportional(12.0 * zoom), xsi::TEXT());
     painter.text(
         egui::pos2(np.x + NODE_WIDTH * zoom / 2.0, np.y + 24.0 * zoom),
         egui::Align2::CENTER_CENTER,
         node_type_label(&node.node_type),
-        egui::FontId::proportional(9.0 * zoom), xsi::TEXT_DIM);
+        egui::FontId::proportional(9.0 * zoom), xsi::TEXT_DIM());
 
 
     let dr = ui.allocate_rect(title_rect, egui::Sense::click_and_drag());
@@ -354,9 +426,9 @@ fn draw_node(
     
     // Draw the eye button
     let eye_color = if has_view_flag {
-        if eye_response.hovered() { xsi::VIEW_FLAG_HOV } else { xsi::VIEW_FLAG }
+        if eye_response.hovered() { xsi::VIEW_FLAG_HOV() } else { xsi::VIEW_FLAG() }
     } else {
-        if eye_response.hovered() { xsi::TEXT } else { xsi::TEXT_DIM }
+        if eye_response.hovered() { xsi::TEXT() } else { xsi::TEXT_DIM() }
     };
     
     painter.text(
@@ -368,7 +440,9 @@ fn draw_node(
     );
     
 // Handle click - toggle view flag
-    if eye_response.clicked() {
+    let click_at = if dr.clicked() { dr.interact_pointer_pos() } else { None };
+    let on_eye = click_at.map(|p| eye_rect.contains(p)).unwrap_or(false);
+    if eye_response.clicked() || on_eye {
         graph.toggle_view_flag(id);
     }
     
@@ -385,6 +459,35 @@ fn draw_node(
     // END VIEW_FLAG_BUTTON
     // ============================================================================
 
+    // ── Bypass button, left of the title ─────────────────────────────────────
+    let mut on_bypass = false;
+    if !matches!(node.node_type, NodeType::Output) {
+        let by_rect = egui::Rect::from_min_size(
+            egui::pos2(np.x + 4.0 * zoom, np.y + 8.0 * zoom), egui::vec2(eye_size, eye_size));
+        let by = ui.allocate_rect(by_rect, egui::Sense::click());
+        let over = ui.input(|i| i.pointer.hover_pos()).map(|p| by_rect.contains(p)).unwrap_or(false);
+        let col = if node.bypassed { xsi::BYPASS() }
+                  else if over { xsi::TEXT() } else { xsi::TEXT_DIM() };
+        // Drawn by hand: a ring, with a bar through it when bypassed.
+        let c = by_rect.center();
+        let r = 4.5 * zoom;
+        painter.circle_stroke(c, r, egui::Stroke::new(1.3 * zoom, col));
+        if node.bypassed {
+            let d = egui::vec2(r, -r) * 1.25;
+            painter.line_segment([c - d, c + d], egui::Stroke::new(1.6 * zoom, col));
+        }
+        on_bypass = click_at.map(|p| by_rect.contains(p)).unwrap_or(false);
+        if by.clicked() || on_bypass { graph.toggle_bypass(id); }
+        by.on_hover_text(if node.bypassed {
+            "Bypassed: the first input passes through unchanged. Click to turn the node back on"
+        } else {
+            "Bypass this node"
+        });
+    }
+    if node.bypassed {
+        painter.rect_filled(rect, NODE_ROUNDING * zoom, xsi::BYPASS_VEIL());
+    }
+
     // ── Output sockets ────────────────────────────────────────────────────────
     for (i, out) in node.outputs.iter().enumerate() {
         let t  = (i + 1) as f32 / (node.outputs.len() + 1) as f32;
@@ -394,14 +497,17 @@ fn draw_node(
 
         let is_wiring = graph.connecting_from == Some((id, i));
         painter.circle_filled(sp, SOCKET_RADIUS * zoom,
-            if is_wiring         { xsi::SOCK_OUT_DRAG }
-            else if sr.hovered() { xsi::SOCK_OUT_HOV  }
-            else                 { xsi::SOCK_OUT       });
+            if is_wiring         { xsi::SOCK_OUT_DRAG() }
+            else if sr.hovered() { xsi::SOCK_OUT_HOV()  }
+            else                 { xsi::SOCK_OUT()       });
         painter.text(egui::pos2(sp.x, sp.y + SOCKET_RADIUS * zoom + 3.0),
             egui::Align2::CENTER_TOP, &out.name,
-            egui::FontId::proportional(9.0 * zoom), xsi::TEXT_DIM);
+            egui::FontId::proportional(9.0 * zoom), xsi::TEXT_DIM());
 
-        if sr.drag_started() || (sr.is_pointer_button_down_on() && graph.connecting_from.is_none()) {
+        // The left button draws a wire. The right button opens the add-node
+        // menu for this socket, handled with the canvas.
+        let left = ui.input(|i| i.pointer.primary_down());
+        if left && (sr.drag_started_by(egui::PointerButton::Primary) || (sr.is_pointer_button_down_on() && graph.connecting_from.is_none())) {
             graph.connecting_from = Some((id, i));
         }
     }
@@ -414,12 +520,12 @@ fn draw_node(
         let sr  = ui.allocate_rect(hit, egui::Sense::drag());
 
         painter.circle_filled(sp, SOCKET_RADIUS * zoom,
-            if sr.hovered()                        { xsi::SOCK_IN_HOV  }
-            else if inp.connected_output.is_some() { xsi::SOCK_IN_CONN }
-            else                                   { xsi::SOCK_IN      });
+            if sr.hovered()                        { xsi::SOCK_IN_HOV()  }
+            else if inp.connected_output.is_some() { xsi::SOCK_IN_CONN() }
+            else                                   { xsi::SOCK_IN()      });
         painter.text(egui::pos2(sp.x, sp.y - SOCKET_RADIUS * zoom - 3.0),
             egui::Align2::CENTER_BOTTOM, &inp.name,
-            egui::FontId::proportional(9.0 * zoom), xsi::TEXT_DIM);
+            egui::FontId::proportional(9.0 * zoom), xsi::TEXT_DIM());
 
         if sr.hovered() && ui.input(|inp| inp.pointer.primary_released()) {
             if let Some((fn_, fo)) = graph.connecting_from {
@@ -459,7 +565,7 @@ fn draw_node(
     }
 
     // ── Title bar drag / click ────────────────────────────────────────────────
-    if dr.clicked() {
+    if dr.clicked() && !on_eye && !on_bypass {
         // Clicking a node: select it. If not shift-held, clear multi-selection.
         if !ui.input(|i| i.modifiers.shift) {
             graph.selected_nodes.clear();
@@ -532,12 +638,16 @@ fn add_node_menu(ui: &mut egui::Ui, graph: &mut NodeGraphState, cp: egui::Pos2) 
         graph.add_node("Transform".into(), NodeType::Transform {
             translation: Vec3::ZERO, rotation: Vec3::ZERO, scale: Vec3::ONE }, cp); added = true;
     }
+    if ui.button("🔨  Edit Poly").clicked() {
+        graph.add_node("EditPoly".into(), NodeType::EditPoly {
+            ops: vec![], pending: Default::default(), edit: None, auto_collapse: false }, cp); added = true;
+    }
     if ui.button("⊕  Merge").clicked() {
         graph.add_node("Merge".into(), NodeType::Merge, cp); added = true;
     }
     ui.separator();
     ui.label(egui::RichText::new("Scatter").strong());
-    if ui.button("⁙  Scatter Points").clicked() {
+    if ui.button("∷  Scatter Points").clicked() {
         graph.add_node("ScatterPoints".into(), NodeType::ScatterPoints { count: 100, seed: 42 }, cp); added = true;
     }
     if ui.button("❇  Copy to Points").clicked() {
@@ -550,30 +660,112 @@ fn add_node_menu(ui: &mut egui::Ui, graph: &mut NodeGraphState, cp: egui::Pos2) 
             id: SubnetId(usize::MAX), name: "ICE".into() }, cp); added = true;
     }
     ui.separator();
-    ui.label(egui::RichText::new("Animation").strong());
-    if ui.button("🎬  Load FBX").clicked() {
-        graph.add_node("LoadFBX".into(), NodeType::LoadFbx { path: String::new(), take: 0 }, cp); added = true;
-    }
-    if ui.button("🚶  Test Clip").clicked() {
-        graph.add_node("TestClip".into(), NodeType::TestClip {
-            seconds: 4.0, fps_num: 30, fps_den: 1 }, cp); added = true;
-    }
-    if ui.button("✏  Rename Joints").clicked() {
-        graph.add_node("Rename".into(), NodeType::RenameJoints {
-            find: String::new(), replace: String::new(),
-            strip_namespace: true, prefix: String::new() }, cp); added = true;
-    }
-    if ui.button("✂  Trim Clip").clicked() {
-        graph.add_node("Trim".into(), NodeType::TrimClip { head: 0, tail: 0 }, cp); added = true;
-    }
-    if ui.button("⏱  Retime").clicked() {
-        graph.add_node("Retime".into(), NodeType::Retime {
-            fps_num: 30, fps_den: 1, mode: RetimeMode::Resample }, cp); added = true;
-    }
-    if ui.button("🕐  Set Timecode").clicked() {
-        graph.add_node("SetTimecode".into(), NodeType::SetTimecode {
-            hours: 1, minutes: 0, seconds: 0, frames: 0, drop_frame: false }, cp); added = true;
-    }
+    // Animation and mocap nodes live in their own sub-menu.
+    ui.menu_button("🎬  Animation & Mocap", |ui| {
+        ui.set_min_width(190.0);
+        ui.label(egui::RichText::new("Animation").strong());
+        if ui.button("🎬  Load FBX").clicked() {
+            graph.add_node("LoadFBX".into(), NodeType::LoadFbx { path: String::new(), take: 0 }, cp); added = true;
+        }
+        if ui.button("🚶  Test Clip").clicked() {
+            graph.add_node("TestClip".into(), NodeType::TestClip {
+                seconds: 4.0, fps_num: 30, fps_den: 1 }, cp); added = true;
+        }
+        if ui.button("✏  Rename Joints").clicked() {
+            graph.add_node("Rename".into(), NodeType::RenameJoints {
+                find: String::new(), replace: String::new(),
+                strip_namespace: true, prefix: String::new() }, cp); added = true;
+        }
+        if ui.button("✂  Trim Clip").clicked() {
+            graph.add_node("Trim".into(), NodeType::TrimClip { head: 0, tail: 0 }, cp); added = true;
+        }
+        if ui.button("⏱  Retime").clicked() {
+            graph.add_node("Retime".into(), NodeType::Retime {
+                fps_num: 30, fps_den: 1, mode: RetimeMode::Resample }, cp); added = true;
+        }
+        if ui.button("🕐  Set Timecode").clicked() {
+            graph.add_node("SetTimecode".into(), NodeType::SetTimecode {
+                hours: 1, minutes: 0, seconds: 0, frames: 0, drop_frame: false }, cp); added = true;
+        }
+        ui.separator();
+        ui.label(egui::RichText::new("Batch / Export").strong());
+        if ui.button("📂  Load FBX Folder").clicked() {
+            graph.add_node("Takes".into(), NodeType::LoadFbxDir { dir: String::new(), index: 0, take: 0 }, cp); added = true;
+        }
+        if ui.button("Ψ  Split Characters").clicked() {
+            graph.add_node("Split".into(), NodeType::SplitSkeleton {
+                picks: vec![crate::types::SplitPick::Character(0), crate::types::SplitPick::Character(1)] }, cp); added = true;
+        }
+        if ui.button("✚  Auto T-Pose").clicked() {
+            graph.add_node("TPose".into(), NodeType::AutoTPose { set_hip_height: false, hip_height: 90.0 }, cp); added = true;
+        }
+        if ui.button("🔧  Fix Pose").clicked() {
+            graph.add_node("FixPose".into(), NodeType::FixPose { edits: vec![] }, cp); added = true;
+        }
+        if ui.button("⬟  Proxy Skin").clicked() {
+            graph.add_node("ProxySkin".into(), NodeType::ProxySkin { thickness: 1.0 }, cp); added = true;
+        }
+        if ui.button("💾  Write FBX").clicked() {
+            graph.add_node("Write".into(), NodeType::WriteFbx {
+                path: crate::types::DEFAULT_WRITE_PATH.into() }, cp); added = true;
+        }
+        ui.separator();
+        ui.label(egui::RichText::new("Mocap tools").strong());
+        let tools: [(&str, &str, NodeType); 10] = [
+            ("↔  Mirror", "Mirror", NodeType::MirrorClip),
+            ("〰  Smooth", "Smooth", NodeType::SmoothClip { radius: 3, amount: 1.0, translations: true }),
+            ("📍  In Place", "InPlace", NodeType::InPlace { keep_height: true, to_root: false }),
+            ("🔃  Transform Clip", "TransformClip", NodeType::TransformClip { translate: [0.0; 3], rotate: [0.0; 3], scale: 1.0 }),
+            ("🔀  Blend Clips", "Blend", NodeType::BlendClips { blend: 15, align: true }),
+            ("🔁  Loop", "Loop", NodeType::LoopClip { blend: 15 }),
+            ("👥  Retarget", "Retarget", NodeType::Retarget),
+            ("⏩  Time Warp", "TimeWarp", NodeType::TimeWarp { speed: 1.0, reverse: false }),
+            ("🌿  Prune Joints", "Prune", NodeType::PruneJoints { words: "finger, thumb".into() }),
+            ("⬇  Floor", "Floor", NodeType::FloorClip { height: 0.0 }),
+        ];
+        for (label, name, node) in tools {
+            if ui.button(label).clicked() { graph.add_node(name.into(), node, cp); added = true; }
+        }
+        ui.separator();
+        ui.label(egui::RichText::new("Ragdoll").strong());
+        if ui.button("📂  Load FBX Mesh").on_hover_text("The meshes of an FBX file: a set to collide with").clicked() {
+            graph.add_node("Set".into(), NodeType::LoadFbxMesh { path: String::new() }, cp); added = true;
+        }
+        if ui.button("✂  Calamari").on_hover_text("The skin in rigid pieces, one per body, or their convex hulls").clicked() {
+            graph.add_node("Calamari".into(), NodeType::Calamari { hulls: true, detail: 1 }, cp); added = true;
+        }
+        if ui.button("🚶  Ragdoll").on_hover_text("Keep the character out of a collider and out of itself").clicked() {
+            graph.add_node("Ragdoll".into(), NodeType::Ragdoll { settings: Default::default() }, cp); added = true;
+        }
+    });
+    ui.menu_button("📂  USD", |ui| {
+        ui.set_min_width(190.0);
+        if ui.button("📂  Load USD").clicked() {
+            graph.add_node("LoadUSD".into(), NodeType::LoadUsd { path: String::new() }, cp); added = true;
+        }
+        if ui.button("👆  Pick Primitives").on_hover_text("Choose packed primitives for the nodes that follow to work on").clicked() {
+            graph.add_node("Pick".into(), NodeType::PickPrims { pattern: String::new() }, cp); added = true;
+        }
+        if ui.button("✂  Prune Primitives").on_hover_text("Remove packed primitives, or keep only some").clicked() {
+            graph.add_node("Prune".into(), NodeType::PrunePrims { pattern: String::new(), keep: false }, cp); added = true;
+        }
+        if ui.button("📦  Unpack").on_hover_text("Merge packed primitives into one mesh").clicked() {
+            graph.add_node("Unpack".into(), NodeType::UnpackPrims, cp); added = true;
+        }
+    });
+    ui.menu_button("🗺  UV", |ui| {
+        ui.set_min_width(170.0);
+        if ui.button("🗺  UV Unwrap").clicked() {
+            graph.add_node("UVUnwrap".into(), NodeType::UvUnwrap {
+                method: crate::core::uv::UvMethod::Conformal, angle: 66.0, margin: 0.02, axis: 1, tiles: 1 }, cp); added = true;
+        }
+        if ui.button("📌  UV Transform").clicked() {
+            graph.add_node("UVTransform".into(), NodeType::UvTransform { offset: [0.0; 2], rotate: 0.0, scale: [1.0; 2] }, cp); added = true;
+        }
+        if ui.button("✋  UV Edit").clicked() {
+            graph.add_node("UVEdit".into(), NodeType::UvEdit { edits: vec![] }, cp); added = true;
+        }
+    });
     if added { ui.close_menu(); }
     added
 }
@@ -591,9 +783,9 @@ pub fn draw_wire(painter: &egui::Painter, from: egui::Pos2, to: egui::Pos2, hove
     let (width, color) = if selected {
         (3.5, egui::Color32::from_rgb(220, 120, 80))
     } else if hovered {
-        (3.5, xsi::WIRE_HOV)
+        (3.5, xsi::WIRE_HOV())
     } else {
-        (2.0, xsi::WIRE)
+        (2.0, xsi::WIRE())
     };
     painter.add(egui::Shape::line(pts, egui::Stroke::new(width, color)));
 }

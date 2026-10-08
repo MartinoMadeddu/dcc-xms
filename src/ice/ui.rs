@@ -10,25 +10,27 @@ const SOCK_HIT: f32 = 22.0; // large invisible hit area
 const ROUNDING: f32 = 8.0;
 
 mod pal {
+    // Light-theme colours. `theme::c` returns the dark counterpart in dark mode.
+    #![allow(non_snake_case)]
     use bevy_egui::egui::Color32;
-    pub const BG:             Color32 = Color32::from_rgb( 95,  95,  95);
-    pub const GRID:           Color32 = Color32::from_rgb( 85,  85,  85);
-    pub const BODY_NORMAL:    Color32 = Color32::from_rgb(125, 125, 125);
-    pub const BODY_TERMINAL:  Color32 = Color32::from_rgb(105, 118, 105);
-    pub const BODY_CONST:     Color32 = Color32::from_rgb(115, 105, 122);
-    pub const BODY_SEL:       Color32 = Color32::from_rgb(110, 120, 135);
-    pub const TITLE_NORMAL:   Color32 = Color32::from_rgb(100, 100, 100);
-    pub const TITLE_TERMINAL: Color32 = Color32::from_rgb( 82,  98,  82);
-    pub const TITLE_CONST:    Color32 = Color32::from_rgb( 90,  78, 100);
-    pub const BORDER:         Color32 = Color32::from_rgb( 68,  68,  68);
-    pub const BORDER_SEL:     Color32 = Color32::from_rgb(175, 200, 220);
-    pub const BORDER_TERM:    Color32 = Color32::from_rgb(120, 175, 120);
-    pub const BORDER_CONST:   Color32 = Color32::from_rgb(170, 130, 200);
-    pub const TEXT:           Color32 = Color32::from_rgb(230, 230, 230);
-    pub const TEXT_DIM:       Color32 = Color32::from_rgb(185, 185, 185);
-    pub const WIRE:           Color32 = Color32::from_rgb(160, 160, 160);
-    pub const WIRE_HOV:       Color32 = Color32::from_rgb(220, 185,  90);
-    pub const BREADCRUMB_BG:  Color32 = Color32::from_rgb( 78,  78,  82);
+    pub fn BG() -> Color32 { crate::theme::c( 95,  95,  95) }
+    pub fn GRID() -> Color32 { crate::theme::c( 85,  85,  85) }
+    pub fn BODY_NORMAL() -> Color32 { crate::theme::raised(125, 125, 125) }
+    pub fn BODY_TERMINAL() -> Color32 { crate::theme::c(105, 118, 105) }
+    pub fn BODY_CONST() -> Color32 { crate::theme::c(115, 105, 122) }
+    pub fn BODY_SEL() -> Color32 { crate::theme::c(110, 120, 135) }
+    pub fn TITLE_NORMAL() -> Color32 { crate::theme::raised(100, 100, 100) }
+    pub fn TITLE_TERMINAL() -> Color32 { crate::theme::c( 82,  98,  82) }
+    pub fn TITLE_CONST() -> Color32 { crate::theme::c( 90,  78, 100) }
+    pub fn BORDER() -> Color32 { crate::theme::outline( 68,  68,  68) }
+    pub fn BORDER_SEL() -> Color32 { crate::theme::c(175, 200, 220) }
+    pub fn BORDER_TERM() -> Color32 { crate::theme::c(120, 175, 120) }
+    pub fn BORDER_CONST() -> Color32 { crate::theme::c(170, 130, 200) }
+    pub fn TEXT() -> Color32 { crate::theme::c(248, 248, 248) }
+    pub fn TEXT_DIM() -> Color32 { crate::theme::c(210, 210, 210) }
+    pub fn WIRE() -> Color32 { crate::theme::c(160, 160, 160) }
+    pub fn WIRE_HOV() -> Color32 { crate::theme::c(220, 185,  90) }
+    pub fn BREADCRUMB_BG() -> Color32 { crate::theme::c( 78,  78,  82) }
 }
 
 fn input_socket_pos(node: &SubnetNode, idx: usize) -> egui::Pos2 {
@@ -47,11 +49,11 @@ pub fn draw_breadcrumb(ui: &mut egui::Ui, subnet_name: &str) -> bool {
     let mut exit = false;
     ui.horizontal(|ui| {
         egui::Frame::none()
-            .fill(pal::BREADCRUMB_BG)
+            .fill(pal::BREADCRUMB_BG())
             .inner_margin(egui::vec2(8.0, 4.0))
             .show(ui, |ui| {
-                if ui.link(egui::RichText::new("Root").color(pal::TEXT)).clicked() { exit = true; }
-                ui.label(egui::RichText::new(" › ").color(pal::TEXT_DIM));
+                if ui.link(egui::RichText::new("Root").color(pal::TEXT())).clicked() { exit = true; }
+                ui.label(egui::RichText::new(" › ").color(pal::TEXT_DIM()));
                 ui.label(egui::RichText::new(subnet_name)
                     .color(egui::Color32::from_rgb(180, 200, 230))
                     .strong());
@@ -133,18 +135,18 @@ pub fn draw_subnet_graph(ui: &mut egui::Ui, graph: &mut SubnetGraph) {
     let to_screen = |p: egui::Pos2| canvas_rect.min + p.to_vec2() + pan;
 
     // Background + grid
-    painter.rect_filled(canvas_rect, 0.0, pal::BG);
+    painter.rect_filled(canvas_rect, 0.0, pal::BG());
     for x in (0..canvas_rect.width() as i32).step_by(50) {
         painter.line_segment(
             [egui::pos2(canvas_rect.min.x + x as f32, canvas_rect.min.y),
              egui::pos2(canvas_rect.min.x + x as f32, canvas_rect.max.y)],
-            egui::Stroke::new(1.0, pal::GRID));
+            egui::Stroke::new(1.0, pal::GRID()));
     }
     for y in (0..canvas_rect.height() as i32).step_by(50) {
         painter.line_segment(
             [egui::pos2(canvas_rect.min.x, canvas_rect.min.y + y as f32),
              egui::pos2(canvas_rect.max.x, canvas_rect.min.y + y as f32)],
-            egui::Stroke::new(1.0, pal::GRID));
+            egui::Stroke::new(1.0, pal::GRID()));
     }
 
     // Existing connections
@@ -216,15 +218,15 @@ pub fn draw_subnet_graph(ui: &mut egui::Ui, graph: &mut SubnetGraph) {
         }
         ui.separator();
         ui.label(egui::RichText::new("Vec3 Math").strong());
-        if ui.button("＋  Add").clicked() {
+        if ui.button("+  Add").clicked() {
             graph.add_node("Add".into(), SubnetNodeType::AddVec3, cp);
             ui.close_menu();
         }
-        if ui.button("－  Subtract").clicked() {
+        if ui.button("-  Subtract").clicked() {
             graph.add_node("Subtract".into(), SubnetNodeType::SubtractVec3, cp);
             ui.close_menu();
         }
-        if ui.button("✕  Multiply").clicked() {
+        if ui.button("×  Multiply").clicked() {
             graph.add_node("Multiply".into(), SubnetNodeType::MultiplyVec3 { scalar: 1.0 }, cp);
             ui.close_menu();
         }
@@ -287,17 +289,17 @@ fn draw_subnet_node(
     let is_const    = matches!(node.node_type,
         SubnetNodeType::ConstVec3 { .. } | SubnetNodeType::ConstFloat { .. } | SubnetNodeType::ConstInt { .. });
 
-    let body_color  = if is_terminal   { pal::BODY_TERMINAL }
-                      else if is_const { pal::BODY_CONST    }
-                      else if is_sel   { pal::BODY_SEL      }
-                      else             { pal::BODY_NORMAL   };
-    let title_color = if is_terminal   { pal::TITLE_TERMINAL }
-                      else if is_const { pal::TITLE_CONST    }
-                      else             { pal::TITLE_NORMAL   };
-    let border_col  = if is_sel        { pal::BORDER_SEL   }
-                      else if is_terminal { pal::BORDER_TERM }
-                      else if is_const { pal::BORDER_CONST  }
-                      else             { pal::BORDER        };
+    let body_color  = if is_terminal   { pal::BODY_TERMINAL() }
+                      else if is_const { pal::BODY_CONST()    }
+                      else if is_sel   { pal::BODY_SEL()      }
+                      else             { pal::BODY_NORMAL()   };
+    let title_color = if is_terminal   { pal::TITLE_TERMINAL() }
+                      else if is_const { pal::TITLE_CONST()    }
+                      else             { pal::TITLE_NORMAL()   };
+    let border_col  = if is_sel        { pal::BORDER_SEL()   }
+                      else if is_terminal { pal::BORDER_TERM() }
+                      else if is_const { pal::BORDER_CONST()  }
+                      else             { pal::BORDER()        };
 
     // Draw body
     painter.rect_filled(rect, ROUNDING, body_color);
@@ -312,7 +314,7 @@ fn draw_subnet_node(
         egui::pos2(np.x + NODE_W / 2.0, np.y + 15.0),
         egui::Align2::CENTER_CENTER,
         &format!("{} {}", subnet_node_icon(&node.node_type), node.name),
-        egui::FontId::proportional(13.0), pal::TEXT);
+        egui::FontId::proportional(13.0), pal::TEXT());
 
     let hint = match &node.node_type {
         SubnetNodeType::ConstVec3  { value } =>
@@ -324,7 +326,7 @@ fn draw_subnet_node(
     painter.text(
         egui::pos2(np.x + NODE_W / 2.0, np.y + NODE_H - 10.0),
         egui::Align2::CENTER_CENTER, &hint,
-        egui::FontId::proportional(9.0), pal::TEXT_DIM);
+        egui::FontId::proportional(9.0), pal::TEXT_DIM());
 
     // ── IMPORTANT: title bar allocated FIRST → lowest hit-test priority ───────
     let dr = ui.allocate_rect(title_rect, egui::Sense::click_and_drag());
@@ -341,7 +343,7 @@ fn draw_subnet_node(
             socket_color_out(out.value_hint, sr.hovered(), is_wiring));
         painter.text(egui::pos2(sp.x - SOCK_R - 3.0, sp.y),
             egui::Align2::RIGHT_CENTER, &out.name,
-            egui::FontId::proportional(10.0), pal::TEXT_DIM);
+            egui::FontId::proportional(10.0), pal::TEXT_DIM());
 
         // Fire on the very first frame of press
         if sr.drag_started() || (sr.is_pointer_button_down_on() && graph.connecting_from.is_none()) {
@@ -360,7 +362,7 @@ fn draw_subnet_node(
             socket_color(inp.value_hint, sr.hovered(), inp.connected_output.is_some()));
         painter.text(egui::pos2(sp.x + SOCK_R + 3.0, sp.y),
             egui::Align2::LEFT_CENTER, &inp.name,
-            egui::FontId::proportional(10.0), pal::TEXT_DIM);
+            egui::FontId::proportional(10.0), pal::TEXT_DIM());
 
         // Complete wire: mouse released while this socket is hovered.
         // Use raw input so the canvas response can't steal the release.
@@ -428,7 +430,7 @@ pub fn draw_wire_h(painter: &egui::Painter, from: egui::Pos2, to: egui::Pos2, ho
         .collect();
     painter.add(egui::Shape::line(pts, egui::Stroke::new(
         if hovered { 4.0 } else { 2.5 },
-        if hovered { pal::WIRE_HOV } else { pal::WIRE })));
+        if hovered { pal::WIRE_HOV() } else { pal::WIRE() })));
 }
 
 fn is_near_bezier_h(p: egui::Pos2, from: egui::Pos2, to: egui::Pos2, thresh: f32) -> bool {

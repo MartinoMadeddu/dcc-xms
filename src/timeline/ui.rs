@@ -4,17 +4,19 @@ use super::{Playback, RulerUnit, TimelineSource, TimelineState};
 use crate::core::anim::AnimData;
 
 mod xsi {
+    // Light-theme colours. `theme::c` returns the dark counterpart in dark mode.
+    #![allow(non_snake_case)]
     use bevy_egui::egui::Color32;
-    pub const PANEL_BG:   Color32 = Color32::from_rgb(104, 104, 104);
-    pub const TRACK_BG:   Color32 = Color32::from_rgb( 78,  78,  78);
-    pub const INPUT_BAR:  Color32 = Color32::from_rgb(116, 116, 116);
-    pub const CLIP_BAR:   Color32 = Color32::from_rgb( 96, 122, 148);
-    pub const CLIP_EDGE:  Color32 = Color32::from_rgb(160, 195, 225);
-    pub const TICK:       Color32 = Color32::from_rgb(150, 150, 150);
-    pub const TICK_MINOR: Color32 = Color32::from_rgb(112, 112, 112);
-    pub const TEXT:       Color32 = Color32::from_rgb(230, 230, 230);
-    pub const TEXT_DIM:   Color32 = Color32::from_rgb(185, 185, 185);
-    pub const PLAYHEAD:   Color32 = Color32::from_rgb(235, 190,  95);
+    pub fn PANEL_BG() -> Color32 { crate::theme::c(104, 104, 104) }
+    pub fn TRACK_BG() -> Color32 { crate::theme::c( 78,  78,  78) }
+    pub fn INPUT_BAR() -> Color32 { crate::theme::c(116, 116, 116) }
+    pub fn CLIP_BAR() -> Color32 { crate::theme::c( 96, 122, 148) }
+    pub fn CLIP_EDGE() -> Color32 { crate::theme::c(160, 195, 225) }
+    pub fn TICK() -> Color32 { crate::theme::c(150, 150, 150) }
+    pub fn TICK_MINOR() -> Color32 { crate::theme::c(112, 112, 112) }
+    pub fn TEXT() -> Color32 { crate::theme::c(248, 248, 248) }
+    pub fn TEXT_DIM() -> Color32 { crate::theme::c(210, 210, 210) }
+    pub fn PLAYHEAD() -> Color32 { crate::theme::c(235, 190,  95) }
 }
 
 const TRACK_H:   f32 = 40.0;
@@ -36,10 +38,12 @@ pub fn draw_timeline(
     state: &TimelineState,
     dt:    f64,
     keys:  bool,
+    // False when the navigation style uses Space itself.
+    space_plays: bool,
 ) {
-    egui::Frame::none().fill(xsi::PANEL_BG).inner_margin(6.0).show(ui, |ui| {
+    egui::Frame::none().fill(xsi::PANEL_BG()).inner_margin(6.0).show(ui, |ui| {
         match state {
-            TimelineState::Source(src) => draw_source(ui, pb, src, dt, keys),
+            TimelineState::Source(src) => draw_source(ui, pb, src, dt, keys, space_plays),
             TimelineState::NoTimeData { node_name } => {
                 pb.playing = false;
                 draw_empty(ui, &format!("\"{node_name}\" has no time data. Select a node that outputs a clip."));
@@ -54,16 +58,16 @@ pub fn draw_timeline(
 
 fn draw_empty(ui: &mut egui::Ui, msg: &str) {
     ui.horizontal(|ui| {
-        ui.colored_label(xsi::TEXT, egui::RichText::new("Timeline").strong());
+        ui.colored_label(xsi::TEXT(), egui::RichText::new("Timeline").strong());
         ui.separator();
-        ui.colored_label(xsi::TEXT_DIM, msg);
+        ui.colored_label(xsi::TEXT_DIM(), msg);
     });
     let (rect, _) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), TRACK_H), egui::Sense::hover());
-    ui.painter().rect_filled(rect, 3.0, xsi::TRACK_BG);
+    ui.painter().rect_filled(rect, 3.0, xsi::TRACK_BG());
 }
 
-fn draw_source(ui: &mut egui::Ui, pb: &mut Playback, src: &TimelineSource, dt: f64, keys: bool) {
+fn draw_source(ui: &mut egui::Ui, pb: &mut Playback, src: &TimelineSource, dt: f64, keys: bool, space_plays: bool) {
     let clip = &src.clip;
     let fps  = clip.rate.fps();
 
@@ -114,7 +118,7 @@ fn draw_source(ui: &mut egui::Ui, pb: &mut Playback, src: &TimelineSource, dt: f
     // ── Keys ─────────────────────────────────────────────────────────────────
     if keys {
         let (space, left, right, home, end) = ui.input(|i| (
-            i.key_pressed(egui::Key::Space),
+            space_plays && i.key_pressed(egui::Key::Space),
             i.key_pressed(egui::Key::ArrowLeft),
             i.key_pressed(egui::Key::ArrowRight),
             i.key_pressed(egui::Key::Home),
@@ -150,13 +154,13 @@ fn draw_source(ui: &mut egui::Ui, pb: &mut Playback, src: &TimelineSource, dt: f
         ui.checkbox(&mut pb.looping, "Loop");
 
         ui.separator();
-        ui.colored_label(xsi::TEXT_DIM, "Frame");
+        ui.colored_label(xsi::TEXT_DIM(), "Frame");
         let mut f = frame;
         if ui.add(egui::DragValue::new(&mut f).range(ext_start..=ext_end).speed(0.25)).changed() {
             pb.playing = false;
             set_frame(pb, f);
         }
-        ui.colored_label(xsi::TEXT,
+        ui.colored_label(xsi::TEXT(),
             egui::RichText::new(clip.timecode(frame).to_string()).monospace().size(14.0));
 
         ui.separator();
@@ -166,13 +170,13 @@ fn draw_source(ui: &mut egui::Ui, pb: &mut Playback, src: &TimelineSource, dt: f
         // ── What the timeline is following ───────────────────────────────────
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let rate = format!("{} fps{}", clip.rate.label(), if clip.drop_frame { " DF" } else { "" });
-            ui.colored_label(xsi::TEXT_DIM, format!(
+            ui.colored_label(xsi::TEXT_DIM(), format!(
                 "{}  |  {} frames  |  {} - {}  |  {} joints",
                 rate, clip.frames,
                 clip.timecode(out_start), clip.timecode(out_end),
                 clip.joints.len(),
             ));
-            ui.colored_label(xsi::TEXT, egui::RichText::new(format!(
+            ui.colored_label(xsi::TEXT(), egui::RichText::new(format!(
                 "{}{} / {}",
                 if src.from_selection { "" } else { "viewed: " },
                 src.node_name, clip.name,
@@ -186,7 +190,7 @@ fn draw_source(ui: &mut egui::Ui, pb: &mut Playback, src: &TimelineSource, dt: f
     let (rect, resp) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), TRACK_H), egui::Sense::click_and_drag());
     let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, 3.0, xsi::TRACK_BG);
+    painter.rect_filled(rect, 3.0, xsi::TRACK_BG());
 
     let x0   = rect.min.x + TRACK_PAD;
     let x1   = rect.max.x - TRACK_PAD;
@@ -200,10 +204,10 @@ fn draw_source(ui: &mut egui::Ui, pb: &mut Playback, src: &TimelineSource, dt: f
 
     // Clip entering the node (context), then the clip the node outputs.
     if let Some((a, b)) = input_range {
-        painter.rect_filled(bar(a, b), 2.0, xsi::INPUT_BAR);
+        painter.rect_filled(bar(a, b), 2.0, xsi::INPUT_BAR());
     }
-    painter.rect_filled(bar(out_start, out_end), 2.0, xsi::CLIP_BAR);
-    painter.rect_stroke(bar(out_start, out_end), 2.0, egui::Stroke::new(1.0_f32, xsi::CLIP_EDGE));
+    painter.rect_filled(bar(out_start, out_end), 2.0, xsi::CLIP_BAR());
+    painter.rect_stroke(bar(out_start, out_end), 2.0, egui::Stroke::new(1.0_f32, xsi::CLIP_EDGE()));
 
     // ── Ruler ────────────────────────────────────────────────────────────────
     // Tick spacing follows the clip's timebase so major ticks land on seconds.
@@ -226,7 +230,7 @@ fn draw_source(ui: &mut egui::Ui, pb: &mut Playback, src: &TimelineSource, dt: f
                 let x = x_of(f);
                 painter.line_segment(
                     [egui::pos2(x, rect.min.y + 12.0), egui::pos2(x, bar_top)],
-                    egui::Stroke::new(1.0_f32, xsi::TICK_MINOR));
+                    egui::Stroke::new(1.0_f32, xsi::TICK_MINOR()));
             }
             f += minor;
         }
@@ -237,13 +241,13 @@ fn draw_source(ui: &mut egui::Ui, pb: &mut Playback, src: &TimelineSource, dt: f
             let x = x_of(f);
             painter.line_segment(
                 [egui::pos2(x, rect.min.y + 5.0), egui::pos2(x, bar_top)],
-                egui::Stroke::new(1.0_f32, xsi::TICK));
+                egui::Stroke::new(1.0_f32, xsi::TICK()));
             let text = match pb.ruler {
                 RulerUnit::Frames   => f.to_string(),
                 RulerUnit::Timecode => clip.timecode(f).to_string(),
             };
             painter.text(egui::pos2(x + 3.0, rect.min.y + 2.0), egui::Align2::LEFT_TOP,
-                text, egui::FontId::proportional(10.0), xsi::TEXT_DIM);
+                text, egui::FontId::proportional(10.0), xsi::TEXT_DIM());
         }
         f += major;
     }
@@ -262,7 +266,7 @@ fn draw_source(ui: &mut egui::Ui, pb: &mut Playback, src: &TimelineSource, dt: f
     let px = x_of(frame);
     painter.line_segment(
         [egui::pos2(px, rect.min.y), egui::pos2(px, rect.max.y)],
-        egui::Stroke::new(2.0_f32, xsi::PLAYHEAD));
+        egui::Stroke::new(2.0_f32, xsi::PLAYHEAD()));
     let tag = match pb.ruler {
         RulerUnit::Frames   => frame.to_string(),
         RulerUnit::Timecode => clip.timecode(frame).to_string(),
@@ -272,6 +276,6 @@ fn draw_source(ui: &mut egui::Ui, pb: &mut Playback, src: &TimelineSource, dt: f
     let tag_x  = (px + 2.0).min(rect.max.x - w);
     let tag_r  = egui::Rect::from_min_size(
         egui::pos2(tag_x, rect.max.y - 16.0), egui::vec2(w, 14.0));
-    painter.rect_filled(tag_r, 2.0, xsi::PLAYHEAD);
+    painter.rect_filled(tag_r, 2.0, xsi::PLAYHEAD());
     painter.galley(egui::pos2(tag_r.min.x + 4.0, tag_r.min.y + 1.0), galley, egui::Color32::BLACK);
 }

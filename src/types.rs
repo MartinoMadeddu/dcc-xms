@@ -11,6 +11,11 @@ pub struct MainCamera;
 #[derive(Component)]
 pub struct GeneratedMesh;
 
+/// A generated mesh that follows the playhead: rebuilt when time moves,
+/// while the others stay as they are.
+#[derive(Component)]
+pub struct PosedMesh;
+
 #[derive(Component)]
 pub struct GroundGrid;
 
@@ -22,13 +27,13 @@ pub struct ViewportRect(pub Option<egui::Rect>);
 // SHARED IDs
 // ============================================================================
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct NodeId(pub usize);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ConnectionId(pub usize);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct SubnetId(pub usize);
 
 // Scene object ID — one per visible object in the scene explorer
@@ -39,13 +44,35 @@ pub struct SceneObjectId(pub usize);
 // OUTER NODE TYPES
 // ============================================================================
 
-#[derive(Clone, Debug)]
+/// Vec3 stored as a plain array in saved graphs.
+mod vec3_array {
+    use bevy::math::Vec3;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    pub fn serialize<S: Serializer>(v: &Vec3, s: S) -> Result<S::Ok, S::Error> {
+        v.to_array().serialize(s)
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec3, D::Error> {
+        <[f32; 3]>::deserialize(d).map(Vec3::from_array)
+    }
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub enum NodeType {
     CreateCube   { size: f32 },
     CreateSphere { radius: f32, segments: u32 },
     CreateGrid   { rows: u32, cols: u32, size: f32 },
     LoadUsd      { path: String },
-    Transform    { translation: Vec3, rotation: Vec3, scale: Vec3 },
+    /// Mark packed primitives whose path matches a pattern as picked.
+    PickPrims    { pattern: String },
+    /// Remove packed primitives whose path matches a pattern, or keep only those.
+    PrunePrims   { pattern: String, keep: bool },
+    /// Merge packed primitives into one mesh.
+    UnpackPrims,
+    Transform    {
+        #[serde(with = "vec3_array")] translation: Vec3,
+        #[serde(with = "vec3_array")] rotation:    Vec3,
+        #[serde(with = "vec3_array")] scale:       Vec3,
+    },
     Merge,
     ScatterPoints { count: u32, seed: u32 },
     CopyToPoints,
@@ -62,9 +89,90 @@ pub enum NodeType {
     TrimClip     { head: u32, tail: u32 },
     Retime       { fps_num: u32, fps_den: u32, mode: RetimeMode },
     SetTimecode  { hours: u32, minutes: u32, seconds: u32, frames: u32, drop_frame: bool },
+
+    // ── Batch / export ───────────────────────────────────────────────────────
+    /// One FBX out of a folder, chosen by index into the sorted file list.
+    LoadFbxDir   { dir: String, index: u32, take: u32 },
+    /// One output per entry: the picked joint and everything below it.
+    SplitSkeleton { picks: Vec<SplitPick> },
+    /// Single-frame neutral pose. `hip_height` is in centimetres.
+    AutoTPose    { set_hip_height: bool, hip_height: f32 },
+    /// Manual corrections on top of a pose.
+    FixPose      { edits: Vec<crate::core::anim::PoseEdit> },
+    /// Spheres and cylinders bound to the skeleton.
+    ProxySkin    { thickness: f32 },
+    /// Passes the clip through. Writing happens from the properties panel.
+    WriteFbx     { path: String },
+
+    // ── Mocap tools ──────────────────────────────────────────────────────────
+    /// Swap left and right.
+    MirrorClip,
+    /// Gaussian filter over time. `radius` in frames.
+    SmoothClip   { radius: u32, amount: f32, translations: bool },
+    /// Hold the hips over their starting point.
+    InPlace      { keep_height: bool, to_root: bool },
+    /// Move, turn (degrees) and scale the whole clip.
+    TransformClip { translate: [f32; 3], rotate: [f32; 3], scale: f32 },
+    /// First input followed by the second, cross-faded over `blend` frames.
+    BlendClips   { blend: u32, align: bool },
+    /// Ease the end into the start so the clip cycles.
+    LoopClip     { blend: u32 },
+    /// Motion of the first input on the skeleton of the second.
+    Retarget,
+    TimeWarp     { speed: f32, reverse: bool },
+    /// Remove joints whose name contains one of the comma-separated words.
+    PruneJoints  { words: String },
+    /// Put the lowest point of the clip at `height` (metres).
+    FloorClip    { height: f32 },
+
+    // ── Ragdoll ──────────────────────────────────────────────────────────────
+    /// Every mesh of an FBX file, as packed primitives: a set to collide with.
+    LoadFbxMesh  { path: String },
+    /// The skin cut into rigid pieces, one per body, or their convex hulls.
+    Calamari     { hulls: bool, detail: u32 },
+    /// Keeps the character out of a collider mesh and out of itself.
+    /// Solving is started from the properties panel.
+    Ragdoll      { settings: crate::ragdoll::Settings },
+
+    // ── UV ───────────────────────────────────────────────────────────────────
+    /// Make texture coordinates. `angle` (degrees) limits how far a chart's
+    /// normals may spread; `margin` is the gap between charts.
+    UvUnwrap     { method: crate::core::uv::UvMethod, angle: f32, margin: f32, axis: usize,
+                   /// UDIM tiles to spread the elements over. One: everything in the unit square.
+                   #[serde(default = "one_tile")] tiles: u32 },
+    /// Move, turn and scale the whole UV layout.
+    UvTransform  { offset: [f32; 2], rotate: f32, scale: [f32; 2] },
+    /// Move, turn and scale single UV islands.
+    UvEdit       { edits: Vec<crate::core::uv::IslandEdit> },
+
+    // ── Modelling ────────────────────────────────────────────────────────────
+    /// Polygon modelling in one node: an ordered list of operations, each
+    /// with its own selection, like the history of an Edit Poly modifier.
+    EditPoly {
+        ops:     Vec<crate::core::poly::PolyOp>,
+        /// Selection being built for the next operation.
+        pending: crate::core::poly::PolySelection,
+        /// Operation whose selection is being edited in the viewport, which
+        /// then shows the mesh as it enters that operation. None: `pending`.
+        edit:    Option<usize>,
+        /// Collapse every earlier operation when a new one is added.
+        #[serde(default)]
+        auto_collapse: bool,
+    },
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// What one output of the Split node keeps.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum SplitPick {
+    /// Nth character found in the clip. Survives name changes between files.
+    Character(u32),
+    /// Joint with this exact name.
+    Joint(String),
+}
+
+pub const DEFAULT_WRITE_PATH: &str = "{dir}/split/{file}_{char}.fbx";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum RetimeMode {
     /// Keep duration, interpolate new samples.
     Resample,
@@ -75,7 +183,19 @@ pub enum RetimeMode {
 impl NodeType {
     /// Nodes that create animation data with no input.
     pub fn is_anim_generator(&self) -> bool {
-        matches!(self, NodeType::LoadFbx { .. } | NodeType::TestClip { .. })
+        matches!(self, NodeType::LoadFbx { .. } | NodeType::LoadFbxDir { .. } | NodeType::TestClip { .. })
+    }
+
+    /// Nodes whose output is a clip.
+    pub fn is_anim(&self) -> bool {
+        self.is_anim_generator() || matches!(self,
+            NodeType::RenameJoints { .. } | NodeType::TrimClip { .. } | NodeType::Retime { .. }
+            | NodeType::SetTimecode { .. } | NodeType::SplitSkeleton { .. } | NodeType::AutoTPose { .. }
+            | NodeType::FixPose { .. } | NodeType::ProxySkin { .. } | NodeType::WriteFbx { .. }
+            | NodeType::MirrorClip | NodeType::SmoothClip { .. } | NodeType::InPlace { .. }
+            | NodeType::TransformClip { .. } | NodeType::BlendClips { .. } | NodeType::LoopClip { .. }
+            | NodeType::Retarget | NodeType::TimeWarp { .. } | NodeType::PruneJoints { .. }
+            | NodeType::FloorClip { .. } | NodeType::Calamari { .. } | NodeType::Ragdoll { .. })
     }
 }
 
@@ -85,9 +205,12 @@ pub fn node_type_icon(t: &NodeType) -> &'static str {
         NodeType::CreateSphere { .. }  => "●",
         NodeType::CreateGrid { .. }    => "⊞",
         NodeType::LoadUsd { .. }       => "📂",
+        NodeType::PickPrims { .. }     => "👆",
+        NodeType::PrunePrims { .. }    => "✂",
+        NodeType::UnpackPrims          => "📦",
         NodeType::Transform { .. }     => "⟲",
         NodeType::Merge                => "⊕",
-        NodeType::ScatterPoints { .. } => "⁙",
+        NodeType::ScatterPoints { .. } => "∷",
         NodeType::CopyToPoints         => "❇",
         NodeType::Subnet { .. }        => "▣",
         NodeType::Output               => "▶",
@@ -97,6 +220,29 @@ pub fn node_type_icon(t: &NodeType) -> &'static str {
         NodeType::TrimClip { .. }      => "✂",
         NodeType::Retime { .. }        => "⏱",
         NodeType::SetTimecode { .. }   => "🕐",
+        NodeType::LoadFbxDir { .. }    => "📂",
+        NodeType::SplitSkeleton { .. } => "Ψ",
+        NodeType::AutoTPose { .. }     => "✚",
+        NodeType::FixPose { .. }       => "🔧",
+        NodeType::ProxySkin { .. }     => "⬟",
+        NodeType::WriteFbx { .. }      => "💾",
+        NodeType::EditPoly { .. }      => "🔨",
+        NodeType::MirrorClip           => "↔",
+        NodeType::SmoothClip { .. }    => "〰",
+        NodeType::InPlace { .. }       => "📍",
+        NodeType::TransformClip { .. } => "🔃",
+        NodeType::BlendClips { .. }    => "🔀",
+        NodeType::LoopClip { .. }      => "🔁",
+        NodeType::Retarget             => "👥",
+        NodeType::TimeWarp { .. }      => "⏩",
+        NodeType::PruneJoints { .. }   => "🌿",
+        NodeType::FloorClip { .. }     => "⬇",
+        NodeType::LoadFbxMesh { .. }   => "📂",
+        NodeType::Calamari { .. }      => "✂",
+        NodeType::Ragdoll { .. }       => "🚶",
+        NodeType::UvUnwrap { .. }      => "🗺",
+        NodeType::UvTransform { .. }   => "📌",
+        NodeType::UvEdit { .. }        => "✋",
     }
 }
 
@@ -106,6 +252,9 @@ pub fn node_type_label(t: &NodeType) -> &'static str {
         NodeType::CreateSphere { .. }  => "Create Sphere",
         NodeType::CreateGrid { .. }    => "Create Grid",
         NodeType::LoadUsd { .. }       => "Load USD",
+        NodeType::PickPrims { .. }     => "Pick Primitives",
+        NodeType::PrunePrims { .. }    => "Prune Primitives",
+        NodeType::UnpackPrims          => "Unpack",
         NodeType::Transform { .. }     => "Transform",
         NodeType::Merge                => "Merge",
         NodeType::ScatterPoints { .. } => "Scatter Points",
@@ -118,6 +267,29 @@ pub fn node_type_label(t: &NodeType) -> &'static str {
         NodeType::TrimClip { .. }      => "Trim Clip",
         NodeType::Retime { .. }        => "Retime",
         NodeType::SetTimecode { .. }   => "Set Timecode",
+        NodeType::LoadFbxDir { .. }    => "Load FBX Folder",
+        NodeType::SplitSkeleton { .. } => "Split Characters",
+        NodeType::AutoTPose { .. }     => "Auto T-Pose",
+        NodeType::FixPose { .. }       => "Fix Pose",
+        NodeType::ProxySkin { .. }     => "Proxy Skin",
+        NodeType::WriteFbx { .. }      => "Write FBX",
+        NodeType::EditPoly { .. }      => "Edit Poly",
+        NodeType::MirrorClip           => "Mirror",
+        NodeType::SmoothClip { .. }    => "Smooth",
+        NodeType::InPlace { .. }       => "In Place",
+        NodeType::TransformClip { .. } => "Transform Clip",
+        NodeType::BlendClips { .. }    => "Blend Clips",
+        NodeType::LoopClip { .. }      => "Loop",
+        NodeType::Retarget             => "Retarget",
+        NodeType::TimeWarp { .. }      => "Time Warp",
+        NodeType::PruneJoints { .. }   => "Prune Joints",
+        NodeType::FloorClip { .. }     => "Floor",
+        NodeType::LoadFbxMesh { .. }   => "Load FBX Mesh",
+        NodeType::Calamari { .. }      => "Calamari",
+        NodeType::Ragdoll { .. }       => "Ragdoll",
+        NodeType::UvUnwrap { .. }      => "UV Unwrap",
+        NodeType::UvTransform { .. }   => "UV Transform",
+        NodeType::UvEdit { .. }        => "UV Edit",
     }
 }
 
@@ -149,9 +321,9 @@ pub fn subnet_node_icon(t: &SubnetNodeType) -> &'static str {
     match t {
         SubnetNodeType::SubInput            => "▶",
         SubnetNodeType::SubOutput           => "◀",
-        SubnetNodeType::AddVec3             => "＋",
-        SubnetNodeType::SubtractVec3        => "－",
-        SubnetNodeType::MultiplyVec3 { .. } => "✕",
+        SubnetNodeType::AddVec3             => "+",
+        SubnetNodeType::SubtractVec3        => "-",
+        SubnetNodeType::MultiplyVec3 { .. } => "×",
         SubnetNodeType::CrossProduct        => "×",
         SubnetNodeType::Normalize           => "|v|",
         SubnetNodeType::DotProduct          => "·",
@@ -159,7 +331,7 @@ pub fn subnet_node_icon(t: &SubnetNodeType) -> &'static str {
         SubnetNodeType::ConstVec3 { .. }    => "→v",
         SubnetNodeType::ConstFloat { .. }   => "→f",
         SubnetNodeType::ConstInt { .. }     => "→i",
-        SubnetNodeType::ScatterPoints { .. } => "⁙",
+        SubnetNodeType::ScatterPoints { .. } => "∷",
         SubnetNodeType::GetTemplate          => "📄",
         SubnetNodeType::CopyToPoints         => "📦",
     }
@@ -215,12 +387,83 @@ pub struct MeshData {
     pub primvars:   Vec<PrimVar>,    // arbitrary extra channels
     /// Original face-vertex counts before triangulation (for face count display)
     pub face_count: usize,
+    /// Polygons as vertex loops, when the mesh has them. `indices` then holds
+    /// their triangulation. Empty for meshes that are only triangles.
+    pub polys:      Vec<Vec<u32>>,
+    /// Texture coordinates, one pair per triangle corner in the order of
+    /// `indices`. Empty when the mesh has none.
+    pub uvs:        Vec<[f32; 2]>,
 }
 
 impl MeshData {
     pub fn from_triangles(vertices: Vec<[f32; 3]>, indices: Vec<u32>) -> Self {
         let face_count = indices.len() / 3;
         Self { vertices, indices, face_count, ..Default::default() }
+    }
+
+    /// Mesh from polygons of any size. Triangulates them for drawing and
+    /// keeps the polygons for modelling.
+    pub fn from_polys(vertices: Vec<[f32; 3]>, polys: Vec<Vec<u32>>) -> Self {
+        let mut indices = Vec::new();
+        for poly in &polys {
+            for i in 1..poly.len().saturating_sub(1) {
+                indices.extend([poly[0], poly[i], poly[i + 1]]);
+            }
+        }
+        let mut m = Self { vertices, indices, face_count: polys.len(), polys, ..Default::default() };
+        m.compute_normals();
+        m
+    }
+
+    /// The mesh's polygons: the stored ones, or its triangles.
+    pub fn polygons(&self) -> Vec<Vec<u32>> {
+        if !self.polys.is_empty() { return self.polys.clone(); }
+        self.indices.chunks_exact(3).map(|t| t.to_vec()).collect()
+    }
+
+    /// Positions, normals and triangle indices for drawing. A mesh with
+    /// polygons is drawn with hard edges where neighbouring polygons meet at
+    /// more than 40 degrees and smooth shading elsewhere, so a box looks like
+    /// a box and a sphere like a sphere.
+    pub fn render_buffers(&self) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<u32>) {
+        use bevy::math::Vec3;
+        if self.polys.is_empty() {
+            let normals = if self.normals.len() == self.vertices.len() {
+                self.normals.clone()
+            } else {
+                self.vertices.iter().map(|_| [0.0f32, 1.0, 0.0]).collect()
+            };
+            return (self.vertices.clone(), normals, self.indices.clone());
+        }
+        let v = |i: u32| Vec3::from_array(self.vertices[i as usize]);
+        let face_n: Vec<Vec3> = self.polys.iter().map(|poly| {
+            let mut n = Vec3::ZERO;
+            for i in 0..poly.len() { n += v(poly[i]).cross(v(poly[(i + 1) % poly.len()])); }
+            n
+        }).collect();
+        let mut around: Vec<Vec<u32>> = vec![vec![]; self.vertices.len()];
+        for (p, poly) in self.polys.iter().enumerate() {
+            for i in poly { around[*i as usize].push(p as u32); }
+        }
+        let limit = 40f32.to_radians().cos();
+        let (mut pos, mut nrm, mut idx) = (vec![], vec![], vec![]);
+        for (p, poly) in self.polys.iter().enumerate() {
+            let own  = face_n[p].normalize_or_zero();
+            let base = pos.len() as u32;
+            for i in poly {
+                // Area-weighted average over the neighbours within the angle limit.
+                let n: Vec3 = around[*i as usize].iter()
+                    .map(|q| face_n[*q as usize])
+                    .filter(|q| q.normalize_or_zero().dot(own) >= limit)
+                    .sum();
+                pos.push(self.vertices[*i as usize]);
+                nrm.push(if n.length_squared() > 0.0 { n.normalize().to_array() } else { own.to_array() });
+            }
+            for i in 1..poly.len().saturating_sub(1) {
+                idx.extend([base, base + i as u32, base + i as u32 + 1]);
+            }
+        }
+        (pos, nrm, idx)
     }
 
     /// Compute flat (per-triangle) normals and store them as a Vertex primvar.
@@ -245,7 +488,8 @@ impl MeshData {
         }
 
         self.normals = normals.iter().zip(&counts).map(|(n, &c)| {
-            if c > 0 { n.normalize().to_array() } else { [0.0, 1.0, 0.0] }
+            // A vertex used only by triangles with no area has no direction of its own.
+            if c > 0 && n.length_squared() > 0.0 { n.normalize().to_array() } else { [0.0, 1.0, 0.0] }
         }).collect();
 
         // Also store as a primvar so the inspector can show it
@@ -272,8 +516,37 @@ impl MeshData {
 
 #[derive(Clone, Debug)]
 pub struct NamedMesh {
-    pub path:  String,
-    pub mesh:  MeshData,
+    pub path:     String,
+    /// Shared: a packed primitive is passed along without being copied.
+    pub mesh:     std::sync::Arc<MeshData>,
+    /// Chosen by a Pick Primitives node. Nodes that change a mesh then work
+    /// on the picked primitives and pass the others through untouched.
+    pub picked:   bool,
+    /// Path of the material bound to it in the file it came from.
+    pub material: Option<String>,
+    /// That material, as far as the viewport can show it.
+    pub look:     Option<std::sync::Arc<Look>>,
+}
+
+/// How a surface looks in the viewport.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Look {
+    pub name:      String,
+    pub color:     [f32; 3],
+    pub roughness: f32,
+    pub metallic:  f32,
+    pub opacity:   f32,
+    /// Texture files, as full paths.
+    pub color_map:    Option<std::path::PathBuf>,
+    pub emissive_map: Option<std::path::PathBuf>,
+    /// The colour texture's alpha cuts the surface out.
+    pub cutout:    bool,
+}
+
+impl NamedMesh {
+    pub fn new(path: String, mesh: MeshData) -> Self {
+        Self { path, mesh: std::sync::Arc::new(mesh), picked: false, material: None, look: None }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -288,10 +561,10 @@ impl EvalResult {
     pub fn into_mesh(self) -> MeshData {
         match self {
             EvalResult::Single(m) => m,
-            EvalResult::Named(prims) => prims.into_iter().map(|p| p.mesh).fold(
-                MeshData::default(),
-                |acc, m| crate::node_graph::nodes::merge(&acc, &m),
-            ),
+            EvalResult::Named(prims) => {
+                let all: Vec<&MeshData> = prims.iter().map(|p| &*p.mesh).collect();
+                crate::node_graph::nodes::merge_all(&all)
+            }
             EvalResult::Anim(_) => MeshData::default(),
         }
     }
@@ -303,6 +576,75 @@ impl EvalResult {
     pub fn as_mesh(&self) -> MeshData {
         self.clone().into_mesh()
     }
+
+    /// Everything as one mesh, shared. A single packed primitive is handed
+    /// over as it is. Several are merged once and the merge is kept while
+    /// the same primitives keep arriving, so a heavy model is not copied
+    /// each time the graph is evaluated.
+    pub fn shared_mesh(&self) -> std::sync::Arc<MeshData> {
+        use std::sync::{Arc, Mutex};
+        type Kept = (Vec<Arc<MeshData>>, Arc<MeshData>);
+        static MERGED: Mutex<Vec<Kept>> = Mutex::new(Vec::new());
+        match self {
+            EvalResult::Named(prims) if prims.len() == 1 => prims[0].mesh.clone(),
+            EvalResult::Named(prims) => {
+                let mut kept = MERGED.lock().unwrap();
+                if let Some((_, m)) = kept.iter().find(|(parts, _)| parts.len() == prims.len() && parts.iter().zip(prims).all(|(a, b)| Arc::ptr_eq(a, &b.mesh))) {
+                    return m.clone();
+                }
+                let all: Vec<&MeshData> = prims.iter().map(|p| &*p.mesh).collect();
+                let merged = Arc::new(crate::node_graph::nodes::merge_all(&all));
+                if kept.len() >= 2 { kept.remove(0); }
+                kept.push((prims.iter().map(|p| p.mesh.clone()).collect(), merged.clone()));
+                merged
+            }
+            other => Arc::new(other.as_mesh()),
+        }
+    }
+
+    /// True when this is packed primitives with at least one picked.
+    pub fn has_picked(&self) -> bool {
+        matches!(self, EvalResult::Named(prims) if prims.iter().any(|p| p.picked))
+    }
+
+    /// The mesh a modifying node works on: the picked primitives as one
+    /// mesh when some are picked, everything as one mesh otherwise.
+    pub fn work_mesh(&self) -> MeshData {
+        match self {
+            EvalResult::Named(prims) if prims.iter().any(|p| p.picked) => {
+                let picked: Vec<&MeshData> = prims.iter().filter(|p| p.picked).map(|p| &*p.mesh).collect();
+                crate::node_graph::nodes::merge_all(&picked)
+            }
+            other => other.as_mesh(),
+        }
+    }
+
+    /// Run a mesh operation. On packed primitives with some picked, only
+    /// those go through it: they come out as one primitive, still picked,
+    /// in the place of the first of them, and the rest pass through as they
+    /// are. Otherwise everything is merged and goes through.
+    pub fn map_mesh(&self, op: impl FnOnce(MeshData) -> MeshData) -> EvalResult {
+        match self {
+            EvalResult::Named(prims) if prims.iter().any(|p| p.picked) => {
+                let result = op(self.work_mesh());
+                let mut out: Vec<NamedMesh> = Vec::with_capacity(prims.len());
+                let mut result = Some(result);
+                for p in prims {
+                    if !p.picked { out.push(p.clone()); continue; }
+                    if let Some(mesh) = result.take() {
+                        out.push(NamedMesh { path: p.path.clone(), mesh: std::sync::Arc::new(mesh), picked: true, material: p.material.clone(), look: p.look.clone() });
+                    }
+                }
+                EvalResult::Named(out)
+            }
+            other => EvalResult::Single(op(other.as_mesh())),
+        }
+    }
+
+    /// Paths of the packed primitives, in order.
+    pub fn prim_paths(&self) -> Vec<String> {
+        match self { EvalResult::Named(prims) => prims.iter().map(|p| p.path.clone()).collect(), _ => vec![] }
+    }
 }
 
 // ============================================================================
@@ -313,39 +655,83 @@ impl EvalResult {
 pub enum PrimInspectorTab {
     #[default]
     Vertex,
+    Edge,
+    /// One row per polygon. Per-polygon primvars sit here too.
     Uniform,
     FaceVarying,
     Constant,
+    /// Joints of a clip, at the playhead.
+    Joint,
+    /// Bones of a clip: each runs from one joint to another.
+    Bone,
+}
+
+/// One tab of the inspector, ready to draw.
+#[derive(Clone, Debug, Default)]
+pub struct InspectorTable {
+    pub rows:   usize,
+    /// Text column before the numbers (joint names), with its heading.
+    pub labels: Option<(String, Vec<String>)>,
+    /// Column group name and its values per row. A group wider than one
+    /// is shown as name.X, name.Y, name.Z.
+    pub cols:   Vec<(String, Vec<Vec<f32>>)>,
 }
 
 #[derive(Resource, Default)]
 pub struct PrimInspectorState {
     pub active_tab:   PrimInspectorTab,
     pub row_offset:   usize,
-    
-    // ✅ NEW - Caching system
-    cached_mesh: Option<MeshData>,
+
+    // Mesh or clip of the selected node, cooked once per graph revision.
+    cached_mesh:    Option<std::sync::Arc<MeshData>>,
+    cached_clip:    Option<std::sync::Arc<crate::core::anim::AnimData>>,
     cached_node_id: Option<NodeId>,
-    graph_version: u64,  // Increments when graph changes
+    cached_rev:     Option<u64>,
+    /// Number of edges of the cached mesh.
+    pub edge_count: usize,
+    // The open tab, built once per cached data (and per frame for a clip).
+    table_key: Option<(PrimInspectorTab, usize)>,
+    table:     InspectorTable,
 }
 
 impl PrimInspectorState {
-    /// Check if cache is valid for this node
-    pub fn is_cache_valid(&self, node_id: Option<NodeId>, graph_version: u64) -> bool {
-        self.cached_node_id == node_id && self.graph_version == graph_version
+    pub fn is_cache_valid(&self, node_id: Option<NodeId>, revision: u64) -> bool {
+        self.cached_node_id == node_id && self.cached_rev == Some(revision)
     }
 
-    /// Update cache
-    pub fn update_cache(&mut self, node_id: Option<NodeId>, mesh: MeshData, graph_version: u64) {
-        self.cached_mesh = Some(mesh);
+    pub fn update_cache(
+        &mut self,
+        node_id:  Option<NodeId>,
+        mesh:     Option<MeshData>,
+        clip:     Option<std::sync::Arc<crate::core::anim::AnimData>>,
+        revision: u64,
+    ) {
+        self.edge_count = mesh.as_ref()
+            .map(|m| crate::core::poly::PolyMesh::from_mesh(m).edges().len()).unwrap_or(0);
+        self.cached_mesh    = mesh.map(std::sync::Arc::new);
+        self.cached_clip    = clip;
         self.cached_node_id = node_id;
-        self.graph_version = graph_version;
+        self.cached_rev     = Some(revision);
+        self.table_key      = None;
+        self.table          = InspectorTable::default();
     }
 
-    /// Get cached mesh if valid
-    pub fn get_cached_mesh(&self) -> Option<&MeshData> {
-        self.cached_mesh.as_ref()
+    pub fn cached_mesh(&self) -> Option<std::sync::Arc<MeshData>> { self.cached_mesh.clone() }
+    pub fn cached_clip(&self) -> Option<std::sync::Arc<crate::core::anim::AnimData>> { self.cached_clip.clone() }
+
+    /// True when the stored table is this tab at this frame.
+    pub fn table_is_for(&self, tab: &PrimInspectorTab, frame: usize) -> bool {
+        self.table_key.as_ref() == Some(&(tab.clone(), frame))
     }
+
+    pub fn set_table(&mut self, tab: PrimInspectorTab, frame: usize, table: InspectorTable) {
+        self.table_key = Some((tab, frame));
+        self.table     = table;
+    }
+
+    /// Lend the table out for drawing; hand it back with `put_table`.
+    pub fn take_table(&mut self) -> InspectorTable { std::mem::take(&mut self.table) }
+    pub fn put_table(&mut self, table: InspectorTable) { self.table = table; }
 
     /// Clear cache when tab changes
     pub fn set_active_tab(&mut self, tab: PrimInspectorTab) {
@@ -373,7 +759,7 @@ fn prim_icon(name: &str, has_children: bool) -> &'static str {
     // Leaf mesh — guess from name
     if lower.contains("cylinder") || lower.contains("tube") { return "🔩"; }
     if lower.contains("sphere")   || lower.contains("ball") { return "🔵"; }
-    if lower.contains("cube")     || lower.contains("box")  { return "🟫"; }
+    if lower.contains("cube")     || lower.contains("box")  { return "⬛"; }
     if lower.contains("plane")    || lower.contains("grid") { return "⬜"; }
     if lower.contains("cone")                               { return "🔺"; }
     "🔹"  // generic mesh leaf
@@ -542,3 +928,4 @@ pub fn rebuild(&mut self, entries: Vec<(NodeId, String, EvalResult)>) {
         }
     }
 }
+fn one_tile() -> u32 { 1 }

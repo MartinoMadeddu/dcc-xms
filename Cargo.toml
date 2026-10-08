@@ -8,3 +8,22 @@ bevy = "0.14"
 bevy_egui = "0.28"
 openusd = "0.1.4"
 ufbx = "0.11"
+flate2 = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+regex = "1"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+winit = { version = "0.30", default-features = false }
+egui_dock = { version = "0.13", features = ["serde"] }
+# The collision solver, in the repository. Its own crate, so that it is
+# compiled fully optimised in a development build too.
+xms_ragdoll = { path = "crates/ragdoll" }
+
+# Heavy scenes need optimised code even while developing: the program
+# itself lightly, everything it depends on fully. The first build after this
+# takes longer; later ones do not.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3

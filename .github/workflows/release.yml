@@ -1,0 +1,117 @@
+# Builds XMS for Linux, macOS and Windows on every push to main and
+# publishes the binaries as a GitHub release.
+name: Build and release
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["**.md", "docs/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - name: windows-x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - name: macos-arm64
+            os: macos-latest
+            target: aarch64-apple-darwin
+          - name: macos-x86_64
+            os: macos-latest
+            target: x86_64-apple-darwin
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Linux packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libasound2-dev libudev-dev libx11-dev libxkbcommon-x11-0
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Test
+        if: matrix.name == 'linux-x86_64'
+        run: cargo test --release --target ${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Package (Linux, macOS)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir xms-${{ matrix.name }}
+          cp target/${{ matrix.target }}/release/bevy_dcc xms-${{ matrix.name }}/xms
+          cp README.md xms-${{ matrix.name }}/
+          cp -r docs examples xms-${{ matrix.name }}/
+          tar czf xms-${{ matrix.name }}.tar.gz xms-${{ matrix.name }}
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory xms-${{ matrix.name }}
+          Copy-Item target/${{ matrix.target }}/release/bevy_dcc.exe xms-${{ matrix.name }}/xms.exe
+          Copy-Item README.md xms-${{ matrix.name }}/
+          Copy-Item -Recurse docs xms-${{ matrix.name }}/
+          Copy-Item -Recurse examples xms-${{ matrix.name }}/
+          Compress-Archive -Path xms-${{ matrix.name }} -DestinationPath xms-${{ matrix.name }}.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: xms-${{ matrix.name }}
+          path: |
+            xms-${{ matrix.name }}.tar.gz
+            xms-${{ matrix.name }}.zip
+          if-no-files-found: error
+
+  release:
+    name: Release
+    needs: build
+    # Publish whatever built, even if one platform failed.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          ls -la dist
+          test -n "$(ls dist)"
+          tag="build-${{ github.run_number }}"
+          gh release create "$tag" dist/* \
+            --target "${{ github.sha }}" \
+            --title "Build ${{ github.run_number }}" \
+            --notes "Automatic build of ${{ github.sha }}. ${{ github.event.head_commit.message }}" \
+            --latest
