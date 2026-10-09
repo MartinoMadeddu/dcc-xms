@@ -1,0 +1,439 @@
+diff -ruN -x __MACOSX -x '*.orig' a/src/ice/ui.rs b/src/ice/ui.rs
+--- a/src/ice/ui.rs	2026-10-09 15:41:41.726004897 +0000
++++ b/src/ice/ui.rs	2026-10-09 15:41:32.645394632 +0000
+@@ -1,54 +1,59 @@
+ use bevy::prelude::Vec3;
+ use bevy_egui::egui;
+-use crate::types::{ConnectionId, SubnetNodeType, subnet_node_icon};
++use std::collections::HashSet;
++use crate::types::{ConnectionId, NodeId, SubnetNodeType};
+ use super::{SubnetGraph, SubnetNode};
+ 
+ // ── ICE look ──────────────────────────────────────────────────────────────────
+-// Modelled on Softimage ICE: light nodes on a plain mid-grey canvas, tinted by
+-// what kind of node they are; one row per port; ports as small round
+-// connectors on the node's edge, coloured by data type (filled when wired);
+-// wires in the colour of the data they carry. Every size and colour is here,
+-// so the look can be tuned in one place.
+-
+-const HEADER_H: f32 = 20.0;   // title row; also holds the first output
+-const ROW_H:    f32 = 17.0;   // one port per row
+-const PAD_B:    f32 = 5.0;    // space under the last row
+-const MIN_W:    f32 = 118.0;
+-const CHAR_W:   f32 = 6.3;    // width of a character at the label size, for sizing nodes
+-const PORT_R:   f32 = 4.5;
+-const SOCK_HIT: f32 = 18.0;   // invisible hit area around a port
+-const ROUNDING: f32 = 3.0;
+-const TITLE_PT: f32 = 12.0;
+-const LABEL_PT: f32 = 11.0;
++// Modelled on Softimage ICE: nodes in solid colours by kind (green for data
++// and maths, blue for getting and setting geometry, teal for the tree's in and
++// out) with a bold title, a comment bubble and a collapse box; a row per port,
++// outputs first then inputs; small dots on the node's edge coloured by data
++// type, wires in the same colour; a light grey canvas with a fine grid. Every
++// size and colour is here, so the look can be tuned in one place.
++
++const TITLE_H:  f32 = 20.0;
++const ROW_H:    f32 = 15.0;   // one port per row
++const PAD_B:    f32 = 4.0;    // space under the last row
++const MIN_W:    f32 = 96.0;
++const TITLE_CH: f32 = 7.4;    // width of a title character, for sizing nodes
++const LABEL_CH: f32 = 5.9;    // width of a label character
++const ICONS_W:  f32 = 34.0;   // comment bubble and collapse box, right of the title
++const PORT_R:   f32 = 3.2;
++const SOCK_HIT: f32 = 16.0;   // invisible hit area around a port
++const ROUNDING: f32 = 5.0;
++const TITLE_PT: f32 = 12.5;
++const LABEL_PT: f32 = 10.5;
++const GRID:     f32 = 12.0;   // canvas grid spacing
++const WIRE_W:   f32 = 1.6;
+ 
+ mod pal {
+     #![allow(non_snake_case)]
+     use bevy_egui::egui::Color32;
+-    // The canvas follows the theme; the nodes keep ICE's light look in both.
+-    pub fn BG() -> Color32 { crate::theme::c(128, 128, 128) }
++    // ICE's own look, the same in both themes.
++    pub fn BG() -> Color32 { Color32::from_rgb(170, 170, 170) }
++    pub fn GRID() -> Color32 { Color32::from_rgb(161, 161, 161) }
+     pub fn BREADCRUMB_BG() -> Color32 { crate::theme::c( 78,  78,  82) }
+     pub fn TEXT() -> Color32 { crate::theme::c(248, 248, 248) }
+     pub fn TEXT_DIM() -> Color32 { crate::theme::c(210, 210, 210) }
+ 
+-    pub fn INK() -> Color32 { Color32::from_rgb( 20,  20,  20) }       // titles and labels
+-    pub fn INK_DIM() -> Color32 { Color32::from_rgb( 70,  70,  70) }   // values, notes
+-    pub fn OUTLINE() -> Color32 { Color32::from_rgb( 45,  45,  45) }
++    pub fn INK() -> Color32 { Color32::from_rgb( 12,  12,  12) }       // titles and labels
++    pub fn RIM() -> Color32 { Color32::from_rgb( 38,  38,  38) }       // the node's edge
++    pub fn FRAME() -> Color32 { Color32::from_rgb(105, 105, 105) }     // the grey ring around it
+     pub fn SELECTED() -> Color32 { Color32::from_rgb(255, 255, 255) }
+-    pub fn SHADOW() -> Color32 { Color32::from_black_alpha(70) }
+     pub fn PORT_RIM() -> Color32 { Color32::from_rgb( 30,  30,  30) }
+ 
+-    // Node tints, by kind: (body, title).
+-    pub fn DATA() -> (Color32, Color32)     { (Color32::from_rgb(196, 204, 172), Color32::from_rgb(170, 180, 140)) }  // constants
+-    pub fn MATH() -> (Color32, Color32)     { (Color32::from_rgb(200, 200, 204), Color32::from_rgb(172, 172, 180)) }  // operators
+-    pub fn GEOMETRY() -> (Color32, Color32) { (Color32::from_rgb(170, 190, 214), Color32::from_rgb(138, 164, 196)) }  // get / set geometry
+-    pub fn TERMINAL() -> (Color32, Color32) { (Color32::from_rgb(214, 190, 150), Color32::from_rgb(190, 160, 112)) }  // tree in and out
+-
+-    // Data types, as ICE colours them.
+-    pub fn SCALAR() -> Color32  { Color32::from_rgb(110, 200,  70) }   // Float: green
+-    pub fn INTEGER() -> Color32 { Color32::from_rgb( 30, 130,  80) }   // Int: dark green
+-    pub fn VECTOR() -> Color32  { Color32::from_rgb(235, 205,  50) }   // Vec3: yellow
+-    pub fn GEO() -> Color32     { Color32::from_rgb( 80, 140, 220) }   // Mesh / geometry: blue
+-    pub fn OTHER() -> Color32   { Color32::from_rgb(150, 150, 150) }
++    // Node colours, by kind.
++    pub fn GREEN() -> Color32 { Color32::from_rgb(152, 196,  98) }     // data, constants, maths, generators
++    pub fn BLUE() -> Color32  { Color32::from_rgb(102, 150, 204) }     // get / set geometry
++    pub fn TEAL() -> Color32  { Color32::from_rgb(112, 186, 154) }     // the tree's in and out
++
++    // Data types, as ICE colours their ports and wires.
++    pub fn SCALAR() -> Color32  { Color32::from_rgb( 70, 230,  70) }   // Float: bright green
++    pub fn INTEGER() -> Color32 { Color32::from_rgb( 20, 120,  40) }   // Int: dark green
++    pub fn VECTOR() -> Color32  { Color32::from_rgb(235, 225,  60) }   // Vec3: yellow
++    pub fn GEO() -> Color32     { Color32::from_rgb(220,  40, 200) }   // Mesh / geometry: magenta
++    pub fn OTHER() -> Color32   { Color32::from_rgb( 85,  85,  85) }   // execute and the rest: dark grey
+ }
+ 
+ /// Where everything of a node sits, relative to its top-left corner.
+@@ -56,62 +61,71 @@
+     size:    egui::Vec2,
+     inputs:  Vec<egui::Vec2>,
+     outputs: Vec<egui::Vec2>,
+-    /// Row showing a constant's value, if any.
+-    value:   Option<f32>,
+ }
+ 
+-fn layout(node: &SubnetNode) -> Layout {
+-    let value = constant_text(&node.node_type);
+-    // Inputs from the first row down; the first output on the title row,
+-    // the others on the rows below it, on the right.
+-    let rows = node.inputs.len().max(node.outputs.len().saturating_sub(1)) + value.is_some() as usize;
+-    let title = format!("{} {}", subnet_node_icon(&node.node_type), node.name);
+-    let widest_row = (0..rows).map(|r| {
+-        let l = node.inputs.get(r).map(|i| i.name.chars().count()).unwrap_or(0);
+-        let o = node.outputs.get(r + 1).map(|o| o.name.chars().count()).unwrap_or(0);
+-        l + o + 3
+-    }).max().unwrap_or(0);
+-    let header = title.chars().count() + node.outputs.first().map(|o| o.name.chars().count() + 3).unwrap_or(0);
+-    let value_len = value.as_ref().map(|v| v.chars().count()).unwrap_or(0);
+-    let w = (widest_row.max(header).max(value_len) as f32 * CHAR_W + 28.0).max(MIN_W).round();
+-    let h = HEADER_H + rows as f32 * ROW_H + PAD_B;
+-    let row_y = |r: usize| HEADER_H + (r as f32 + 0.5) * ROW_H;
+-    Layout {
+-        size:    egui::vec2(w, h),
+-        inputs:  (0..node.inputs.len()).map(|r| egui::vec2(0.0, row_y(r))).collect(),
+-        outputs: (0..node.outputs.len()).map(|r| egui::vec2(w, if r == 0 { HEADER_H * 0.5 } else { row_y(r - 1) })).collect(),
+-        value:   value.map(|_| row_y(rows - 1)),
++/// The title: a constant shows its value, as in ICE; any other node its name.
++fn title_text(node: &SubnetNode) -> String {
++    match &node.node_type {
++        SubnetNodeType::ConstVec3  { value } => format!("<{}, {}, {}>", short(value.x), short(value.y), short(value.z)),
++        SubnetNodeType::ConstFloat { value } => short(*value),
++        SubnetNodeType::ConstInt   { value } => value.to_string(),
++        _ => node.name.clone(),
+     }
+ }
+ 
+-fn input_socket_pos(node: &SubnetNode, idx: usize) -> egui::Pos2 {
+-    node.position + layout(node).inputs.get(idx).copied().unwrap_or_default()
++/// A number as short as it reads: 1, 0.5, 0.125.
++fn short(v: f32) -> String {
++    let s = format!("{v:.3}");
++    let s = s.trim_end_matches('0').trim_end_matches('.');
++    if s == "-0" { "0".into() } else { s.into() }
++}
++
++/// Rows: the outputs, then the inputs. Collapsed, a node is its title row
++/// alone, every port on its edge at mid-height.
++fn layout(node: &SubnetNode, collapsed: bool) -> Layout {
++    let title = title_text(node).chars().count() as f32 * TITLE_CH + ICONS_W + 18.0;
++    let label = |n: &str| n.chars().count() as f32 * LABEL_CH + 22.0;
++    let widest = node.outputs.iter().map(|o| label(&o.name))
++        .chain(node.inputs.iter().map(|i| label(&i.name)))
++        .fold(0.0, f32::max);
++    let w = title.max(widest).max(MIN_W).round();
++    if collapsed {
++        let mid = TITLE_H * 0.5;
++        return Layout {
++            size:    egui::vec2(w, TITLE_H),
++            inputs:  vec![egui::vec2(0.0, mid); node.inputs.len()],
++            outputs: vec![egui::vec2(w, mid); node.outputs.len()],
++        };
++    }
++    let row_y = |r: usize| TITLE_H + (r as f32 + 0.5) * ROW_H;
++    let outs = node.outputs.len();
++    Layout {
++        size:    egui::vec2(w, TITLE_H + (outs + node.inputs.len()) as f32 * ROW_H + PAD_B),
++        outputs: (0..outs).map(|r| egui::vec2(w, row_y(r))).collect(),
++        inputs:  (0..node.inputs.len()).map(|r| egui::vec2(0.0, row_y(outs + r))).collect(),
++    }
+ }
+ 
+-fn output_socket_pos(node: &SubnetNode, idx: usize) -> egui::Pos2 {
+-    node.position + layout(node).outputs.get(idx).copied().unwrap_or_default()
++fn input_socket_pos(node: &SubnetNode, idx: usize, collapsed: &HashSet<NodeId>) -> egui::Pos2 {
++    node.position + layout(node, collapsed.contains(&node.id)).inputs.get(idx).copied().unwrap_or_default()
+ }
+ 
+-/// The value a constant node shows under its title.
+-fn constant_text(t: &SubnetNodeType) -> Option<String> {
+-    match t {
+-        SubnetNodeType::ConstVec3  { value } => Some(format!("{:.3}  {:.3}  {:.3}", value.x, value.y, value.z)),
+-        SubnetNodeType::ConstFloat { value } => Some(format!("{value:.3}")),
+-        SubnetNodeType::ConstInt   { value } => Some(format!("{value}")),
+-        _ => None,
+-    }
++fn output_socket_pos(node: &SubnetNode, idx: usize, collapsed: &HashSet<NodeId>) -> egui::Pos2 {
++    node.position + layout(node, collapsed.contains(&node.id)).outputs.get(idx).copied().unwrap_or_default()
+ }
+ 
+-/// What kind of node it is, for its tint.
+-fn tint(t: &SubnetNodeType) -> (egui::Color32, egui::Color32) {
++/// A node's colour, by kind.
++fn tint(t: &SubnetNodeType) -> egui::Color32 {
+     match t {
+-        SubnetNodeType::SubInput | SubnetNodeType::SubOutput => pal::TERMINAL(),
+-        SubnetNodeType::ConstVec3 { .. } | SubnetNodeType::ConstFloat { .. } | SubnetNodeType::ConstInt { .. } => pal::DATA(),
+-        SubnetNodeType::ScatterPoints { .. } | SubnetNodeType::GetTemplate | SubnetNodeType::CopyToPoints => pal::GEOMETRY(),
+-        _ => pal::MATH(),
++        SubnetNodeType::SubInput | SubnetNodeType::SubOutput => pal::TEAL(),
++        SubnetNodeType::GetTemplate | SubnetNodeType::CopyToPoints => pal::BLUE(),
++        _ => pal::GREEN(),
+     }
+ }
+ 
++/// Which nodes are collapsed: view state, kept with the canvas, not saved.
++fn collapsed_id() -> egui::Id { egui::Id::new("ice_collapsed_nodes") }
++
+ // ── Breadcrumb ────────────────────────────────────────────────────────────────
+ 
+ pub fn draw_breadcrumb(ui: &mut egui::Ui, subnet_name: &str) -> bool {
+@@ -173,8 +187,20 @@
+     let pan = graph.pan_offset;
+     let to_screen = |p: egui::Pos2| canvas_rect.min + p.to_vec2() + pan;
+ 
+-    // Plain canvas, as ICE's.
++    // Light grey canvas with a fine grid that moves with the view, as ICE's.
+     painter.rect_filled(canvas_rect, 0.0, pal::BG());
++    let grid = egui::Stroke::new(1.0_f32, pal::GRID());
++    let mut x = canvas_rect.min.x + pan.x.rem_euclid(GRID);
++    while x < canvas_rect.max.x {
++        painter.line_segment([egui::pos2(x, canvas_rect.min.y), egui::pos2(x, canvas_rect.max.y)], grid);
++        x += GRID;
++    }
++    let mut y = canvas_rect.min.y + pan.y.rem_euclid(GRID);
++    while y < canvas_rect.max.y {
++        painter.line_segment([egui::pos2(canvas_rect.min.x, y), egui::pos2(canvas_rect.max.x, y)], grid);
++        y += GRID;
++    }
++    let mut collapsed: HashSet<NodeId> = ui.data(|d| d.get_temp(collapsed_id())).unwrap_or_default();
+ 
+     // Existing connections
+     let mut hovered: Option<ConnectionId> = None;
+@@ -183,8 +209,8 @@
+             graph.nodes.iter().find(|n| n.id == conn.from_node),
+             graph.nodes.iter().find(|n| n.id == conn.to_node),
+         ) {
+-            let fp = to_screen(output_socket_pos(fn_, conn.from_output));
+-            let tp = to_screen(input_socket_pos(tn,   conn.to_input));
++            let fp = to_screen(output_socket_pos(fn_, conn.from_output, &collapsed));
++            let tp = to_screen(input_socket_pos(tn,   conn.to_input, &collapsed));
+             if let Some(ptr) = response.hover_pos() {
+                 if is_near_bezier_h(ptr, fp, tp, 10.0) { hovered = Some(conn.id); }
+             }
+@@ -199,7 +225,7 @@
+     // In-progress wire — use raw pointer pos, not response.hover_pos()
+     if let Some((fid, fo)) = graph.connecting_from {
+         if let Some(fn_) = graph.nodes.iter().find(|n| n.id == fid) {
+-            let fp  = to_screen(output_socket_pos(fn_, fo));
++            let fp  = to_screen(output_socket_pos(fn_, fo, &collapsed));
+             let ptr = ui.input(|i| i.pointer.hover_pos());
+             let colour = type_colour(fn_.outputs.get(fo).map(|o| o.value_hint).unwrap_or(""));
+             if let Some(ptr) = ptr { draw_wire_h(&painter, fp, ptr, colour, false); }
+@@ -212,8 +238,9 @@
+     // Draw all nodes — sockets handle their own press/release via raw input
+     let nodes_clone = graph.nodes.clone();
+     for node in &nodes_clone {
+-        draw_subnet_node(ui, &painter, graph, node, &to_screen, canvas_rect, pan);
++        draw_subnet_node(ui, &painter, graph, node, &to_screen, canvas_rect, pan, &mut collapsed);
+     }
++    ui.data_mut(|d| d.insert_temp(collapsed_id(), collapsed));
+ 
+     // Cancel wire only if mouse released and no socket consumed it
+     // (drag_stopped on the background canvas means we missed all sockets)
+@@ -300,6 +327,7 @@
+ 
+ // ── Single node ───────────────────────────────────────────────────────────────
+ 
++#[allow(clippy::too_many_arguments)]
+ fn draw_subnet_node(
+     ui:          &mut egui::Ui,
+     painter:     &egui::Painter,
+@@ -308,37 +336,44 @@
+     to_screen:   &impl Fn(egui::Pos2) -> egui::Pos2,
+     canvas_rect: egui::Rect,
+     pan_offset:  egui::Vec2,
++    collapsed:   &mut HashSet<NodeId>,
+ ) {
+-    let np     = to_screen(node.position);
+-    let lay    = layout(node);
+-    let rect   = egui::Rect::from_min_size(np, lay.size);
+-    let id     = node.id;
+-    let is_sel = graph.selected_node == Some(id);
+-    let (body, title) = tint(&node.node_type);
+-
+-    // Shadow, body, title row, outline.
+-    painter.rect_filled(rect.translate(egui::vec2(2.0, 3.0)), ROUNDING, pal::SHADOW());
++    let id      = node.id;
++    let folded  = collapsed.contains(&id);
++    let np      = to_screen(node.position);
++    let lay     = layout(node, folded);
++    let rect    = egui::Rect::from_min_size(np, lay.size);
++    let is_sel  = graph.selected_node == Some(id);
++    let body    = tint(&node.node_type);
++
++    // A grey ring, the body, a dark edge; white around it when selected.
++    let ring = rect.expand(2.0);
++    painter.rect_filled(ring, ROUNDING + 2.0, if is_sel { pal::SELECTED() } else { pal::FRAME() });
+     painter.rect_filled(rect, ROUNDING, body);
+-    let title_rect = egui::Rect::from_min_size(np, egui::vec2(lay.size.x, HEADER_H));
+-    painter.rect_filled(title_rect, egui::Rounding { nw: ROUNDING, ne: ROUNDING, sw: 0.0, se: 0.0 }, title);
+-    painter.line_segment([title_rect.left_bottom(), title_rect.right_bottom()], egui::Stroke::new(1.0_f32, pal::OUTLINE()));
+-    painter.rect_stroke(rect, ROUNDING, egui::Stroke::new(1.0_f32, pal::OUTLINE()));
+-    if is_sel {
+-        painter.rect_stroke(rect.expand(1.5), ROUNDING + 1.5, egui::Stroke::new(2.0_f32, pal::SELECTED()));
+-    }
+-
+-    painter.text(
+-        egui::pos2(np.x + 8.0, np.y + HEADER_H * 0.5),
+-        egui::Align2::LEFT_CENTER,
+-        format!("{} {}", subnet_node_icon(&node.node_type), node.name),
+-        egui::FontId::proportional(TITLE_PT), pal::INK());
+-    if let (Some(y), Some(v)) = (lay.value, constant_text(&node.node_type)) {
+-        painter.text(egui::pos2(np.x + 10.0, np.y + y), egui::Align2::LEFT_CENTER, v,
+-            egui::FontId::monospace(LABEL_PT - 0.5), pal::INK_DIM());
++    painter.rect_stroke(rect, ROUNDING, egui::Stroke::new(1.0_f32, pal::RIM()));
++
++    // Bold title: drawn twice, a hair apart.
++    let title_pos = egui::pos2(np.x + 7.0, np.y + TITLE_H * 0.5);
++    for dx in [0.0, 0.6] {
++        painter.text(title_pos + egui::vec2(dx, 0.0), egui::Align2::LEFT_CENTER, title_text(node),
++            egui::FontId::proportional(TITLE_PT), pal::INK());
+     }
+ 
++    // The comment bubble and the collapse box, at the right of the title.
++    let fold_rect = egui::Rect::from_center_size(egui::pos2(rect.max.x - 11.0, np.y + TITLE_H * 0.5), egui::vec2(11.0, 9.0));
++    let bubble_c = egui::pos2(fold_rect.min.x - 10.0, fold_rect.center().y - 1.0);
++    draw_bubble(painter, bubble_c);
++    draw_fold_box(painter, fold_rect);
++
+     // ── IMPORTANT: title bar allocated FIRST → lowest hit-test priority ───────
++    let title_rect = egui::Rect::from_min_size(np, egui::vec2(lay.size.x, TITLE_H));
+     let dr = ui.allocate_rect(title_rect, egui::Sense::click_and_drag());
++    let fold = ui.allocate_rect(fold_rect.expand(2.0), egui::Sense::click())
++        .on_hover_cursor(egui::CursorIcon::PointingHand)
++        .on_hover_text(if folded { "Expand" } else { "Collapse" });
++    if fold.clicked() {
++        if !collapsed.remove(&id) { collapsed.insert(id); }
++    }
+ 
+     // ── Output ports (right edge) — allocated before inputs, highest priority
+     for (i, out) in node.outputs.iter().enumerate() {
+@@ -346,10 +381,11 @@
+         let hit = egui::Rect::from_center_size(sp, egui::vec2(SOCK_HIT, SOCK_HIT));
+         let sr  = ui.allocate_rect(hit, egui::Sense::click_and_drag());
+         let wiring = graph.connecting_from == Some((id, i));
+-        let wired = graph.connections.iter().any(|c| c.from_node == id && c.from_output == i);
+-        draw_port(painter, sp, type_colour(out.value_hint), wired || wiring, sr.hovered() || wiring);
+-        painter.text(egui::pos2(sp.x - PORT_R - 5.0, sp.y), egui::Align2::RIGHT_CENTER, &out.name,
+-            egui::FontId::proportional(LABEL_PT), pal::INK());
++        draw_port(painter, sp, type_colour(out.value_hint), sr.hovered() || wiring);
++        if !folded {
++            painter.text(egui::pos2(sp.x - 7.0, sp.y), egui::Align2::RIGHT_CENTER, &out.name,
++                egui::FontId::proportional(LABEL_PT), pal::INK());
++        }
+ 
+         // Fire on the very first frame of press
+         if sr.drag_started() || (sr.is_pointer_button_down_on() && graph.connecting_from.is_none()) {
+@@ -364,9 +400,11 @@
+         let sr  = ui.allocate_rect(hit, egui::Sense::drag());
+         // Hovered while a wire is being drawn: a target.
+         let target = sr.hovered() && graph.connecting_from.is_some();
+-        draw_port(painter, sp, type_colour(inp.value_hint), inp.connected_output.is_some(), target);
+-        painter.text(egui::pos2(sp.x + PORT_R + 5.0, sp.y), egui::Align2::LEFT_CENTER, &inp.name,
+-            egui::FontId::proportional(LABEL_PT), pal::INK());
++        draw_port(painter, sp, type_colour(inp.value_hint), target);
++        if !folded {
++            painter.text(egui::pos2(sp.x + 7.0, sp.y), egui::Align2::LEFT_CENTER, &inp.name,
++                egui::FontId::proportional(LABEL_PT), pal::INK());
++        }
+ 
+         // Complete wire: mouse released while this socket is hovered.
+         // Use raw input so the canvas response can't steal the release.
+@@ -394,17 +432,32 @@
+     if dr.drag_stopped() { graph.dragging_node = None; }
+ }
+ 
+-/// A port: a ring in its type's colour, filled when wired, larger and
+-/// lighter under the pointer.
+-fn draw_port(painter: &egui::Painter, at: egui::Pos2, colour: egui::Color32, filled: bool, hot: bool) {
++/// A port: a small dot in its type's colour on the node's edge, larger
++/// under the pointer.
++fn draw_port(painter: &egui::Painter, at: egui::Pos2, colour: egui::Color32, hot: bool) {
+     let r = if hot { PORT_R + 1.5 } else { PORT_R };
+-    let colour = if hot { colour.gamma_multiply(1.25) } else { colour };
+     painter.circle_filled(at, r + 1.0, pal::PORT_RIM());
+-    if filled {
+-        painter.circle_filled(at, r, colour);
+-    } else {
+-        painter.circle_filled(at, r, egui::Color32::from_rgb(60, 60, 60));
+-        painter.circle_stroke(at, r - 1.0, egui::Stroke::new(2.0_f32, colour));
++    painter.circle_filled(at, r, colour);
++}
++
++/// The comment bubble: a small outlined speech balloon.
++fn draw_bubble(painter: &egui::Painter, c: egui::Pos2) {
++    let stroke = egui::Stroke::new(1.0_f32, pal::RIM());
++    let r = egui::Rect::from_center_size(c, egui::vec2(11.0, 7.0));
++    painter.rect_filled(r, 3.0, egui::Color32::from_rgb(235, 235, 225));
++    painter.rect_stroke(r, 3.0, stroke);
++    painter.add(egui::Shape::convex_polygon(
++        vec![egui::pos2(c.x - 3.0, r.max.y - 0.5), egui::pos2(c.x + 1.0, r.max.y - 0.5), egui::pos2(c.x - 4.0, r.max.y + 3.0)],
++        egui::Color32::from_rgb(235, 235, 225), stroke));
++}
++
++/// The collapse box: a small grey box with three lines in it.
++fn draw_fold_box(painter: &egui::Painter, r: egui::Rect) {
++    painter.rect_filled(r, 1.5, egui::Color32::from_rgb(200, 200, 200));
++    painter.rect_stroke(r, 1.5, egui::Stroke::new(1.0_f32, pal::RIM()));
++    for k in 1..=3 {
++        let y = r.min.y + r.height() * k as f32 / 4.0;
++        painter.line_segment([egui::pos2(r.min.x + 2.0, y), egui::pos2(r.max.x - 2.0, y)], egui::Stroke::new(1.0_f32, pal::RIM()));
+     }
+ }
+ 
+@@ -423,7 +476,8 @@
+ 
+ // ── Wire drawing ──────────────────────────────────────────────────────────────
+ 
+-/// A wire from an output to an input, in the colour of the data it carries.
++/// A wire from an output to an input: a thin curve in the colour of the data
++/// it carries.
+ pub fn draw_wire_h(painter: &egui::Painter, from: egui::Pos2, to: egui::Pos2, colour: egui::Color32, hovered: bool) {
+     let off = (to.x - from.x).abs().max(60.0) * 0.5;
+     let c1  = egui::pos2(from.x + off, from.y);
+@@ -431,11 +485,9 @@
+     let pts: Vec<egui::Pos2> = (0..=24)
+         .map(|i| bezier(from, c1, c2, to, i as f32 / 24.0))
+         .collect();
+-    // A dark edge under the colour, so wires read over nodes and canvas alike.
+-    painter.add(egui::Shape::line(pts.clone(), egui::Stroke::new(if hovered { 5.0 } else { 3.5 }, egui::Color32::from_black_alpha(110))));
+     painter.add(egui::Shape::line(pts, egui::Stroke::new(
+-        if hovered { 3.0 } else { 2.0 },
+-        if hovered { colour.gamma_multiply(1.3) } else { colour })));
++        if hovered { WIRE_W + 1.4 } else { WIRE_W },
++        if hovered { egui::Color32::WHITE } else { colour })));
+ }
+ 
+ fn is_near_bezier_h(p: egui::Pos2, from: egui::Pos2, to: egui::Pos2, thresh: f32) -> bool {

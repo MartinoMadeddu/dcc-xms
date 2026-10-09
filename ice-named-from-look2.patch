@@ -1,0 +1,172 @@
+--- a/src/ice/ui.rs	2026-10-09 16:25:28.619832340 +0000
++++ b/src/ice/ui.rs	2026-10-09 16:25:28.621413677 +0000
+@@ -4,24 +4,27 @@
+ use crate::types::{ConnectionId, NodeId, SubnetNodeType};
+ use super::{SubnetGraph, SubnetNode};
+ 
+-// ── ICE look ──────────────────────────────────────────────────────────────────
++// ── ICE look, named ───────────────────────────────────────────────────────────
+ // Modelled on Softimage ICE: nodes in solid colours by kind (green for data
+ // and maths, blue for getting and setting geometry, teal for the tree's in and
+-// out) with a bold title, a comment bubble and a collapse box; a row per port,
++// out) with a two-line title (the node's own name in bold, its type beneath)
++// and a collapse box; a row per port,
+ // outputs first then inputs; small dots on the node's edge coloured by data
+ // type, wires in the same colour; a light grey canvas with a fine grid. Every
+ // size and colour is here, so the look can be tuned in one place.
+ 
+-const TITLE_H:  f32 = 20.0;
++const TITLE_H:  f32 = 32.0;   // two lines: the node's name, then its type
++const FOLDED_H: f32 = 20.0;   // a collapsed node: its name only
+ const ROW_H:    f32 = 15.0;   // one port per row
+ const PAD_B:    f32 = 4.0;    // space under the last row
+ const MIN_W:    f32 = 96.0;
+ const TITLE_CH: f32 = 7.4;    // width of a title character, for sizing nodes
+ const LABEL_CH: f32 = 5.9;    // width of a label character
+-const ICONS_W:  f32 = 34.0;   // comment bubble and collapse box, right of the title
++const ICONS_W:  f32 = 20.0;   // collapse box, right of the title
+ const PORT_R:   f32 = 3.2;
+ const SOCK_HIT: f32 = 16.0;   // invisible hit area around a port
+ const ROUNDING: f32 = 5.0;
++const TYPE_PT:  f32 = 9.5;    // the type line under the name
+ const TITLE_PT: f32 = 12.5;
+ const LABEL_PT: f32 = 10.5;
+ const GRID:     f32 = 12.0;   // canvas grid spacing
+@@ -38,6 +41,7 @@
+     pub fn TEXT_DIM() -> Color32 { crate::theme::c(210, 210, 210) }
+ 
+     pub fn INK() -> Color32 { Color32::from_rgb( 12,  12,  12) }       // titles and labels
++    pub fn INK_TYPE() -> Color32 { Color32::from_rgba_unmultiplied(12, 12, 12, 150) }  // the type line
+     pub fn RIM() -> Color32 { Color32::from_rgb( 38,  38,  38) }       // the node's edge
+     pub fn FRAME() -> Color32 { Color32::from_rgb(105, 105, 105) }     // the grey ring around it
+     pub fn SELECTED() -> Color32 { Color32::from_rgb(255, 255, 255) }
+@@ -63,13 +67,25 @@
+     outputs: Vec<egui::Vec2>,
+ }
+ 
+-/// The title: a constant shows its value, as in ICE; any other node its name.
++/// The title: the node type's full name in PascalCase (`ScatterPoints`,
++/// `CrossProduct`, `SubnetInput`).
+ fn title_text(node: &SubnetNode) -> String {
++    crate::types::subnet_node_label(&node.node_type)
++        .split_whitespace()
++        .map(|w| {
++            let mut c = w.chars();
++            c.next().map(|f| f.to_uppercase().chain(c).collect::<String>()).unwrap_or_default()
++        })
++        .collect()
++}
++
++/// A constant's value, shown in a row of its own under the title.
++fn value_text(node: &SubnetNode) -> Option<String> {
+     match &node.node_type {
+-        SubnetNodeType::ConstVec3  { value } => format!("<{}, {}, {}>", short(value.x), short(value.y), short(value.z)),
+-        SubnetNodeType::ConstFloat { value } => short(*value),
+-        SubnetNodeType::ConstInt   { value } => value.to_string(),
+-        _ => node.name.clone(),
++        SubnetNodeType::ConstVec3  { value } => Some(format!("<{}, {}, {}>", short(value.x), short(value.y), short(value.z))),
++        SubnetNodeType::ConstFloat { value } => Some(short(*value)),
++        SubnetNodeType::ConstInt   { value } => Some(value.to_string()),
++        _ => None,
+     }
+ }
+ 
+@@ -83,26 +99,30 @@
+ /// Rows: the outputs, then the inputs. Collapsed, a node is its title row
+ /// alone, every port on its edge at mid-height.
+ fn layout(node: &SubnetNode, collapsed: bool) -> Layout {
+-    let title = title_text(node).chars().count() as f32 * TITLE_CH + ICONS_W + 18.0;
++    let title = (node.name.chars().count() as f32 * TITLE_CH).max(title_text(node).chars().count() as f32 * LABEL_CH) + ICONS_W + 18.0;
+     let label = |n: &str| n.chars().count() as f32 * LABEL_CH + 22.0;
++    let value = value_text(node);
+     let widest = node.outputs.iter().map(|o| label(&o.name))
+         .chain(node.inputs.iter().map(|i| label(&i.name)))
++        .chain(value.as_deref().map(label))
+         .fold(0.0, f32::max);
+     let w = title.max(widest).max(MIN_W).round();
+     if collapsed {
+-        let mid = TITLE_H * 0.5;
++        let mid = FOLDED_H * 0.5;
+         return Layout {
+-            size:    egui::vec2(w, TITLE_H),
++            size:    egui::vec2(w, FOLDED_H),
+             inputs:  vec![egui::vec2(0.0, mid); node.inputs.len()],
+             outputs: vec![egui::vec2(w, mid); node.outputs.len()],
+         };
+     }
++    // A constant's value takes the first row.
++    let first = value.is_some() as usize;
+     let row_y = |r: usize| TITLE_H + (r as f32 + 0.5) * ROW_H;
+     let outs = node.outputs.len();
+     Layout {
+-        size:    egui::vec2(w, TITLE_H + (outs + node.inputs.len()) as f32 * ROW_H + PAD_B),
+-        outputs: (0..outs).map(|r| egui::vec2(w, row_y(r))).collect(),
+-        inputs:  (0..node.inputs.len()).map(|r| egui::vec2(0.0, row_y(outs + r))).collect(),
++        size:    egui::vec2(w, TITLE_H + (first + outs + node.inputs.len()) as f32 * ROW_H + PAD_B),
++        outputs: (0..outs).map(|r| egui::vec2(w, row_y(first + r))).collect(),
++        inputs:  (0..node.inputs.len()).map(|r| egui::vec2(0.0, row_y(first + outs + r))).collect(),
+     }
+ }
+ 
+@@ -348,25 +368,34 @@
+ 
+     // A grey ring, the body, a dark edge; white around it when selected.
+     let ring = rect.expand(2.0);
+-    painter.rect_filled(ring, ROUNDING + 2.0, if is_sel { pal::SELECTED() } else { pal::FRAME() });
++    painter.rect_filled(ring, if ROUNDING > 0.0 { ROUNDING + 2.0 } else { 0.0 }, if is_sel { pal::SELECTED() } else { pal::FRAME() });
+     painter.rect_filled(rect, ROUNDING, body);
+     painter.rect_stroke(rect, ROUNDING, egui::Stroke::new(1.0_f32, pal::RIM()));
+ 
+-    // Bold title: drawn twice, a hair apart.
+-    let title_pos = egui::pos2(np.x + 7.0, np.y + TITLE_H * 0.5);
++    // Two-line title: the node's own name in bold (drawn twice, a hair
++    // apart), its type in small dim text beneath. Collapsed, only the name.
++    let name_y = if folded { np.y + FOLDED_H * 0.5 } else { np.y + 12.0 };
+     for dx in [0.0, 0.6] {
+-        painter.text(title_pos + egui::vec2(dx, 0.0), egui::Align2::LEFT_CENTER, title_text(node),
++        painter.text(egui::pos2(np.x + 7.0 + dx, name_y), egui::Align2::LEFT_CENTER, &node.name,
+             egui::FontId::proportional(TITLE_PT), pal::INK());
+     }
++    if !folded {
++        painter.text(egui::pos2(np.x + 7.0, np.y + 25.0), egui::Align2::LEFT_CENTER, title_text(node),
++            egui::FontId::proportional(TYPE_PT), pal::INK_TYPE());
++    }
+ 
+-    // The comment bubble and the collapse box, at the right of the title.
+-    let fold_rect = egui::Rect::from_center_size(egui::pos2(rect.max.x - 11.0, np.y + TITLE_H * 0.5), egui::vec2(11.0, 9.0));
+-    let bubble_c = egui::pos2(fold_rect.min.x - 10.0, fold_rect.center().y - 1.0);
+-    draw_bubble(painter, bubble_c);
++    // A constant's value, under the title.
++    if let (false, Some(v)) = (folded, value_text(node)) {
++        painter.text(egui::pos2(np.x + 7.0, np.y + TITLE_H + ROW_H * 0.5), egui::Align2::LEFT_CENTER, v,
++            egui::FontId::monospace(LABEL_PT), pal::INK());
++    }
++
++    // The collapse box, at the right of the title.
++    let fold_rect = egui::Rect::from_center_size(egui::pos2(rect.max.x - 11.0, np.y + if folded { FOLDED_H * 0.5 } else { 12.0 }), egui::vec2(11.0, 9.0));
+     draw_fold_box(painter, fold_rect);
+ 
+     // ── IMPORTANT: title bar allocated FIRST → lowest hit-test priority ───────
+-    let title_rect = egui::Rect::from_min_size(np, egui::vec2(lay.size.x, TITLE_H));
++    let title_rect = egui::Rect::from_min_size(np, egui::vec2(lay.size.x, if folded { FOLDED_H } else { TITLE_H }));
+     let dr = ui.allocate_rect(title_rect, egui::Sense::click_and_drag());
+     let fold = ui.allocate_rect(fold_rect.expand(2.0), egui::Sense::click())
+         .on_hover_cursor(egui::CursorIcon::PointingHand)
+@@ -440,17 +469,6 @@
+     painter.circle_filled(at, r, colour);
+ }
+ 
+-/// The comment bubble: a small outlined speech balloon.
+-fn draw_bubble(painter: &egui::Painter, c: egui::Pos2) {
+-    let stroke = egui::Stroke::new(1.0_f32, pal::RIM());
+-    let r = egui::Rect::from_center_size(c, egui::vec2(11.0, 7.0));
+-    painter.rect_filled(r, 3.0, egui::Color32::from_rgb(235, 235, 225));
+-    painter.rect_stroke(r, 3.0, stroke);
+-    painter.add(egui::Shape::convex_polygon(
+-        vec![egui::pos2(c.x - 3.0, r.max.y - 0.5), egui::pos2(c.x + 1.0, r.max.y - 0.5), egui::pos2(c.x - 4.0, r.max.y + 3.0)],
+-        egui::Color32::from_rgb(235, 235, 225), stroke));
+-}
+-
+ /// The collapse box: a small grey box with three lines in it.
+ fn draw_fold_box(painter: &egui::Painter, r: egui::Rect) {
+     painter.rect_filled(r, 1.5, egui::Color32::from_rgb(200, 200, 200));
