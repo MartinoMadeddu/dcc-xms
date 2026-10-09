@@ -1,17 +1,15 @@
 //! USD stage reader.
 //!
-//! Reads one layer (`.usda`, `.usdc`, or the root layer of a `.usdz`) through
-//! the `openusd` crate and turns it into a `UsdScene`: meshes in world space
-//! with their UVs and material bindings, plus what else the layer holds:
-//! cameras, materials with their textures, skeletons, lights and time range.
+//! Stages are read composed, through `xms-usd` (see `usd_stage`): sublayers,
+//! references, payloads, inherits, specializes and variants are resolved, and
+//! native instances are expanded. The result is a `UsdScene`: meshes in world
+//! space (Y-up metres) with their UVs and material bindings, plus cameras,
+//! materials with their textures, skeletons, lights, time range and the stage
+//! hierarchy for the scene explorer.
 //!
-//! Transforms follow `xformOpOrder` in full: every op type, suffixed ops,
-//! inverted ops and `!resetXformStack!`. The up axis and, when authored, the
-//! unit are converted to Y-up metres, as the FBX loader does.
-//!
-//! Not resolved: composition across files (references, payloads, sublayers),
-//! variants, instancing. Time-sampled attributes are read at their first
-//! sample. These are counted and reported in `UsdScene::notes`.
+//! When the composed read fails, or finds no meshes, the root layer alone is
+//! read as before (`load_root_layer`): every `xformOpOrder` op, up axis and
+//! unit, no composition.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -57,10 +55,38 @@ pub struct UsdSkeleton {
     pub joints: Vec<String>,
 }
 
+/// One prim of the composed stage, as the scene explorer lists it.
+#[derive(Clone, Debug, Default)]
+pub struct StageNode {
+    /// Path as the user sees it: under an instance, the instance's own path.
+    pub path:      String,
+    pub name:      String,
+    pub type_name: String,
+    /// 1 for a root prim.
+    pub depth:     usize,
+    /// Invisible, or guide / proxy purpose: listed, not drawn.
+    pub hidden:    bool,
+}
+
+/// The stage hierarchy, depth first (parents before their children).
+/// Shared by every packed primitive that came from the stage.
+#[derive(Clone, Default)]
+pub struct StageTree {
+    pub nodes: Vec<StageNode>,
+}
+
+impl std::fmt::Debug for StageTree {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "StageTree({} prims)", self.nodes.len())
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct UsdScene {
     /// Folder the layer was read from: texture paths are relative to it.
     pub base_dir:        std::path::PathBuf,
+    /// The composed stage's hierarchy. Empty when only the root layer was read.
+    pub tree:            Arc<StageTree>,
     pub meshes:          Vec<UsdMesh>,
     pub cameras:         Vec<UsdCamera>,
     pub materials:       Vec<UsdMaterial>,
@@ -476,12 +502,39 @@ fn open(path: &Path) -> Result<Layer, String> {
 pub fn load(path: &Path) -> Result<UsdScene, String> {
     if !path.exists() { return Err(format!("{} not found", path.display())); }
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+    // A usdz is unpacked first, so its textures are files on disk.
     let layer = if ext == "usdz" { extract_usdz(path)? } else { path.to_path_buf() };
-    let mut scene = match open(&layer) {
+    let base_dir = layer.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+    let composed = crate::usd_stage::read(&layer);
+    let mut scene = match composed {
+        Ok(scene) if !scene.meshes.is_empty() => scene,
+        other => {
+            // Nothing drawn from the composed stage: the root layer on its own
+            // may still give meshes (older reader, more lenient).
+            let why = match &other { Ok(_) => "no meshes found".to_string(), Err(e) => e.clone() };
+            match (load_root_layer(&layer, &ext), other) {
+                (Ok(mut root), _) if !root.meshes.is_empty() => {
+                    root.notes.insert(0, format!("Read the root layer only, without composition ({why})"));
+                    root
+                }
+                (_, Ok(scene)) => scene,
+                (Ok(root), Err(_)) => root,
+                (Err(e), Err(_)) => return Err(e),
+            }
+        }
+    };
+    scene.base_dir = base_dir;
+    Ok(scene)
+}
+
+/// The root layer on its own, without composition: the reader used before
+/// stages were composed, kept as a fallback.
+fn load_root_layer(layer: &Path, ext: &str) -> Result<UsdScene, String> {
+    let mut scene = match open(layer) {
         Ok(data) => read_scene(data),
         Err(e) => {
             // The older text reader copes with some files this one refuses.
-            let meshes = crate::usd_loader::load_usd_meshes(&layer).map_err(|_| e.clone())?;
+            let meshes = crate::usd_loader::load_usd_meshes(layer).map_err(|_| e.clone())?;
             let mut scene = UsdScene { up_axis: "Y".into(), ..Default::default() };
             scene.meshes = meshes.into_iter().map(|(path, mesh)| UsdMesh { path, mesh: Arc::new(mesh), material: None }).collect();
             scene.notes.push(format!("Read with the fallback text reader, meshes only ({e})"));
@@ -491,7 +544,7 @@ pub fn load(path: &Path) -> Result<UsdScene, String> {
     scene.base_dir = layer.parent().map(|p| p.to_path_buf()).unwrap_or_default();
     if scene.meshes.is_empty() && ext != "usdz" {
         // Nothing found: let the older text reader try.
-        if let Ok(meshes) = crate::usd_loader::load_usd_meshes(&layer) {
+        if let Ok(meshes) = crate::usd_loader::load_usd_meshes(layer) {
             if !meshes.is_empty() {
                 scene.meshes = meshes.into_iter().map(|(path, mesh)| UsdMesh { path, mesh: Arc::new(mesh), material: None }).collect();
                 scene.notes.push("Read with the fallback text reader, meshes only".into());
@@ -675,5 +728,50 @@ def Xform "world" {
         let a = load_cached(path.to_str().unwrap()).unwrap();
         let b = load_cached(path.to_str().unwrap()).unwrap();
         assert!(Arc::ptr_eq(&a, &b));
+    }
+
+        #[test]
+    fn references_and_variants_are_composed() {
+        write("wheel.usda", &format!(r#"#usda 1.0
+(
+    defaultPrim = "wheel"
+)
+def Xform "wheel" (
+    variantSets = "size"
+    variants = {{ string size = "big" }}
+)
+{{
+    variantSet "size" = {{
+        "big" {{
+            def Mesh "tyre" {{
+                double3 xformOp:translate = (0, 5, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate"]
+{QUAD}            }}
+        }}
+        "small" {{
+            def Mesh "tyre" {{
+{QUAD}            }}
+        }}
+    }}
+}}
+"#));
+        let path = write("car.usda", r#"#usda 1.0
+def Xform "car" {
+    def "front" (
+        references = @./wheel.usda@
+    )
+    {
+    }
+}
+"#);
+        let scene = load(&path).unwrap();
+        // Composed, not the root layer alone.
+        assert!(!scene.notes.iter().any(|n| n.contains("root layer only")), "{:?}", scene.notes);
+        assert_eq!(scene.meshes.len(), 1, "{:?}", scene.notes);
+        assert_eq!(scene.meshes[0].path, "/car/front/tyre");
+        // The selected variant, "big", moved up by 5.
+        assert!((bounds(&scene.meshes[0].mesh).0.y - 5.0).abs() < 1e-4);
+        // The stage hierarchy holds the referenced prims.
+        assert!(scene.tree.nodes.iter().any(|n| n.path == "/car/front/tyre" && n.depth == 3));
     }
 }

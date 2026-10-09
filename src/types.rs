@@ -581,6 +581,9 @@ pub struct NamedMesh {
     pub material: Option<String>,
     /// That material, as far as the viewport can show it.
     pub look:     Option<std::sync::Arc<Look>>,
+    /// The hierarchy of the stage it came from, shared with every other
+    /// primitive of that stage. The scene explorer lists the stage from it.
+    pub stage:    Option<std::sync::Arc<crate::usd_scene::StageTree>>,
 }
 
 /// How a surface looks in the viewport.
@@ -600,7 +603,7 @@ pub struct Look {
 
 impl NamedMesh {
     pub fn new(path: String, mesh: MeshData) -> Self {
-        Self { path, mesh: std::sync::Arc::new(mesh), picked: false, material: None, look: None }
+        Self { path, mesh: std::sync::Arc::new(mesh), picked: false, material: None, look: None, stage: None }
     }
 }
 
@@ -687,7 +690,7 @@ impl EvalResult {
                 for p in prims {
                     if !p.picked { out.push(p.clone()); continue; }
                     if let Some(mesh) = result.take() {
-                        out.push(NamedMesh { path: p.path.clone(), mesh: std::sync::Arc::new(mesh), picked: true, material: p.material.clone(), look: p.look.clone() });
+                        out.push(NamedMesh { path: p.path.clone(), mesh: std::sync::Arc::new(mesh), picked: true, material: p.material.clone(), look: p.look.clone(), stage: p.stage.clone() });
                     }
                 }
                 EvalResult::Named(out)
@@ -820,6 +823,18 @@ fn prim_icon(name: &str, has_children: bool) -> &'static str {
     "🔹"  // generic mesh leaf
 }
 
+/// Icon for a prim of a composed stage, by its type.
+fn stage_icon(n: &crate::usd_scene::StageNode, has_children: bool) -> &'static str {
+    match n.type_name.as_str() {
+        "Mesh" => prim_icon(&n.name, false),
+        "Material" => "🎨",
+        "Camera" => "🎥",
+        "Skeleton" | "SkelRoot" => "🦴",
+        t if t.ends_with("Light") => "💡",
+        _ => prim_icon(&n.name, has_children),
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct SceneObject {
     pub id:           SceneObjectId,
@@ -849,6 +864,55 @@ impl SceneHierarchy {
         let id = SceneObjectId(self.next_id);
         self.next_id += 1;
         id
+    }
+
+    /// One composed stage, as its hierarchy. A mesh is listed while its
+    /// primitive is still coming in (Prune Primitives removes it); a group is
+    /// listed while something below it is, or when it never held a mesh (a
+    /// scope of materials, a camera rig). `listed` collects the mesh paths
+    /// shown here.
+    fn push_stage(
+        &mut self,
+        tree:       &crate::usd_scene::StageTree,
+        present:    &std::collections::HashSet<&str>,
+        node_id:    NodeId,
+        expansions: &std::collections::HashMap<String, bool>,
+        listed:     &mut std::collections::HashSet<String>,
+    ) {
+        let nodes = &tree.nodes;
+        let is_mesh = |i: usize| nodes[i].type_name == "Mesh";
+        // Which prims hold meshes below them, and which hold ones still present.
+        let (mut holds, mut holds_present) = (vec![false; nodes.len()], vec![false; nodes.len()]);
+        let mut parents: Vec<usize> = vec![];
+        for i in 0..nodes.len() {
+            while parents.last().is_some_and(|&p| nodes[p].depth >= nodes[i].depth) { parents.pop(); }
+            if is_mesh(i) {
+                let here = present.contains(nodes[i].path.as_str());
+                for &p in &parents { holds[p] = true; holds_present[p] |= here; }
+            }
+            parents.push(i);
+        }
+        let shown: Vec<bool> = (0..nodes.len()).map(|i| {
+            if is_mesh(i) { present.contains(nodes[i].path.as_str()) } else { holds_present[i] || !holds[i] }
+        }).collect();
+        let rows: Vec<usize> = (0..nodes.len()).filter(|&i| shown[i]).collect();
+        for (k, &i) in rows.iter().enumerate() {
+            let n = &nodes[i];
+            let has_children = rows.get(k + 1).is_some_and(|&j| nodes[j].depth > n.depth);
+            let mesh = is_mesh(i);
+            if mesh { listed.insert(n.path.clone()); }
+            let id = self.next_id();
+            self.objects.push(SceneObject {
+                id,
+                name:         n.name.clone(),
+                icon:         stage_icon(n, has_children),
+                depth:        n.depth,
+                has_children,
+                expanded:     *expansions.get(&n.name).unwrap_or(&true),
+                node_id,
+                prim_path:    mesh.then(|| n.path.clone()),
+            });
+        }
     }
 
     /// Rebuild from the evaluated node graph results.
@@ -935,10 +999,26 @@ pub fn rebuild(&mut self, entries: Vec<(NodeId, String, EvalResult)>) {
                         prim_path:    None,
                     });
 
+                    // Primitives from a composed stage are listed in the stage's
+                    // own hierarchy, with its groups, materials, cameras and
+                    // lights. Each stage once, however many primitives share it.
+                    let present: std::collections::HashSet<&str> = prims.iter().map(|p| p.path.as_str()).collect();
+                    let mut stages: Vec<&std::sync::Arc<crate::usd_scene::StageTree>> = vec![];
+                    for p in &prims {
+                        if let Some(tree) = &p.stage {
+                            if !tree.nodes.is_empty() && !stages.iter().any(|s| std::sync::Arc::ptr_eq(s, tree)) { stages.push(tree); }
+                        }
+                    }
+                    let mut listed: std::collections::HashSet<String> = std::collections::HashSet::new();
+                    for tree in stages {
+                        self.push_stage(tree, &present, node_id, &expansions, &mut listed);
+                    }
+
+                    // Everything else by the segments of its path.
                     let mut seen_parents: std::collections::HashSet<String> =
                         std::collections::HashSet::new();
 
-                    for prim in &prims {
+                    for prim in prims.iter().filter(|p| !listed.contains(&p.path)) {
                         let segs: Vec<&str> = prim.path
                             .trim_start_matches('/')
                             .split('/')

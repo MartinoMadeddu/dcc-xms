@@ -7,6 +7,7 @@ mod viewport;
 mod ice;
 mod usd_loader;
 mod usd_scene;
+mod usd_stage;
 mod usda_text;
 mod prim_inspector;
 mod fbx_loader;

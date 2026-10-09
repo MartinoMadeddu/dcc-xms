@@ -1,0 +1,7 @@
+[package]
+name = "xms-scene"
+version.workspace = true
+edition.workspace = true
+description = "USD-shaped, path-keyed, time-sampled scene description with change tracking (rray's Hydra-style scene layer)"
+
+[dependencies]

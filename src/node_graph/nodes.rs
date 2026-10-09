@@ -30,6 +30,7 @@ pub fn evaluate_node_type(
                     Some(EvalResult::Named(scene.meshes.iter().map(|m| NamedMesh {
                         path: m.path.clone(), mesh: m.mesh.clone(), picked: false, material: m.material.clone(),
                         look: m.material.as_ref().and_then(|p| looks.get(p).cloned()),
+                        stage: Some(scene.tree.clone()),
                     }).collect()))
                 }
                 Err(_) => None,
@@ -177,7 +178,7 @@ pub fn evaluate_node_type(
         NodeType::LoadFbxMesh { path } => {
             let meshes = crate::fbx_loader::load_meshes_cached(path).ok()?;
             Some(EvalResult::Named(meshes.iter().map(|(name, mesh)| NamedMesh {
-                path: format!("/{name}"), mesh: mesh.clone(), picked: false, material: None, look: None,
+                path: format!("/{name}"), mesh: mesh.clone(), picked: false, material: None, look: None, stage: None,
             }).collect()))
         }
         NodeType::Calamari { hulls, detail } =>

@@ -1,0 +1,12 @@
+[package]
+name = "xms-usd"
+version.workspace = true
+edition.workspace = true
+description = "OpenUSD stage -> xms-scene translation for XMS | Imago"
+
+[dependencies]
+xms-scene = { path = "../xms-scene" }
+openusd = "0.7"
+rustc-hash = "2"
+rayon = "1.10"
+nalgebra = "0.34"

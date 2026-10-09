@@ -3,9 +3,22 @@ name = "bevy_dcc"
 version = "0.1.0"
 edition = "2021"
 
+[workspace]
+members = [".", "crates/ragdoll", "crates/xms-scene", "crates/xms-usd"]
+resolver = "2"
+
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+
 [dependencies]
+xms-scene = { path = "crates/xms-scene" }
+xms-usd   = { path = "crates/xms-usd" }
+
 bevy = "0.14"
 bevy_egui = "0.28"
+# Pure-Rust OpenUSD: .usda/.usdc/.usdz with composition
 openusd = "0.1.4"
 ufbx = "0.11"
 flate2 = "1"
