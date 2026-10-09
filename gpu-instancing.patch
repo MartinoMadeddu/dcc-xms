@@ -1,0 +1,446 @@
+diff -ruN -x __MACOSX -x '*.orig' a/src/main.rs b/src/main.rs
+--- a/src/main.rs	2026-10-09 13:21:51.163587553 +0000
++++ b/src/main.rs	2026-10-09 13:21:51.142363365 +0000
+@@ -67,6 +67,7 @@
+             ..default()
+         }))
+         .add_plugins(EguiPlugin)
++        .add_plugins(viewport::instancing::InstancingPlugin)
+         // Draw a new frame when something happens (input, a change, a job
+         // in the background), not all the time: an idle window costs
+         // nothing, and a heavy viewport no longer slows the panels down
+@@ -1421,13 +1422,104 @@
+     }
+ }
+ 
+-/// Instanced packed primitives. Each shared mesh becomes one mesh asset and
+-/// each look one material, then every placement is an entity using them, so
+-/// the renderer draws the copies of a mesh together.
++/// Above this many copies, a shared mesh is drawn by GPU instancing: one
++/// entity and one draw for all of them, in the look's colour. At or below,
++/// each copy is an entity of its own with the full material and textures.
++const ENTITY_COPIES: usize = 64;
++
++/// Instanced packed primitives, grouped by the mesh they share.
+ fn draw_instanced(
+     prims:      &[types::NamedMesh],
+     mode:       viewport::display::DisplayMode,
+     background: Color,
++    commands:   &mut Commands,
++    meshes:     &mut Assets<Mesh>,
++    mats:       &mut Assets<StandardMaterial>,
++    texture:    &mut dyn FnMut(&Option<std::path::PathBuf>) -> Option<(Handle<Image>, bool)>,
++) {
++    let mut groups: Vec<(*const MeshData, Vec<&types::NamedMesh>)> = vec![];
++    for p in prims {
++        let key = std::sync::Arc::as_ptr(&p.mesh);
++        match groups.iter_mut().find(|g| g.0 == key) {
++            Some(g) => g.1.push(p),
++            None => groups.push((key, vec![p])),
++        }
++    }
++    let mut few: Vec<types::NamedMesh> = vec![];
++    for (_, group) in groups {
++        let copies: usize = group.iter().map(|p| p.place.copies()).sum();
++        if copies <= ENTITY_COPIES {
++            few.extend(group.into_iter().cloned());
++        } else {
++            draw_gpu_instanced(&group, mode, background, commands, meshes);
++        }
++    }
++    draw_copies_as_entities(&few, mode, background, commands, meshes, mats, texture);
++}
++
++/// One shared mesh with many copies: one entity, its copies in an instance
++/// buffer. The surface in the look's colour (textures are left out), and
++/// the edges as a second instanced line mesh in the line modes.
++fn draw_gpu_instanced(
++    group:      &[&types::NamedMesh],
++    mode:       viewport::display::DisplayMode,
++    background: Color,
++    commands:   &mut Commands,
++    meshes:     &mut Assets<Mesh>,
++) {
++    use viewport::display::DisplayMode;
++    use viewport::instancing::{copy, GpuInstances, InstanceCopy};
++    let Some(first) = group.first() else { return };
++    let mesh = &first.mesh;
++    if mesh.vertices.is_empty() { return; }
++    let linear = |c: Color| { let l = c.to_linear(); [l.red, l.green, l.blue] };
++    let grey = linear(Color::srgb(0.6, 0.6, 0.6));
++    fn spawn(commands: &mut Commands, handle: Handle<Mesh>, copies: Vec<InstanceCopy>) {
++        commands.spawn((
++            handle,
++            SpatialBundle::INHERITED_IDENTITY,
++            GpuInstances(copies.into()),
++            // The entity sits at the origin; its copies are everywhere.
++            bevy::render::view::NoFrustumCulling,
++            GeneratedMesh,
++        ));
++    }
++
++    if mode != DisplayMode::Wireframe {
++        let (lit, background_colour) = (mode != DisplayMode::HiddenLine, linear(background));
++        let copies: Vec<InstanceCopy> = group.iter().flat_map(|p| {
++            let colour = match (mode, &p.look) {
++                (DisplayMode::HiddenLine, _) => background_colour,
++                (DisplayMode::Textured, Some(look)) => linear(Color::srgb(look.color[0], look.color[1], look.color[2])),
++                _ => grey,
++            };
++            p.place.matrices().iter().map(move |m| copy(m, colour, lit))
++        }).collect();
++        spawn(commands, meshes.add(mesh_data_to_bevy(mesh)), copies);
++    }
++    if matches!(mode, DisplayMode::HiddenLine | DisplayMode::Wireframe) {
++        let mut wire = Mesh::new(
++            bevy::render::mesh::PrimitiveTopology::LineList,
++            bevy::render::render_asset::RenderAssetUsages::default(),
++        );
++        wire.insert_attribute(Mesh::ATTRIBUTE_POSITION, mesh.vertices.clone());
++        wire.insert_indices(bevy::render::mesh::Indices::U32(viewport::display::wire_edges(mesh)));
++        let ink = theme::c(225, 225, 225);
++        let ink = linear(Color::srgb_u8(ink.r(), ink.g(), ink.b()));
++        let copies: Vec<InstanceCopy> = group.iter()
++            .flat_map(|p| p.place.matrices().iter().map(move |m| copy(m, ink, false)))
++            .collect();
++        spawn(commands, meshes.add(wire), copies);
++    }
++}
++
++/// Instanced packed primitives with few copies. Each shared mesh becomes one
++/// mesh asset and each look one material, then every placement is an entity
++/// using them, so the renderer draws the copies of a mesh together.
++fn draw_copies_as_entities(
++    prims:      &[types::NamedMesh],
++    mode:       viewport::display::DisplayMode,
++    background: Color,
+     commands:   &mut Commands,
+     meshes:     &mut Assets<Mesh>,
+     mats:       &mut Assets<StandardMaterial>,
+diff -ruN -x __MACOSX -x '*.orig' a/src/viewport/instancing.rs b/src/viewport/instancing.rs
+--- a/src/viewport/instancing.rs	1970-01-01 00:00:00.000000000 +0000
++++ b/src/viewport/instancing.rs	2026-10-09 13:21:34.098936919 +0000
+@@ -0,0 +1,252 @@
++//! GPU instancing for packed primitives.
++//!
++//! An entity with a mesh and `GpuInstances` is drawn once per copy in a
++//! single draw call: the copies' matrices and colours go to the GPU as a
++//! second vertex buffer, stepped per instance. This is Bevy's
++//! `custom_shader_instancing` example, adapted: full matrices instead of a
++//! position and scale, a little shading, lines as well as surfaces, and the
++//! buffer kept across frames instead of made again every frame.
++//!
++//! Copies drawn this way get the look's colour but not its textures: they
++//! are for scenes with many copies, where seeing their shape and colour is
++//! what matters. A mesh with few copies is drawn the ordinary way, textures
++//! and all (see `draw_instanced` in `main.rs`).
++
++use std::collections::HashMap;
++use std::sync::Arc;
++
++use bevy::{
++    asset::load_internal_asset,
++    core_pipeline::core_3d::Transparent3d,
++    ecs::{
++        query::QueryItem,
++        system::{lifetimeless::*, SystemParamItem},
++    },
++    pbr::{MeshPipeline, MeshPipelineKey, RenderMeshInstances, SetMeshBindGroup, SetMeshViewBindGroup},
++    prelude::*,
++    render::{
++        extract_component::{ExtractComponent, ExtractComponentPlugin},
++        mesh::{GpuBufferInfo, GpuMesh, MeshVertexBufferLayoutRef},
++        render_asset::RenderAssets,
++        render_phase::{
++            AddRenderCommand, DrawFunctions, PhaseItem, PhaseItemExtraIndex, RenderCommand, RenderCommandResult,
++            SetItemPipeline, TrackedRenderPass, ViewSortedRenderPhases,
++        },
++        render_resource::*,
++        renderer::RenderDevice,
++        view::ExtractedView,
++        Render, RenderApp, RenderSet,
++    },
++};
++
++const SHADER: Handle<Shader> = Handle::weak_from_u128(0x5a1c_3e0b_9d47_4f6a_b2c8_71e4_0d93_6b21);
++
++/// One copy: a column-major matrix, then a linear colour whose alpha says
++/// whether it is lit (1) or flat (0).
++pub type InstanceCopy = [f32; 20];
++
++pub fn copy(m: &Mat4, color: [f32; 3], lit: bool) -> InstanceCopy {
++    let mut c = [0.0; 20];
++    c[..16].copy_from_slice(&m.to_cols_array());
++    c[16..19].copy_from_slice(&color);
++    c[19] = if lit { 1.0 } else { 0.0 };
++    c
++}
++
++/// The copies of an entity's mesh. Shared, so handing it to the renderer
++/// every frame costs nothing, and its buffer is made once.
++#[derive(Component, Clone)]
++pub struct GpuInstances(pub Arc<[InstanceCopy]>);
++
++impl ExtractComponent for GpuInstances {
++    type QueryData = &'static GpuInstances;
++    type QueryFilter = ();
++    type Out = Self;
++    fn extract_component(item: QueryItem<'_, Self::QueryData>) -> Option<Self> {
++        Some(item.clone())
++    }
++}
++
++pub struct InstancingPlugin;
++
++impl Plugin for InstancingPlugin {
++    fn build(&self, app: &mut App) {
++        load_internal_asset!(app, SHADER, "instancing.wgsl", Shader::from_wgsl);
++        app.add_plugins(ExtractComponentPlugin::<GpuInstances>::default());
++        app.sub_app_mut(RenderApp)
++            .add_render_command::<Transparent3d, DrawInstanced>()
++            .init_resource::<SpecializedMeshPipelines<InstancedPipeline>>()
++            .init_resource::<KeptBuffers>()
++            .add_systems(Render, (
++                queue_instanced.in_set(RenderSet::QueueMeshes),
++                prepare_buffers.in_set(RenderSet::PrepareResources),
++            ));
++    }
++
++    fn finish(&self, app: &mut App) {
++        app.sub_app_mut(RenderApp).init_resource::<InstancedPipeline>();
++    }
++}
++
++#[allow(clippy::too_many_arguments)]
++fn queue_instanced(
++    draw_functions: Res<DrawFunctions<Transparent3d>>,
++    pipeline:       Res<InstancedPipeline>,
++    msaa:           Res<Msaa>,
++    mut pipelines:  ResMut<SpecializedMeshPipelines<InstancedPipeline>>,
++    cache:          Res<PipelineCache>,
++    meshes:         Res<RenderAssets<GpuMesh>>,
++    mesh_instances: Res<RenderMeshInstances>,
++    instanced:      Query<Entity, With<GpuInstances>>,
++    mut phases:     ResMut<ViewSortedRenderPhases<Transparent3d>>,
++    views:          Query<(Entity, &ExtractedView)>,
++) {
++    let draw = draw_functions.read().id::<DrawInstanced>();
++    let msaa_key = MeshPipelineKey::from_msaa_samples(msaa.samples());
++    for (view_entity, view) in &views {
++        let Some(phase) = phases.get_mut(&view_entity) else { continue };
++        let view_key = msaa_key | MeshPipelineKey::from_hdr(view.hdr);
++        let rangefinder = view.rangefinder3d();
++        for entity in &instanced {
++            let Some(mesh_instance) = mesh_instances.render_mesh_queue_data(entity) else { continue };
++            let Some(mesh) = meshes.get(mesh_instance.mesh_asset_id) else { continue };
++            let key = view_key | MeshPipelineKey::from_primitive_topology(mesh.primitive_topology());
++            let Ok(id) = pipelines.specialize(&cache, &pipeline, key, &mesh.layout) else { continue };
++            phase.add(Transparent3d {
++                entity,
++                pipeline: id,
++                draw_function: draw,
++                distance: rangefinder.distance_translation(&mesh_instance.translation),
++                batch_range: 0..1,
++                extra_index: PhaseItemExtraIndex::NONE,
++            });
++        }
++    }
++}
++
++#[derive(Component)]
++struct InstanceBuffer {
++    buffer: Buffer,
++    length: usize,
++}
++
++/// Buffers by the copies they were made from. The render world's entities
++/// are made again every frame; the buffers are not.
++#[derive(Resource, Default)]
++struct KeptBuffers(HashMap<usize, (Arc<[InstanceCopy]>, Buffer)>);
++
++fn prepare_buffers(
++    mut commands: Commands,
++    query:        Query<(Entity, &GpuInstances)>,
++    device:       Res<RenderDevice>,
++    mut kept:     ResMut<KeptBuffers>,
++) {
++    let mut used = std::collections::HashSet::new();
++    for (entity, copies) in &query {
++        let key = Arc::as_ptr(&copies.0) as *const f32 as usize;
++        used.insert(key);
++        let buffer = match kept.0.get(&key) {
++            Some((data, buffer)) if Arc::ptr_eq(data, &copies.0) => buffer.clone(),
++            _ => {
++                let bytes: Vec<u8> = copies.0.iter().flat_map(|c| c.iter().flat_map(|f| f.to_ne_bytes())).collect();
++                let buffer = device.create_buffer_with_data(&BufferInitDescriptor {
++                    label: Some("imago instanced copies"),
++                    contents: &bytes,
++                    usage: BufferUsages::VERTEX,
++                });
++                kept.0.insert(key, (copies.0.clone(), buffer.clone()));
++                buffer
++            }
++        };
++        commands.entity(entity).insert(InstanceBuffer { buffer, length: copies.0.len() });
++    }
++    kept.0.retain(|k, _| used.contains(k));
++}
++
++#[derive(Resource)]
++struct InstancedPipeline {
++    mesh_pipeline: MeshPipeline,
++}
++
++impl FromWorld for InstancedPipeline {
++    fn from_world(world: &mut World) -> Self {
++        InstancedPipeline { mesh_pipeline: world.resource::<MeshPipeline>().clone() }
++    }
++}
++
++impl SpecializedMeshPipeline for InstancedPipeline {
++    type Key = MeshPipelineKey;
++
++    fn specialize(&self, key: Self::Key, layout: &MeshVertexBufferLayoutRef) -> Result<RenderPipelineDescriptor, SpecializedMeshPipelineError> {
++        let mut descriptor = self.mesh_pipeline.specialize(key, layout)?;
++        descriptor.vertex.shader = SHADER;
++        let column = VertexFormat::Float32x4.size();
++        descriptor.vertex.buffers.push(VertexBufferLayout {
++            array_stride: std::mem::size_of::<InstanceCopy>() as u64,
++            step_mode: VertexStepMode::Instance,
++            attributes: (0..5).map(|i| VertexAttribute {
++                format: VertexFormat::Float32x4,
++                offset: column * i as u64,
++                shader_location: 8 + i,
++            }).collect(),
++        });
++        if let Some(fragment) = descriptor.fragment.as_mut() { fragment.shader = SHADER; }
++        // Lines are pulled a little towards the camera, so the edges win
++        // against the surface they lie on.
++        if key.primitive_topology() == PrimitiveTopology::LineList {
++            descriptor.vertex.shader_defs.push("INSTANCED_LINES".into());
++        }
++        // Both sides: instanced copies may be mirrored, and USD surfaces are
++        // often single sheets.
++        descriptor.primitive.cull_mode = None;
++        Ok(descriptor)
++    }
++}
++
++type DrawInstanced = (SetItemPipeline, SetMeshViewBindGroup<0>, SetMeshBindGroup<1>, DrawMeshInstanced);
++
++struct DrawMeshInstanced;
++
++impl<P: PhaseItem> RenderCommand<P> for DrawMeshInstanced {
++    type Param = (SRes<RenderAssets<GpuMesh>>, SRes<RenderMeshInstances>);
++    type ViewQuery = ();
++    type ItemQuery = Read<InstanceBuffer>;
++
++    #[inline]
++    fn render<'w>(
++        item:            &P,
++        _view:           (),
++        instance_buffer: Option<&'w InstanceBuffer>,
++        (meshes, mesh_instances): SystemParamItem<'w, '_, Self::Param>,
++        pass:            &mut TrackedRenderPass<'w>,
++    ) -> RenderCommandResult {
++        let Some(mesh_instance) = mesh_instances.render_mesh_queue_data(item.entity()) else { return RenderCommandResult::Failure };
++        let Some(gpu_mesh) = meshes.into_inner().get(mesh_instance.mesh_asset_id) else { return RenderCommandResult::Failure };
++        let Some(instance_buffer) = instance_buffer else { return RenderCommandResult::Failure };
++        pass.set_vertex_buffer(0, gpu_mesh.vertex_buffer.slice(..));
++        pass.set_vertex_buffer(1, instance_buffer.buffer.slice(..));
++        let copies = 0..instance_buffer.length as u32;
++        match &gpu_mesh.buffer_info {
++            GpuBufferInfo::Indexed { buffer, index_format, count } => {
++                pass.set_index_buffer(buffer.slice(..), 0, *index_format);
++                pass.draw_indexed(0..*count, 0, copies);
++            }
++            GpuBufferInfo::NonIndexed => pass.draw(0..gpu_mesh.vertex_count, copies),
++        }
++        RenderCommandResult::Success
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn a_copy_is_the_matrix_by_columns_then_the_colour() {
++        let m = Mat4::from_translation(Vec3::new(1.0, 2.0, 3.0));
++        let c = copy(&m, [0.1, 0.2, 0.3], true);
++        assert_eq!(&c[12..15], &[1.0, 2.0, 3.0]);
++        assert_eq!(&c[16..20], &[0.1, 0.2, 0.3, 1.0]);
++        assert_eq!(std::mem::size_of::<InstanceCopy>(), 80);
++    }
++}
+diff -ruN -x __MACOSX -x '*.orig' a/src/viewport/instancing.wgsl b/src/viewport/instancing.wgsl
+--- a/src/viewport/instancing.wgsl	1970-01-01 00:00:00.000000000 +0000
++++ b/src/viewport/instancing.wgsl	2026-10-09 13:21:34.099341601 +0000
+@@ -0,0 +1,56 @@
++// Instanced packed primitives: one mesh, drawn once per copy. Each copy
++// brings its own matrix and colour in a second vertex buffer, stepped per
++// instance. Shading is a simple key light and sky, two-sided; a colour with
++// alpha 0 is drawn flat (lines, hidden-line surfaces).
++
++#import bevy_pbr::view_transformations::position_world_to_clip
++
++struct Vertex {
++    @location(0) position: vec3<f32>,
++#ifdef VERTEX_NORMALS
++    @location(1) normal: vec3<f32>,
++#endif
++    // Bevy's mesh attributes use locations 0 to 7: the copies start at 8.
++    @location(8)  m0: vec4<f32>,
++    @location(9)  m1: vec4<f32>,
++    @location(10) m2: vec4<f32>,
++    @location(11) m3: vec4<f32>,
++    @location(12) color: vec4<f32>,
++};
++
++struct VertexOutput {
++    @builtin(position) clip_position: vec4<f32>,
++    @location(0) color: vec4<f32>,
++    @location(1) normal: vec3<f32>,
++};
++
++@vertex
++fn vertex(v: Vertex) -> VertexOutput {
++    let m = mat4x4<f32>(v.m0, v.m1, v.m2, v.m3);
++    let world = m * vec4<f32>(v.position, 1.0);
++    var out: VertexOutput;
++    out.clip_position = position_world_to_clip(world.xyz);
++#ifdef INSTANCED_LINES
++    // Reversed depth: larger is nearer.
++    out.clip_position.z += 2e-5 * out.clip_position.w;
++#endif
++    out.color = v.color;
++#ifdef VERTEX_NORMALS
++    out.normal = (m * vec4<f32>(v.normal, 0.0)).xyz;
++#else
++    out.normal = vec3<f32>(0.0, 1.0, 0.0);
++#endif
++    return out;
++}
++
++@fragment
++fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
++    if in.color.a < 0.5 {
++        return vec4<f32>(in.color.rgb, 1.0);
++    }
++    let len = length(in.normal);
++    let n = select(vec3<f32>(0.0, 1.0, 0.0), in.normal / len, len > 1e-8);
++    let key = abs(dot(n, normalize(vec3<f32>(0.4, 0.8, 0.45))));
++    let sky = 0.5 + 0.5 * abs(n.y);
++    return vec4<f32>(in.color.rgb * (0.22 + 0.18 * sky + 0.6 * key), 1.0);
++}
+diff -ruN -x __MACOSX -x '*.orig' a/src/viewport/mod.rs b/src/viewport/mod.rs
+--- a/src/viewport/mod.rs	2026-10-09 13:21:51.164609337 +0000
++++ b/src/viewport/mod.rs	2026-10-09 13:21:03.813786856 +0000
+@@ -2,6 +2,7 @@
+ pub mod textures;
+ pub mod display;
+ pub mod bounds;
++pub mod instancing;
+ 
+ use bevy_egui::egui;
+ 

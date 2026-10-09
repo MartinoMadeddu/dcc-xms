@@ -67,6 +67,7 @@ fn main() {
             ..default()
         }))
         .add_plugins(EguiPlugin)
+        .add_plugins(viewport::instancing::InstancingPlugin)
         // Draw a new frame when something happens (input, a change, a job
         // in the background), not all the time: an idle window costs
         // nothing, and a heavy viewport no longer slows the panels down
@@ -1421,10 +1422,101 @@ fn look_material(
     }
 }
 
-/// Instanced packed primitives. Each shared mesh becomes one mesh asset and
-/// each look one material, then every placement is an entity using them, so
-/// the renderer draws the copies of a mesh together.
+/// Above this many copies, a shared mesh is drawn by GPU instancing: one
+/// entity and one draw for all of them, in the look's colour. At or below,
+/// each copy is an entity of its own with the full material and textures.
+const ENTITY_COPIES: usize = 64;
+
+/// Instanced packed primitives, grouped by the mesh they share.
 fn draw_instanced(
+    prims:      &[types::NamedMesh],
+    mode:       viewport::display::DisplayMode,
+    background: Color,
+    commands:   &mut Commands,
+    meshes:     &mut Assets<Mesh>,
+    mats:       &mut Assets<StandardMaterial>,
+    texture:    &mut dyn FnMut(&Option<std::path::PathBuf>) -> Option<(Handle<Image>, bool)>,
+) {
+    let mut groups: Vec<(*const MeshData, Vec<&types::NamedMesh>)> = vec![];
+    for p in prims {
+        let key = std::sync::Arc::as_ptr(&p.mesh);
+        match groups.iter_mut().find(|g| g.0 == key) {
+            Some(g) => g.1.push(p),
+            None => groups.push((key, vec![p])),
+        }
+    }
+    let mut few: Vec<types::NamedMesh> = vec![];
+    for (_, group) in groups {
+        let copies: usize = group.iter().map(|p| p.place.copies()).sum();
+        if copies <= ENTITY_COPIES {
+            few.extend(group.into_iter().cloned());
+        } else {
+            draw_gpu_instanced(&group, mode, background, commands, meshes);
+        }
+    }
+    draw_copies_as_entities(&few, mode, background, commands, meshes, mats, texture);
+}
+
+/// One shared mesh with many copies: one entity, its copies in an instance
+/// buffer. The surface in the look's colour (textures are left out), and
+/// the edges as a second instanced line mesh in the line modes.
+fn draw_gpu_instanced(
+    group:      &[&types::NamedMesh],
+    mode:       viewport::display::DisplayMode,
+    background: Color,
+    commands:   &mut Commands,
+    meshes:     &mut Assets<Mesh>,
+) {
+    use viewport::display::DisplayMode;
+    use viewport::instancing::{copy, GpuInstances, InstanceCopy};
+    let Some(first) = group.first() else { return };
+    let mesh = &first.mesh;
+    if mesh.vertices.is_empty() { return; }
+    let linear = |c: Color| { let l = c.to_linear(); [l.red, l.green, l.blue] };
+    let grey = linear(Color::srgb(0.6, 0.6, 0.6));
+    fn spawn(commands: &mut Commands, handle: Handle<Mesh>, copies: Vec<InstanceCopy>) {
+        commands.spawn((
+            handle,
+            SpatialBundle::INHERITED_IDENTITY,
+            GpuInstances(copies.into()),
+            // The entity sits at the origin; its copies are everywhere.
+            bevy::render::view::NoFrustumCulling,
+            GeneratedMesh,
+        ));
+    }
+
+    if mode != DisplayMode::Wireframe {
+        let (lit, background_colour) = (mode != DisplayMode::HiddenLine, linear(background));
+        let copies: Vec<InstanceCopy> = group.iter().flat_map(|p| {
+            let colour = match (mode, &p.look) {
+                (DisplayMode::HiddenLine, _) => background_colour,
+                (DisplayMode::Textured, Some(look)) => linear(Color::srgb(look.color[0], look.color[1], look.color[2])),
+                _ => grey,
+            };
+            p.place.matrices().iter().map(move |m| copy(m, colour, lit))
+        }).collect();
+        spawn(commands, meshes.add(mesh_data_to_bevy(mesh)), copies);
+    }
+    if matches!(mode, DisplayMode::HiddenLine | DisplayMode::Wireframe) {
+        let mut wire = Mesh::new(
+            bevy::render::mesh::PrimitiveTopology::LineList,
+            bevy::render::render_asset::RenderAssetUsages::default(),
+        );
+        wire.insert_attribute(Mesh::ATTRIBUTE_POSITION, mesh.vertices.clone());
+        wire.insert_indices(bevy::render::mesh::Indices::U32(viewport::display::wire_edges(mesh)));
+        let ink = theme::c(225, 225, 225);
+        let ink = linear(Color::srgb_u8(ink.r(), ink.g(), ink.b()));
+        let copies: Vec<InstanceCopy> = group.iter()
+            .flat_map(|p| p.place.matrices().iter().map(move |m| copy(m, ink, false)))
+            .collect();
+        spawn(commands, meshes.add(wire), copies);
+    }
+}
+
+/// Instanced packed primitives with few copies. Each shared mesh becomes one
+/// mesh asset and each look one material, then every placement is an entity
+/// using them, so the renderer draws the copies of a mesh together.
+fn draw_copies_as_entities(
     prims:      &[types::NamedMesh],
     mode:       viewport::display::DisplayMode,
     background: Color,
