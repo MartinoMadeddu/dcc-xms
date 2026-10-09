@@ -199,29 +199,81 @@ pub fn draw_subnet_node_properties(ui: &mut egui::Ui, graph: &mut SubnetGraph) {
 
 // ── Main canvas ───────────────────────────────────────────────────────────────
 
-pub fn draw_subnet_graph(ui: &mut egui::Ui, graph: &mut SubnetGraph) {
+/// Draw an ICE tree and handle its editing and navigation, as the main
+/// network does: Shift+drag or middle-drag pans, the wheel zooms toward the
+/// pointer, F or A frames every node. Returns true when the Up arrow asks to
+/// go back up to the scene network.
+pub fn draw_subnet_graph(ui: &mut egui::Ui, graph: &mut SubnetGraph) -> bool {
     let (response, painter) = ui.allocate_painter(
         egui::Vec2::new(ui.available_width(), ui.available_height()),
         egui::Sense::click_and_drag(),
     );
     let canvas_rect = response.rect;
-    let pan = graph.pan_offset;
-    let to_screen = |p: egui::Pos2| canvas_rect.min + p.to_vec2() + pan;
-
-    // Light grey canvas with a fine grid that moves with the view, as ICE's.
-    painter.rect_filled(canvas_rect, 0.0, pal::BG());
-    let grid = egui::Stroke::new(1.0_f32, pal::GRID());
-    let mut x = canvas_rect.min.x + pan.x.rem_euclid(GRID);
-    while x < canvas_rect.max.x {
-        painter.line_segment([egui::pos2(x, canvas_rect.min.y), egui::pos2(x, canvas_rect.max.y)], grid);
-        x += GRID;
-    }
-    let mut y = canvas_rect.min.y + pan.y.rem_euclid(GRID);
-    while y < canvas_rect.max.y {
-        painter.line_segment([egui::pos2(canvas_rect.min.x, y), egui::pos2(canvas_rect.max.x, y)], grid);
-        y += GRID;
-    }
     let mut collapsed: HashSet<NodeId> = ui.data(|d| d.get_temp(collapsed_id())).unwrap_or_default();
+    let keys_free = response.hovered() && !ui.ctx().wants_keyboard_input();
+
+    // ── Up arrow: back up to the scene network ───────────────────────────────
+    if keys_free && ui.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
+        return true;
+    }
+
+    // ── Delete or Backspace: delete the selected node ────────────────────────
+    // Pointer anywhere over the canvas, nodes included, as in the main network.
+    let ptr_in_canvas = ui.input(|i| i.pointer.hover_pos()).is_some_and(|p| canvas_rect.contains(p));
+    if ptr_in_canvas && !ui.ctx().wants_keyboard_input()
+        && ui.input(|i| i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace))
+    {
+        if let Some(id) = graph.selected_node { graph.remove_node(id); }
+    }
+
+    // ── Frame every node (F or A) ────────────────────────────────────────────
+    if keys_free && ui.input(|i| i.key_pressed(egui::Key::F) || i.key_pressed(egui::Key::A))
+        && canvas_rect.width() > 40.0 && !graph.nodes.is_empty()
+    {
+        let mut bounds = egui::Rect::NOTHING;
+        for node in &graph.nodes {
+            let lay = layout(node, collapsed.contains(&node.id));
+            bounds = bounds.union(egui::Rect::from_min_size(node.position, lay.size));
+        }
+        let room = canvas_rect.size() - egui::vec2(60.0, 60.0);
+        graph.zoom = (room.x / bounds.width()).min(room.y / bounds.height()).clamp(0.3, 1.5);
+        graph.pan_offset = canvas_rect.size() * 0.5 - bounds.center().to_vec2() * graph.zoom;
+        ui.ctx().request_repaint();
+    }
+
+    // ── Zoom (wheel, toward the pointer) ─────────────────────────────────────
+    if response.hovered() {
+        let scroll = ui.input(|i| i.smooth_scroll_delta.y);
+        if scroll != 0.0 {
+            let cursor = ui.input(|i| i.pointer.hover_pos()).unwrap_or(canvas_rect.center());
+            let (z0, pan0) = (graph.zoom, graph.pan_offset);
+            let under = (cursor - canvas_rect.min - pan0) / z0;   // canvas point under the pointer
+            graph.zoom = (z0 * (1.0 + scroll * 0.002)).clamp(0.15, 4.0);
+            graph.pan_offset = cursor - canvas_rect.min - under * graph.zoom;
+        }
+    }
+
+    let pan = graph.pan_offset;
+    let z = graph.zoom;
+    let to_screen = |p: egui::Pos2| canvas_rect.min + p.to_vec2() * z + pan;
+    let to_canvas = move |p: egui::Pos2| egui::Pos2::ZERO + (p - canvas_rect.min - pan) / z;
+
+    // Light grey canvas with a fine grid that moves and scales with the view.
+    painter.rect_filled(canvas_rect, 0.0, pal::BG());
+    let step = GRID * z;
+    if step >= 5.0 {
+        let grid = egui::Stroke::new(1.0_f32, pal::GRID());
+        let mut x = canvas_rect.min.x + pan.x.rem_euclid(step);
+        while x < canvas_rect.max.x {
+            painter.line_segment([egui::pos2(x, canvas_rect.min.y), egui::pos2(x, canvas_rect.max.y)], grid);
+            x += step;
+        }
+        let mut y = canvas_rect.min.y + pan.y.rem_euclid(step);
+        while y < canvas_rect.max.y {
+            painter.line_segment([egui::pos2(canvas_rect.min.x, y), egui::pos2(canvas_rect.max.x, y)], grid);
+            y += step;
+        }
+    }
 
     // Existing connections
     let mut hovered: Option<ConnectionId> = None;
@@ -236,7 +288,7 @@ pub fn draw_subnet_graph(ui: &mut egui::Ui, graph: &mut SubnetGraph) {
                 if is_near_bezier_h(ptr, fp, tp, 10.0) { hovered = Some(conn.id); }
             }
             let colour = type_colour(fn_.outputs.get(conn.from_output).map(|o| o.value_hint).unwrap_or(""));
-            draw_wire_h(&painter, fp, tp, colour, hovered == Some(conn.id));
+            draw_wire_h(&painter, fp, tp, colour, hovered == Some(conn.id), z);
         }
     }
     if let Some(cid) = hovered {
@@ -249,7 +301,7 @@ pub fn draw_subnet_graph(ui: &mut egui::Ui, graph: &mut SubnetGraph) {
             let fp  = to_screen(output_socket_pos(fn_, fo, &collapsed));
             let ptr = ui.input(|i| i.pointer.hover_pos());
             let colour = type_colour(fn_.outputs.get(fo).map(|o| o.value_hint).unwrap_or(""));
-            if let Some(ptr) = ptr { draw_wire_h(&painter, fp, ptr, colour, false); }
+            if let Some(ptr) = ptr { draw_wire_h(&painter, fp, ptr, colour, false, z); }
         }
     }
 
@@ -259,7 +311,7 @@ pub fn draw_subnet_graph(ui: &mut egui::Ui, graph: &mut SubnetGraph) {
     // Draw all nodes — sockets handle their own press/release via raw input
     let nodes_clone = graph.nodes.clone();
     for node in &nodes_clone {
-        draw_subnet_node(ui, &painter, graph, node, &to_screen, canvas_rect, pan, &mut collapsed);
+        draw_subnet_node(ui, &painter, graph, node, &to_screen, &to_canvas, z, &mut collapsed);
     }
     ui.data_mut(|d| d.insert_temp(collapsed_id(), collapsed));
 
@@ -275,10 +327,10 @@ pub fn draw_subnet_graph(ui: &mut egui::Ui, graph: &mut SubnetGraph) {
         graph.pan_offset += response.drag_delta();
     }
 
-    // Context menu
+    // Context menu: new nodes land under the pointer, whatever the zoom.
     response.context_menu(|ui| {
         let ptr = ui.input(|i| i.pointer.hover_pos().unwrap_or_default());
-        let cp  = ptr - canvas_rect.min.to_vec2() - graph.pan_offset;
+        let cp  = to_canvas(ptr);
 
         ui.label(egui::RichText::new("Constants").strong());
         if ui.button("→v  Const Vec3").clicked() {
@@ -344,6 +396,7 @@ pub fn draw_subnet_graph(ui: &mut egui::Ui, graph: &mut SubnetGraph) {
             ui.close_menu();
         }
     });
+    false
 }
 
 // ── Single node ───────────────────────────────────────────────────────────────
@@ -355,54 +408,55 @@ fn draw_subnet_node(
     graph:       &mut SubnetGraph,
     node:        &SubnetNode,
     to_screen:   &impl Fn(egui::Pos2) -> egui::Pos2,
-    canvas_rect: egui::Rect,
-    pan_offset:  egui::Vec2,
+    to_canvas:   &impl Fn(egui::Pos2) -> egui::Pos2,
+    z:           f32,
     collapsed:   &mut HashSet<NodeId>,
 ) {
     let id      = node.id;
     let folded  = collapsed.contains(&id);
     let np      = to_screen(node.position);
     let lay     = layout(node, folded);
-    let rect    = egui::Rect::from_min_size(np, lay.size);
+    let rect    = egui::Rect::from_min_size(np, lay.size * z);
+    let font    = |pt: f32| egui::FontId::proportional(pt * z);
     let is_sel  = graph.selected_node == Some(id);
     let body    = tint(&node.node_type);
 
     // A grey ring, the body, a dark edge; white around it when selected.
-    let ring = rect.expand(2.0);
-    painter.rect_filled(ring, if ROUNDING > 0.0 { ROUNDING + 2.0 } else { 0.0 }, if is_sel { pal::SELECTED() } else { pal::FRAME() });
-    painter.rect_filled(rect, ROUNDING, body);
-    painter.rect_stroke(rect, ROUNDING, egui::Stroke::new(1.0_f32, pal::RIM()));
+    let ring = rect.expand(2.0 * z.max(0.5));
+    painter.rect_filled(ring, if ROUNDING > 0.0 { (ROUNDING + 2.0) * z } else { 0.0 }, if is_sel { pal::SELECTED() } else { pal::FRAME() });
+    painter.rect_filled(rect, ROUNDING * z, body);
+    painter.rect_stroke(rect, ROUNDING * z, egui::Stroke::new(1.0_f32, pal::RIM()));
 
     // Two-line title: the node's own name in bold (drawn twice, a hair
     // apart), its type in small dim text beneath. Collapsed, only the name.
-    let name_y = if folded { np.y + FOLDED_H * 0.5 } else { np.y + 12.0 };
+    let name_y = if folded { np.y + FOLDED_H * 0.5 * z } else { np.y + 12.0 * z };
     for dx in [0.0, 0.6] {
-        painter.text(egui::pos2(np.x + 7.0 + dx, name_y), egui::Align2::LEFT_CENTER, &node.name,
-            egui::FontId::proportional(TITLE_PT), pal::INK());
+        painter.text(egui::pos2(np.x + (7.0 + dx) * z, name_y), egui::Align2::LEFT_CENTER, &node.name,
+            font(TITLE_PT), pal::INK());
     }
     if !folded {
-        painter.text(egui::pos2(np.x + 7.0, np.y + 25.0), egui::Align2::LEFT_CENTER, title_text(node),
-            egui::FontId::proportional(TYPE_PT), pal::INK_TYPE());
+        painter.text(egui::pos2(np.x + 7.0 * z, np.y + 25.0 * z), egui::Align2::LEFT_CENTER, title_text(node),
+            font(TYPE_PT), pal::INK_TYPE());
         // A thin line between the title and the ports, short of the edges.
-        let y = np.y + TITLE_H - 0.5;
-        painter.line_segment([egui::pos2(rect.min.x + 4.0, y), egui::pos2(rect.max.x - 4.0, y)],
+        let y = np.y + TITLE_H * z - 0.5;
+        painter.line_segment([egui::pos2(rect.min.x + 4.0 * z, y), egui::pos2(rect.max.x - 4.0 * z, y)],
             egui::Stroke::new(1.0_f32, pal::DIVIDER()));
     }
 
     // A constant's value, under the title.
     if let (false, Some(v)) = (folded, value_text(node)) {
-        painter.text(egui::pos2(np.x + 7.0, np.y + TITLE_H + ROW_H * 0.5), egui::Align2::LEFT_CENTER, v,
-            egui::FontId::monospace(LABEL_PT), pal::INK());
+        painter.text(egui::pos2(np.x + 7.0 * z, np.y + (TITLE_H + ROW_H * 0.5) * z), egui::Align2::LEFT_CENTER, v,
+            egui::FontId::monospace(LABEL_PT * z), pal::INK());
     }
 
     // The collapse box, at the right of the title.
-    let fold_rect = egui::Rect::from_center_size(egui::pos2(rect.max.x - 11.0, np.y + if folded { FOLDED_H * 0.5 } else { 12.0 }), egui::vec2(11.0, 9.0));
+    let fold_rect = egui::Rect::from_center_size(egui::pos2(rect.max.x - 11.0 * z, np.y + (if folded { FOLDED_H * 0.5 } else { 12.0 }) * z), egui::vec2(11.0, 9.0) * z);
     draw_fold_box(painter, fold_rect);
 
     // ── IMPORTANT: title bar allocated FIRST → lowest hit-test priority ───────
-    let title_rect = egui::Rect::from_min_size(np, egui::vec2(lay.size.x, if folded { FOLDED_H } else { TITLE_H }));
+    let title_rect = egui::Rect::from_min_size(np, egui::vec2(lay.size.x, if folded { FOLDED_H } else { TITLE_H }) * z);
     let dr = ui.allocate_rect(title_rect, egui::Sense::click_and_drag());
-    let fold = ui.allocate_rect(fold_rect.expand(2.0), egui::Sense::click())
+    let fold = ui.allocate_rect(fold_rect.expand(2.0 * z), egui::Sense::click())
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .on_hover_text(if folded { "Expand" } else { "Collapse" });
     if fold.clicked() {
@@ -411,14 +465,14 @@ fn draw_subnet_node(
 
     // ── Output ports (right edge) — allocated before inputs, highest priority
     for (i, out) in node.outputs.iter().enumerate() {
-        let sp  = np + lay.outputs[i];
-        let hit = egui::Rect::from_center_size(sp, egui::vec2(SOCK_HIT, SOCK_HIT));
+        let sp  = np + lay.outputs[i] * z;
+        let hit = egui::Rect::from_center_size(sp, egui::Vec2::splat((SOCK_HIT * z).max(10.0)));
         let sr  = ui.allocate_rect(hit, egui::Sense::click_and_drag());
         let wiring = graph.connecting_from == Some((id, i));
-        draw_port(painter, sp, type_colour(out.value_hint), sr.hovered() || wiring);
+        draw_port(painter, sp, type_colour(out.value_hint), sr.hovered() || wiring, z);
         if !folded {
-            painter.text(egui::pos2(sp.x - 7.0, sp.y), egui::Align2::RIGHT_CENTER, &out.name,
-                egui::FontId::proportional(LABEL_PT), pal::INK());
+            painter.text(egui::pos2(sp.x - 7.0 * z, sp.y), egui::Align2::RIGHT_CENTER, &out.name,
+                font(LABEL_PT), pal::INK());
         }
 
         // Fire on the very first frame of press
@@ -429,15 +483,15 @@ fn draw_subnet_node(
 
     // ── Input ports (left edge) ───────────────────────────────────────────────
     for (i, inp) in node.inputs.iter().enumerate() {
-        let sp  = np + lay.inputs[i];
-        let hit = egui::Rect::from_center_size(sp, egui::vec2(SOCK_HIT, SOCK_HIT));
+        let sp  = np + lay.inputs[i] * z;
+        let hit = egui::Rect::from_center_size(sp, egui::Vec2::splat((SOCK_HIT * z).max(10.0)));
         let sr  = ui.allocate_rect(hit, egui::Sense::drag());
         // Hovered while a wire is being drawn: a target.
         let target = sr.hovered() && graph.connecting_from.is_some();
-        draw_port(painter, sp, type_colour(inp.value_hint), target);
+        draw_port(painter, sp, type_colour(inp.value_hint), target, z);
         if !folded {
-            painter.text(egui::pos2(sp.x + 7.0, sp.y), egui::Align2::LEFT_CENTER, &inp.name,
-                egui::FontId::proportional(LABEL_PT), pal::INK());
+            painter.text(egui::pos2(sp.x + 7.0 * z, sp.y), egui::Align2::LEFT_CENTER, &inp.name,
+                font(LABEL_PT), pal::INK());
         }
 
         // Complete wire: mouse released while this socket is hovered.
@@ -452,6 +506,15 @@ fn draw_subnet_node(
 
     // ── Title bar interactions (lowest priority — allocated first) ────────────
     if dr.clicked() { graph.selected_node = Some(id); }
+    let terminal = matches!(node.node_type, SubnetNodeType::SubInput | SubnetNodeType::SubOutput);
+    if !terminal {
+        dr.context_menu(|ui| {
+            if ui.button("Delete").clicked() {
+                graph.remove_node(id);
+                ui.close_menu();
+            }
+        });
+    }
     // Only drag the node if we are not mid-wire
     if dr.drag_started() && graph.connecting_from.is_none() {
         graph.dragging_node = Some(id);
@@ -459,7 +522,7 @@ fn draw_subnet_node(
     }
     if dr.dragged() && graph.dragging_node == Some(id) {
         if let Some(ptr) = dr.interact_pointer_pos() {
-            let new_pos = ptr - pan_offset - canvas_rect.min.to_vec2() - graph.drag_offset;
+            let new_pos = to_canvas(ptr - graph.drag_offset);
             if let Some(n) = graph.nodes.iter_mut().find(|n| n.id == id) { n.position = new_pos; }
         }
     }
@@ -468,8 +531,8 @@ fn draw_subnet_node(
 
 /// A port: a small dot in its type's colour on the node's edge, larger
 /// under the pointer.
-fn draw_port(painter: &egui::Painter, at: egui::Pos2, colour: egui::Color32, hot: bool) {
-    let r = if hot { PORT_R + 1.5 } else { PORT_R };
+fn draw_port(painter: &egui::Painter, at: egui::Pos2, colour: egui::Color32, hot: bool, z: f32) {
+    let r = (if hot { PORT_R + 1.5 } else { PORT_R }) * z.max(0.6);
     painter.circle_filled(at, r + 1.0, pal::PORT_RIM());
     painter.circle_filled(at, r, colour);
 }
@@ -501,15 +564,15 @@ fn type_colour(hint: &str) -> egui::Color32 {
 
 /// A wire from an output to an input: a thin curve in the colour of the data
 /// it carries.
-pub fn draw_wire_h(painter: &egui::Painter, from: egui::Pos2, to: egui::Pos2, colour: egui::Color32, hovered: bool) {
-    let off = (to.x - from.x).abs().max(60.0) * 0.5;
+pub fn draw_wire_h(painter: &egui::Painter, from: egui::Pos2, to: egui::Pos2, colour: egui::Color32, hovered: bool, z: f32) {
+    let off = (to.x - from.x).abs().max(60.0 * z) * 0.5;
     let c1  = egui::pos2(from.x + off, from.y);
     let c2  = egui::pos2(to.x   - off, to.y);
     let pts: Vec<egui::Pos2> = (0..=24)
         .map(|i| bezier(from, c1, c2, to, i as f32 / 24.0))
         .collect();
     painter.add(egui::Shape::line(pts, egui::Stroke::new(
-        if hovered { WIRE_W + 1.4 } else { WIRE_W },
+        (if hovered { WIRE_W + 1.4 } else { WIRE_W }) * z.clamp(0.7, 1.5),
         if hovered { egui::Color32::WHITE } else { colour })));
 }
 

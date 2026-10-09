@@ -73,6 +73,8 @@ pub struct SubnetGraph {
     pub drag_offset:        egui::Vec2,
     pub connecting_from:    Option<(NodeId, usize)>,
     pub pan_offset:         egui::Vec2,
+    /// View scale of the tree: 1 is actual size.
+    pub zoom:               f32,
 }
 
 impl SubnetGraph {
@@ -83,7 +85,7 @@ impl SubnetGraph {
             next_node_id: 0, next_connection_id: 0,
             selected_node: None, dragging_node: None,
             drag_offset: egui::Vec2::ZERO,
-            connecting_from: None, pan_offset: egui::Vec2::ZERO,
+            connecting_from: None, pan_offset: egui::Vec2::ZERO, zoom: 1.0,
         };
         g.add_node("SubInput".into(),  SubnetNodeType::SubInput,  egui::pos2(60.0,  200.0));
         g.add_node("SubOutput".into(), SubnetNodeType::SubOutput, egui::pos2(500.0, 200.0));
@@ -149,6 +151,23 @@ impl SubnetGraph {
             from_node: from, from_output: from_out,
             to_node:   to,   to_input:    to_in,
         });
+    }
+
+    /// Delete a node and the wires to and from it. The tree's input and
+    /// output stay: every ICE tree has them. Returns whether it was deleted.
+    pub fn remove_node(&mut self, id: NodeId) -> bool {
+        let Some(node) = self.nodes.iter().find(|n| n.id == id) else { return false };
+        if matches!(node.node_type, SubnetNodeType::SubInput | SubnetNodeType::SubOutput) { return false; }
+        let wires: Vec<ConnectionId> = self.connections.iter()
+            .filter(|c| c.from_node == id || c.to_node == id)
+            .map(|c| c.id)
+            .collect();
+        for cid in wires { self.remove_connection(cid); }
+        self.nodes.retain(|n| n.id != id);
+        if self.selected_node == Some(id) { self.selected_node = None; }
+        if self.dragging_node == Some(id) { self.dragging_node = None; }
+        if self.connecting_from.is_some_and(|(n, _)| n == id) { self.connecting_from = None; }
+        true
     }
 
     pub fn remove_connection(&mut self, cid: ConnectionId) {

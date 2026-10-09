@@ -255,6 +255,14 @@ pub fn draw_node_graph(ui: &mut egui::Ui, graph: &mut NodeGraphState) -> Option<
         graph.delete_selected();
     }
 
+    // ── Down arrow: into the selected ICE node, as a double-click does ───────
+    if ptr_in_canvas && !ui.ctx().wants_keyboard_input() && ui.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
+        let selected = graph.selected_node.and_then(|id| graph.nodes.iter().find(|n| n.id == id));
+        if let Some(NodeType::Subnet { id: sid, .. }) = selected.map(|n| &n.node_type) {
+            dive_into = Some(*sid);
+        }
+    }
+
     // ── Nodes ─────────────────────────────────────────────────────────────────
     let nodes_clone = graph.nodes.clone();
     for node in &nodes_clone {

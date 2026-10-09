@@ -724,14 +724,15 @@ impl egui_dock::TabViewer for Panes<'_> {
                         if draw_breadcrumb(ui, &subnet_name) {
                             self.nav.current_subnet = None;
                         } else {
-                            ui.label("Right-click: add  |  Shift+drag: pan  |  Esc: cancel wire");
+                            ui.label("Right-click: add  |  Del: delete  |  Shift/middle-drag: pan  |  Wheel: zoom  |  F: frame  |  ↑: back to the scene network  |  Esc: cancel wire");
                             ui.separator();
                             // Canvas in its own child Ui: see the note below.
                             let rect = ui.available_rect_before_wrap();
                             let mut canvas = ui.child_ui(rect, *ui.layout(), None);
                             canvas.set_clip_rect(rect.intersect(ui.clip_rect()));
-                            draw_subnet_graph(&mut canvas, sg);
+                            let up = draw_subnet_graph(&mut canvas, sg);
                             ui.allocate_rect(rect, egui::Sense::hover());
+                            if up { self.nav.current_subnet = None; }
                         }
                     } else {
                         self.nav.current_subnet = None;
