@@ -1,0 +1,704 @@
+diff -ruN -x __MACOSX -x '*.orig' a/src/main.rs b/src/main.rs
+--- a/src/main.rs	2026-10-09 14:17:57.681843322 +0000
++++ b/src/main.rs	2026-10-09 14:17:42.360808842 +0000
+@@ -8,6 +8,7 @@
+ mod usd_loader;
+ mod usd_scene;
+ mod usd_stage;
++mod strands;
+ mod usda_text;
+ mod prim_inspector;
+ mod fbx_loader;
+@@ -1206,6 +1207,12 @@
+         }
+         other => other,
+     };
++    // Curves and points of packed primitives, as lines. The surfaces are
++    // drawn below; these primitives have none.
++    let strands_drawn = matches!(packed, Some(types::EvalResult::Named(_)));
++    if let Some(types::EvalResult::Named(prims)) = &packed {
++        draw_strands(prims, mode, &mut commands, &mut meshes, &mut mats);
++    }
+     // Instanced packed primitives: each shared mesh is made once and drawn at
+     // every placement. The others are drawn as before.
+     let packed = match packed {
+@@ -1246,6 +1253,10 @@
+     };
+     if let Some(md) = shown {
+         let md = &*md;
++        if !strands_drawn && strands::has_strands(md) {
++            let lines = std::slice::from_ref(md);
++            draw_strand_lines(lines, strand_colour(None, mode), Transform::IDENTITY, &mut commands, &mut meshes, &mut mats);
++        }
+         if md.vertices.is_empty() { return; }
+         let lines = matches!(mode, DisplayMode::HiddenLine | DisplayMode::Wireframe);
+         if lines {
+@@ -1376,6 +1387,141 @@
+     });
+ }
+ 
++/// The colour curves and points are drawn in: their look's in Textured
++/// mode, else a light grey that reads on the background.
++fn strand_colour(look: Option<&types::Look>, mode: viewport::display::DisplayMode) -> Color {
++    match look {
++        Some(l) if mode == viewport::display::DisplayMode::Textured => Color::srgb(l.color[0], l.color[1], l.color[2]),
++        _ => { let ink = theme::c(205, 205, 205); Color::srgb_u8(ink.r(), ink.g(), ink.b()) }
++    }
++}
++
++/// Some meshes' curves and points as one line mesh, in one colour.
++fn draw_strand_lines(
++    parts:     &[MeshData],
++    colour:    Color,
++    transform: Transform,
++    commands:  &mut Commands,
++    meshes:    &mut Assets<Mesh>,
++    mats:      &mut Assets<StandardMaterial>,
++) {
++    let (mut pos, mut idx) = (vec![], vec![]);
++    for md in parts {
++        let (p, i) = strands::lines(md);
++        let base = pos.len() as u32;
++        pos.extend(p);
++        idx.extend(i.into_iter().map(|k| k + base));
++    }
++    if idx.is_empty() { return; }
++    let mut mesh = Mesh::new(
++        bevy::render::mesh::PrimitiveTopology::LineList,
++        bevy::render::render_asset::RenderAssetUsages::default(),
++    );
++    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, pos);
++    mesh.insert_indices(bevy::render::mesh::Indices::U32(idx));
++    commands.spawn((
++        PbrBundle {
++            mesh: meshes.add(mesh),
++            material: mats.add(StandardMaterial { base_color: colour, unlit: true, ..default() }),
++            transform,
++            ..default()
++        },
++        GeneratedMesh,
++        bevy::pbr::NotShadowCaster,
++        bevy::pbr::NotShadowReceiver,
++    ));
++}
++
++/// Curves and points of packed primitives. Those in place are merged into
++/// one line mesh per colour. Instanced ones make their lines once per shared
++/// mesh: a few copies are entities, many go through GPU instancing.
++fn draw_strands(
++    prims:    &[types::NamedMesh],
++    mode:     viewport::display::DisplayMode,
++    commands: &mut Commands,
++    meshes:   &mut Assets<Mesh>,
++    mats:     &mut Assets<StandardMaterial>,
++) {
++    use viewport::instancing::{copy, GpuInstances, InstanceCopy};
++    let with: Vec<&types::NamedMesh> = prims.iter().filter(|p| strands::has_strands(&p.mesh)).collect();
++    if with.is_empty() { return; }
++    let colour_key = |c: Color| { let s = c.to_srgba(); [s.red, s.green, s.blue].map(|x| (x * 255.0).round() as u8) };
++
++    // In place: one line mesh per colour.
++    let mut in_place: Vec<([u8; 3], Color, Vec<MeshData>)> = vec![];
++    for p in with.iter().filter(|p| !p.place.is_placed()) {
++        let colour = strand_colour(p.look.as_deref(), mode);
++        let key = colour_key(colour);
++        let md = (*p.mesh).clone();
++        match in_place.iter_mut().find(|g| g.0 == key) {
++            Some(g) => g.2.push(md),
++            None => in_place.push((key, colour, vec![md])),
++        }
++    }
++    for (_, colour, parts) in in_place {
++        draw_strand_lines(&parts, colour, Transform::IDENTITY, commands, meshes, mats);
++    }
++
++    // Placed: by shared mesh.
++    let mut groups: Vec<(*const MeshData, Vec<&types::NamedMesh>)> = vec![];
++    for p in with.into_iter().filter(|p| p.place.is_placed()) {
++        let key = std::sync::Arc::as_ptr(&p.mesh);
++        match groups.iter_mut().find(|g| g.0 == key) {
++            Some(g) => g.1.push(p),
++            None => groups.push((key, vec![p])),
++        }
++    }
++    for (_, group) in groups {
++        let mesh = &group[0].mesh;
++        let (pos, idx) = strands::lines(mesh);
++        if idx.is_empty() { continue; }
++        let mut lines = Mesh::new(
++            bevy::render::mesh::PrimitiveTopology::LineList,
++            bevy::render::render_asset::RenderAssetUsages::default(),
++        );
++        lines.insert_attribute(Mesh::ATTRIBUTE_POSITION, pos);
++        lines.insert_indices(bevy::render::mesh::Indices::U32(idx));
++        let handle = meshes.add(lines);
++        let copies: usize = group.iter().map(|p| p.place.copies()).sum();
++        if copies <= ENTITY_COPIES {
++            let mut made: Vec<([u8; 3], Handle<StandardMaterial>)> = vec![];
++            for p in &group {
++                let colour = strand_colour(p.look.as_deref(), mode);
++                let key = colour_key(colour);
++                let material = match made.iter().find(|m| m.0 == key) {
++                    Some(m) => m.1.clone(),
++                    None => {
++                        let h = mats.add(StandardMaterial { base_color: colour, unlit: true, ..default() });
++                        made.push((key, h.clone()));
++                        h
++                    }
++                };
++                for m in p.place.matrices() {
++                    commands.spawn((
++                        PbrBundle { mesh: handle.clone(), material: material.clone(), transform: Transform::from_matrix(*m), ..default() },
++                        GeneratedMesh,
++                        bevy::pbr::NotShadowCaster,
++                        bevy::pbr::NotShadowReceiver,
++                    ));
++                }
++            }
++        } else {
++            let all: Vec<InstanceCopy> = group.iter().flat_map(|p| {
++                let l = strand_colour(p.look.as_deref(), mode).to_linear();
++                let colour = [l.red, l.green, l.blue];
++                p.place.matrices().iter().map(move |m| copy(m, colour, false))
++            }).collect();
++            commands.spawn((
++                handle,
++                SpatialBundle::INHERITED_IDENTITY,
++                GpuInstances(all.into()),
++                bevy::render::view::NoFrustumCulling,
++                GeneratedMesh,
++            ));
++        }
++    }
++}
++
+ /// Bounding boxes, all in one line mesh.
+ fn draw_boxes(
+     boxes:    &[viewport::bounds::Bounds],
+diff -ruN -x __MACOSX -x '*.orig' a/src/node_graph/nodes.rs b/src/node_graph/nodes.rs
+--- a/src/node_graph/nodes.rs	2026-10-09 14:17:57.682658701 +0000
++++ b/src/node_graph/nodes.rs	2026-10-09 14:16:46.643914120 +0000
+@@ -350,6 +350,13 @@
+         polys:      mesh.polys.clone(),
+         face_count: mesh.face_count,
+         uvs:        mesh.uvs.clone(),
++        curve_points: mesh.curve_points.iter()
++            .map(|p| (rot * (Vec3::from_array(*p) * s) + t).to_array())
++            .collect(),
++        curve_counts: mesh.curve_counts.clone(),
++        curve_basis:  mesh.curve_basis,
++        curve_wrap:   mesh.curve_wrap,
++        widths:       mesh.widths.clone(),
+         ..Default::default()
+     };
+     // Recompute normals after transform so they stay correct
+@@ -369,6 +376,11 @@
+         polys:      mesh.polys.clone(),
+         face_count: mesh.face_count,
+         uvs:        mesh.uvs.clone(),
++        curve_points: mesh.curve_points.iter().map(|p| m.transform_point3(Vec3::from_array(*p)).to_array()).collect(),
++        curve_counts: mesh.curve_counts.clone(),
++        curve_basis:  mesh.curve_basis,
++        curve_wrap:   mesh.curve_wrap,
++        widths:       mesh.widths.clone(),
+         ..Default::default()
+     };
+     if m.determinant() < 0.0 {
+@@ -393,7 +405,28 @@
+     let any_polys = parts.iter().any(|p| !p.polys.is_empty());
+     let any_uvs = parts.iter().any(|p| !p.uvs.is_empty());
+     let all_normals = parts.iter().all(|p| p.normals.len() == p.vertices.len());
++    // Curves of one kind stay as they are; of several, they become polylines.
++    let mut kinds = parts.iter().filter(|p| !p.curve_counts.is_empty()).map(|p| (p.curve_basis, p.curve_wrap));
++    let first_kind = kinds.next();
++    let one_kind = kinds.all(|k| Some(k) == first_kind);
++    if let (Some((basis, wrap)), true) = (first_kind, one_kind) { m.curve_basis = basis; m.curve_wrap = wrap; }
++    let any_widths = parts.iter().any(|p| !p.widths.is_empty());
+     for p in parts {
++        if !p.curve_counts.is_empty() {
++            if one_kind {
++                m.curve_points.extend_from_slice(&p.curve_points);
++                m.curve_counts.extend_from_slice(&p.curve_counts);
++            } else {
++                let (points, counts) = crate::strands::as_polylines(p);
++                m.curve_points.extend(points);
++                m.curve_counts.extend(counts);
++            }
++        }
++        if any_widths {
++            // One per point; a part without widths gets 0, the default size.
++            let w = |i: usize| p.widths.get(i).or(p.widths.first()).copied().unwrap_or(0.0);
++            m.widths.extend((0..p.points.len()).map(w));
++        }
+         let off = m.vertices.len() as u32;
+         m.vertices.extend_from_slice(&p.vertices);
+         m.indices.extend(p.indices.iter().map(|i| i + off));
+diff -ruN -x __MACOSX -x '*.orig' a/src/strands.rs b/src/strands.rs
+--- a/src/strands.rs	1970-01-01 00:00:00.000000000 +0000
++++ b/src/strands.rs	2026-10-09 14:16:46.643189520 +0000
+@@ -0,0 +1,191 @@
++//! Curves and points as lines: what the viewport draws of them, and how
++//! curves of different kinds are merged.
++//!
++//! Curves keep their control points and their basis (Bézier, B-spline,
++//! Catmull-Rom or linear) as USD gives them; they are evaluated into
++//! polylines only to be drawn, a few steps per segment. Points are drawn as
++//! small crosses, their width when they have one.
++
++use bevy::math::Vec3;
++
++use crate::types::{CurveBasis, CurveWrap, MeshData};
++
++/// Steps per cubic segment when drawing.
++const STEPS: usize = 6;
++
++/// Above this many control points, curves are drawn by their control
++/// polylines: a groom of millions of curves stays light, and its shape still
++/// reads.
++const DENSE: usize = 2_000_000;
++
++/// One curve as a polyline through `steps` points per segment.
++pub fn polyline(cv: &[Vec3], basis: CurveBasis, wrap: CurveWrap, steps: usize) -> Vec<Vec3> {
++    if cv.len() < 2 { return cv.to_vec(); }
++    let periodic = wrap == CurveWrap::Periodic;
++    match basis {
++        CurveBasis::Linear => {
++            let mut out = cv.to_vec();
++            if periodic { out.push(cv[0]); }
++            out
++        }
++        CurveBasis::Bezier => {
++            // Segments of four control points, each starting where the last ended.
++            let mut pts = cv.to_vec();
++            if periodic { pts.push(cv[0]); }
++            if pts.len() < 4 { return pts; }
++            let mut out = vec![pts[0]];
++            let mut i = 0;
++            while i + 3 < pts.len() {
++                let [a, b, c, d] = [pts[i], pts[i + 1], pts[i + 2], pts[i + 3]];
++                for k in 1..=steps {
++                    let t = k as f32 / steps as f32;
++                    let u = 1.0 - t;
++                    out.push(a * (u * u * u) + b * (3.0 * u * u * t) + c * (3.0 * u * t * t) + d * (t * t * t));
++                }
++                i += 3;
++            }
++            out
++        }
++        CurveBasis::Bspline | CurveBasis::CatmullRom => {
++            // Windows of four control points, one step apart. Periodic curves
++            // repeat their first three; pinned ones get a phantom point at
++            // each end, as USD defines them.
++            let mut pts: Vec<Vec3> = Vec::with_capacity(cv.len() + 3);
++            if wrap == CurveWrap::Pinned { pts.push(cv[0] * 2.0 - cv[1]); }
++            pts.extend_from_slice(cv);
++            if wrap == CurveWrap::Pinned { pts.push(cv[cv.len() - 1] * 2.0 - cv[cv.len() - 2]); }
++            if periodic { pts.extend_from_slice(&cv[..3.min(cv.len())]); }
++            if pts.len() < 4 { return cv.to_vec(); }
++            let mut out = vec![];
++            for w in pts.windows(4) {
++                let first = if out.is_empty() { 0 } else { 1 };
++                for k in first..=steps {
++                    let t = k as f32 / steps as f32;
++                    out.push(if basis == CurveBasis::Bspline { bspline(w, t) } else { catmull_rom(w, t) });
++                }
++            }
++            out
++        }
++    }
++}
++
++fn bspline(p: &[Vec3], t: f32) -> Vec3 {
++    let (t2, t3) = (t * t, t * t * t);
++    let u = 1.0 - t;
++    (p[0] * (u * u * u) + p[1] * (3.0 * t3 - 6.0 * t2 + 4.0) + p[2] * (-3.0 * t3 + 3.0 * t2 + 3.0 * t + 1.0) + p[3] * t3) / 6.0
++}
++
++fn catmull_rom(p: &[Vec3], t: f32) -> Vec3 {
++    let (t2, t3) = (t * t, t * t * t);
++    (p[1] * 2.0 + (p[2] - p[0]) * t + (p[0] * 2.0 - p[1] * 5.0 + p[2] * 4.0 - p[3]) * t2 + (p[1] * 3.0 - p[0] - p[2] * 3.0 + p[3]) * t3) * 0.5
++}
++
++/// Each curve's control points, by curve.
++fn curves(md: &MeshData) -> impl Iterator<Item = &[[f32; 3]]> + '_ {
++    let mut at = 0usize;
++    md.curve_counts.iter().filter_map(move |&n| {
++        let (start, end) = (at, at + n as usize);
++        at = end;
++        md.curve_points.get(start..end)
++    })
++}
++
++/// The curves as linear polylines: for merging curves of different kinds.
++pub fn as_polylines(md: &MeshData) -> (Vec<[f32; 3]>, Vec<u32>) {
++    if md.curve_basis == CurveBasis::Linear && md.curve_wrap != CurveWrap::Periodic {
++        return (md.curve_points.clone(), md.curve_counts.clone());
++    }
++    let (mut points, mut counts) = (vec![], vec![]);
++    for cv in curves(md) {
++        let cv: Vec<Vec3> = cv.iter().map(|p| Vec3::from_array(*p)).collect();
++        let line = polyline(&cv, md.curve_basis, md.curve_wrap, STEPS);
++        counts.push(line.len() as u32);
++        points.extend(line.iter().map(|p| p.to_array()));
++    }
++    (points, counts)
++}
++
++/// Whether there is anything to draw as lines.
++pub fn has_strands(md: &MeshData) -> bool {
++    !md.curve_counts.is_empty() || !md.points.is_empty()
++}
++
++/// Curves and points as line segments: positions and pairs of indices.
++pub fn lines(md: &MeshData) -> (Vec<[f32; 3]>, Vec<u32>) {
++    let (mut pos, mut idx): (Vec<[f32; 3]>, Vec<u32>) = (vec![], vec![]);
++    let dense = md.curve_points.len() > DENSE;
++    for cv in curves(md) {
++        let line: Vec<Vec3> = {
++            let cv: Vec<Vec3> = cv.iter().map(|p| Vec3::from_array(*p)).collect();
++            if dense { cv } else { polyline(&cv, md.curve_basis, md.curve_wrap, STEPS) }
++        };
++        if line.len() < 2 { continue; }
++        let base = pos.len() as u32;
++        pos.extend(line.iter().map(|p| p.to_array()));
++        for k in 0..line.len() as u32 - 1 { idx.extend([base + k, base + k + 1]); }
++    }
++    if !md.points.is_empty() {
++        // Points without a width: a small fraction of the cloud's size.
++        let (lo, hi) = md.points.iter().fold((Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)), |(lo, hi), p| {
++            let p = Vec3::from_array(*p);
++            (lo.min(p), hi.max(p))
++        });
++        let fallback = ((hi - lo).length() * 0.003).max(1e-4);
++        for (i, p) in md.points.iter().enumerate() {
++            let w = md.widths.get(i).or(md.widths.first()).copied().unwrap_or(0.0);
++            let r = if w > 0.0 { w * 0.5 } else { fallback };
++            let c = Vec3::from_array(*p);
++            for axis in [Vec3::X, Vec3::Y, Vec3::Z] {
++                let base = pos.len() as u32;
++                pos.extend([(c - axis * r).to_array(), (c + axis * r).to_array()]);
++                idx.extend([base, base + 1]);
++            }
++        }
++    }
++    (pos, idx)
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn a_bezier_segment_ends_on_its_end_points() {
++        let cv = [Vec3::ZERO, Vec3::new(1.0, 1.0, 0.0), Vec3::new(2.0, 1.0, 0.0), Vec3::new(3.0, 0.0, 0.0)];
++        let line = polyline(&cv, CurveBasis::Bezier, CurveWrap::Nonperiodic, 4);
++        assert_eq!(line.len(), 5);
++        assert_eq!(line[0], cv[0]);
++        assert!((line[4] - cv[3]).length() < 1e-6);
++    }
++
++    #[test]
++    fn a_catmull_rom_curve_passes_through_its_inner_points() {
++        let cv = [Vec3::ZERO, Vec3::X, Vec3::new(2.0, 1.0, 0.0), Vec3::new(3.0, 1.0, 0.0)];
++        let line = polyline(&cv, CurveBasis::CatmullRom, CurveWrap::Nonperiodic, 4);
++        assert!((line[0] - cv[1]).length() < 1e-6 && (line[4] - cv[2]).length() < 1e-6);
++    }
++
++    #[test]
++    fn a_pinned_bspline_reaches_its_ends() {
++        let cv = [Vec3::ZERO, Vec3::X, Vec3::new(2.0, 1.0, 0.0), Vec3::new(3.0, 0.0, 0.0)];
++        let line = polyline(&cv, CurveBasis::Bspline, CurveWrap::Pinned, 4);
++        // The phantom points pull the curve's ends to within a sixth of the
++        // first and last spans, as uniform B-splines do.
++        assert!((line[0] - cv[0]).length() < 0.2 && (line[line.len() - 1] - cv[3]).length() < 0.2);
++    }
++
++    #[test]
++    fn curves_and_points_become_segments() {
++        let md = MeshData {
++            curve_points: vec![[0.0; 3], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]],
++            curve_counts: vec![3],
++            points: vec![[0.0, 5.0, 0.0]],
++            widths: vec![0.2],
++            ..Default::default()
++        };
++        let (pos, idx) = lines(&md);
++        // Two segments for the linear curve, three for the cross.
++        assert_eq!(idx.len() / 2, 2 + 3);
++        assert!((pos[3][0] - (-0.1)).abs() < 1e-6);
++    }
++}
+diff -ruN -x __MACOSX -x '*.orig' a/src/types.rs b/src/types.rs
+--- a/src/types.rs	2026-10-09 14:17:57.683240767 +0000
++++ b/src/types.rs	2026-10-09 14:17:16.095819534 +0000
+@@ -448,6 +448,35 @@
+     /// Texture coordinates, one pair per triangle corner in the order of
+     /// `indices`. Empty when the mesh has none.
+     pub uvs:        Vec<[f32; 2]>,
++    /// Curves: their control points end to end, and how many each one has.
++    pub curve_points: Vec<[f32; 3]>,
++    pub curve_counts: Vec<u32>,
++    /// How the curves pass through their control points (USD BasisCurves).
++    pub curve_basis:  CurveBasis,
++    pub curve_wrap:   CurveWrap,
++    /// Width of each of `points`, or one for them all. Empty, or 0 for a
++    /// point: drawn at a size of the viewport's choosing.
++    pub widths:       Vec<f32>,
++}
++
++/// How curves pass through their control points (USD `basis`, with `type`
++/// linear as `Linear`).
++#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
++pub enum CurveBasis {
++    #[default]
++    Linear,
++    Bezier,
++    Bspline,
++    CatmullRom,
++}
++
++/// How curves end (USD `wrap`).
++#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
++pub enum CurveWrap {
++    #[default]
++    Nonperiodic,
++    Periodic,
++    Pinned,
+ }
+ 
+ impl MeshData {
+@@ -918,7 +947,7 @@
+ /// Icon for a prim of a composed stage, by its type.
+ fn stage_icon(n: &crate::usd_scene::StageNode, has_children: bool) -> &'static str {
+     match n.type_name.as_str() {
+-        "Mesh" => prim_icon(&n.name, false),
++        "Mesh" | "BasisCurves" | "NurbsCurves" | "HermiteCurves" | "Points" => prim_icon(&n.name, false),
+         "Material" => "🎨",
+         "Camera" => "🎥",
+         "Skeleton" | "SkelRoot" => "🦴",
+@@ -1062,7 +1091,8 @@
+         listed:     &mut std::collections::HashSet<String>,
+     ) {
+         let nodes = &tree.nodes;
+-        let is_mesh = |i: usize| nodes[i].type_name == "Mesh";
++        // Prims that become packed geometry: meshes, curves, points.
++        let is_mesh = |i: usize| matches!(nodes[i].type_name.as_str(), "Mesh" | "BasisCurves" | "NurbsCurves" | "HermiteCurves" | "Points");
+         // Which prims hold meshes below them, and which hold ones still present.
+         let (mut holds, mut holds_present) = (vec![false; nodes.len()], vec![false; nodes.len()]);
+         let mut parents: Vec<usize> = vec![];
+diff -ruN -x __MACOSX -x '*.orig' a/src/usd_scene.rs b/src/usd_scene.rs
+--- a/src/usd_scene.rs	2026-10-09 14:17:57.683521889 +0000
++++ b/src/usd_scene.rs	2026-10-09 14:17:57.659210322 +0000
+@@ -815,6 +815,40 @@
+     }
+ 
+     #[test]
++    fn curves_and_points_are_read_as_they_are_authored() {
++        use crate::types::{CurveBasis, CurveWrap};
++        let path = write("strands.usda", r#"#usda 1.0
++def Xform "groom" {
++    double3 xformOp:translate = (0, 10, 0)
++    uniform token[] xformOpOrder = ["xformOp:translate"]
++    def BasisCurves "hair" {
++        uniform token type = "cubic"
++        uniform token basis = "catmullRom"
++        int[] curveVertexCounts = [4, 4]
++        point3f[] points = [(0, 0, 0), (0, 1, 0), (0, 2, 0), (0, 3, 0), (1, 0, 0), (1, 1, 0), (1, 2, 0), (1, 3, 0)]
++        float[] widths = [0.1]
++    }
++    def Points "dust" {
++        point3f[] points = [(5, 0, 0), (6, 0, 0)]
++        float[] widths = [0.5, 0.25]
++    }
++}
++"#);
++        let scene = load(&path).unwrap();
++        let find = |p: &str| scene.meshes.iter().find(|m| m.path == p).unwrap_or_else(|| panic!("no {p}: {:?}", scene.notes));
++        let hair = &find("/groom/hair").mesh;
++        assert_eq!(hair.curve_counts, vec![4, 4]);
++        assert_eq!((hair.curve_basis, hair.curve_wrap), (CurveBasis::CatmullRom, CurveWrap::Nonperiodic));
++        // In world space, like meshes.
++        assert_eq!(hair.curve_points[1], [0.0, 11.0, 0.0]);
++        let dust = &find("/groom/dust").mesh;
++        assert_eq!(dust.points, vec![[5.0, 10.0, 0.0], [6.0, 10.0, 0.0]]);
++        assert_eq!(dust.widths, vec![0.5, 0.25]);
++        // Listed in the hierarchy as geometry, like meshes.
++        assert!(scene.tree.nodes.iter().any(|n| n.path == "/groom/hair" && n.type_name == "BasisCurves"));
++    }
++
++    #[test]
+     fn a_missing_file_is_an_error_and_loads_are_cached() {
+         assert!(load_cached("/nowhere/at/all.usda").is_err());
+         let path = write("cached.usda", &format!("#usda 1.0\ndef Mesh \"m\" {{\n{QUAD}}}\n"));
+diff -ruN -x __MACOSX -x '*.orig' a/src/usd_stage.rs b/src/usd_stage.rs
+--- a/src/usd_stage.rs	2026-10-09 14:17:57.683757075 +0000
++++ b/src/usd_stage.rs	2026-10-09 14:17:09.000757620 +0000
+@@ -68,8 +68,6 @@
+ #[derive(Default)]
+ struct Counts {
+     nested:  usize,
+-    curves:  usize,
+-    points:  usize,
+     gprims:  usize,
+     subsets: usize,
+     hidden:  usize,
+@@ -80,8 +78,6 @@
+         let mut notes = vec![];
+         let mut say = |n: usize, text: &str| if n > 0 { notes.push(format!("{n} {text}")) };
+         say(self.nested, "point instancers inside the prototypes of another point instancer are not expanded");
+-        say(self.curves, "curves are not read into packed primitives yet");
+-        say(self.points, "point clouds are not read into packed primitives yet");
+         say(self.gprims, "implicit shapes (sphere, cube, cylinder…) are not read yet");
+         say(self.subsets, "meshes have face subsets (per-face materials): the mesh's own material is used");
+         say(self.hidden, "invisible meshes are listed but not drawn");
+@@ -142,20 +138,21 @@
+                 }
+                 return;
+             }
+-            rs::PrimKind::Mesh(m) => {
++            rs::PrimKind::Mesh(_) | rs::PrimKind::Curves(_) | rs::PrimKind::Points(_) => {
++                if let rs::PrimKind::Mesh(m) = &prim.kind {
++                    if !m.subsets.is_empty() && !hidden && self.listing == 0 { self.counts.subsets += 1; }
++                }
+                 if self.listing > 0 {
+                     // A point instancer's prototype: drawn through the instancer.
+                 } else if hidden {
+                     self.counts.hidden += 1;
+                 } else if under_instance {
+                     // Shared with every other instance of the same prototype.
+-                    if let Some(shared) = self.shared_mesh(src, m) {
+-                        if !m.subsets.is_empty() { self.counts.subsets += 1; }
++                    if let Some(shared) = self.shared_geometry(src, &prim.kind) {
+                         self.scene.meshes.push(UsdMesh { path: shown.clone(), mesh: shared, material: binding.clone(), place: Placement::One(world.as_mat4()), purpose });
+                     }
+-                } else if let Some(mesh) = mesh(m, t, &world) {
+-                    if !m.subsets.is_empty() { self.counts.subsets += 1; }
+-                    self.scene.meshes.push(UsdMesh { path: shown.clone(), mesh: Arc::new(mesh), material: binding.clone(), place: Placement::InPlace, purpose });
++                } else if let Some(geo) = geometry(&prim.kind, t, &world) {
++                    self.scene.meshes.push(UsdMesh { path: shown.clone(), mesh: Arc::new(geo), material: binding.clone(), place: Placement::InPlace, purpose });
+                 }
+             }
+             rs::PrimKind::Camera(c) if !under_instance => self.scene.cameras.push(UsdCamera {
+@@ -182,8 +179,6 @@
+                 self.listing -= 1;
+                 return;
+             }
+-            rs::PrimKind::Curves(_) => self.counts.curves += 1,
+-            rs::PrimKind::Points(_) => self.counts.points += 1,
+             rs::PrimKind::Gprim(_) => self.counts.gprims += 1,
+             _ => {
+                 if type_name == "Skeleton" && !under_instance {
+@@ -197,10 +192,11 @@
+         }
+     }
+ 
+-    /// A mesh in its own space, made once and shared by every copy.
+-    fn shared_mesh(&mut self, src: &rs::Path, m: &rs::Mesh) -> Option<Arc<MeshData>> {
++    /// A mesh, curves or points in their own space, made once and shared by
++    /// every copy.
++    fn shared_geometry(&mut self, src: &rs::Path, kind: &rs::PrimKind) -> Option<Arc<MeshData>> {
+         let t = self.t;
+-        self.shared.entry(src.as_str().to_string()).or_insert_with(|| mesh(m, t, &DMat4::IDENTITY).map(Arc::new)).clone()
++        self.shared.entry(src.as_str().to_string()).or_insert_with(|| geometry(kind, t, &DMat4::IDENTITY).map(Arc::new)).clone()
+     }
+ 
+     /// A point instancer: one packed primitive per mesh of each prototype,
+@@ -234,9 +230,9 @@
+             let mut found = vec![];
+             self.gather(proto, proto_shown, DMat4::IDENTITY, binding.clone(), purpose, &mut found);
+             for (mesh_src, mesh_shown, inside, material, purpose) in found {
+-                let Some(rs::PrimKind::Mesh(m)) = sc.get(&mesh_src).map(|p| &p.kind) else { continue };
+-                let Some(shared) = self.shared_mesh(&mesh_src, m) else { continue };
+-                if !m.subsets.is_empty() { self.counts.subsets += 1; }
++                let Some(kind) = sc.get(&mesh_src).map(|p| &p.kind) else { continue };
++                let Some(shared) = self.shared_geometry(&mesh_src, kind) else { continue };
++                if let rs::PrimKind::Mesh(m) = kind { if !m.subsets.is_empty() { self.counts.subsets += 1; } }
+                 let place: Arc<[Mat4]> = at.iter().map(|p| (*p * inside).as_mat4()).collect();
+                 self.scene.meshes.push(UsdMesh { path: mesh_shown, mesh: shared, material, place: Placement::Many(place), purpose });
+             }
+@@ -255,7 +251,7 @@
+         let inside = if prim.reset_xform_stack { local } else { parent * local };
+         let binding = prim.material_binding.as_ref().map(|p| p.as_str().to_string()).or(binding);
+         let below: &[rs::Path] = match &prim.kind {
+-            rs::PrimKind::Mesh(_) => { out.push((src.clone(), shown.clone(), inside, binding.clone(), purpose)); sc.children(src) }
++            rs::PrimKind::Mesh(_) | rs::PrimKind::Curves(_) | rs::PrimKind::Points(_) => { out.push((src.clone(), shown.clone(), inside, binding.clone(), purpose)); sc.children(src) }
+             rs::PrimKind::Instance { prototype } => sc.children(prototype),
+             rs::PrimKind::Instancer(_) => { self.counts.nested += 1; return; }
+             rs::PrimKind::Material(_) => return,
+@@ -290,6 +286,53 @@
+     DMat4::from_cols_array_2d(&m.0)
+ }
+ 
++// ── Geometry ─────────────────────────────────────────────────────────────────
++
++/// A mesh, curves or points prim as packed geometry, placed by `world`.
++fn geometry(kind: &rs::PrimKind, t: f64, world: &DMat4) -> Option<MeshData> {
++    match kind {
++        rs::PrimKind::Mesh(m) => mesh(m, t, world),
++        rs::PrimKind::Curves(c) => curves(c, t, world),
++        rs::PrimKind::Points(p) => points(p, t, world),
++        _ => None,
++    }
++}
++
++fn place(points: &[[f32; 3]], world: &DMat4) -> Vec<[f32; 3]> {
++    points.iter().map(|p| world.transform_point3(DVec3::new(p[0] as f64, p[1] as f64, p[2] as f64)).as_vec3().to_array()).collect()
++}
++
++/// BasisCurves: control points, counts, basis and wrap, as USD has them.
++fn curves(c: &rs::Curves, t: f64, world: &DMat4) -> Option<MeshData> {
++    use crate::types::{CurveBasis, CurveWrap};
++    let points = c.points.at(t)?;
++    let total: usize = c.curve_vertex_counts.iter().map(|&n| n as usize).sum();
++    if points.is_empty() || c.curve_vertex_counts.is_empty() || total > points.len() { return None; }
++    let basis = if c.curve_type == "linear" { CurveBasis::Linear } else {
++        match c.basis.as_str() { "bspline" => CurveBasis::Bspline, "catmullRom" => CurveBasis::CatmullRom, _ => CurveBasis::Bezier }
++    };
++    let wrap = match c.wrap.as_str() { "periodic" => CurveWrap::Periodic, "pinned" => CurveWrap::Pinned, _ => CurveWrap::Nonperiodic };
++    Some(MeshData {
++        curve_points: place(&points, world),
++        curve_counts: c.curve_vertex_counts.clone(),
++        curve_basis:  basis,
++        curve_wrap:   wrap,
++        ..Default::default()
++    })
++}
++
++/// Points, with their widths scaled as the transform scales.
++fn points(p: &rs::Points, t: f64, world: &DMat4) -> Option<MeshData> {
++    let points = p.points.at(t)?;
++    if points.is_empty() { return None; }
++    let scale = world.determinant().abs().cbrt() as f32;
++    let widths = p.widths.as_ref().and_then(|pv| match pv.values.at(t)? {
++        rs::PrimvarValues::Float(w) => Some(w.into_iter().map(|w| w * scale).collect()),
++        _ => None,
++    }).unwrap_or_default();
++    Some(MeshData { points: place(&points, world), widths, ..Default::default() })
++}
++
+ // ── Meshes ───────────────────────────────────────────────────────────────────
+ 
+ /// Names tried for the texture coordinates, before any other 2D primvar.
+diff -ruN -x __MACOSX -x '*.orig' a/src/viewport/bounds.rs b/src/viewport/bounds.rs
+--- a/src/viewport/bounds.rs	2026-10-09 14:17:57.668176333 +0000
++++ b/src/viewport/bounds.rs	2026-10-09 14:16:46.645437258 +0000
+@@ -37,7 +37,7 @@
+     if let Some((weak, b)) = kept.get(&key) {
+         if weak.upgrade().is_some_and(|m| Arc::ptr_eq(&m, mesh)) { return *b; }
+     }
+-    let b = mesh.vertices.iter().chain(&mesh.points)
++    let b = mesh.vertices.iter().chain(&mesh.points).chain(&mesh.curve_points)
+         .map(|v| Vec3::from_array(*v))
+         .fold(None, |acc, v| union(acc, (v, v)));
+     if kept.len() > 8192 { kept.retain(|_, (w, _)| w.strong_count() > 0); }
+diff -ruN -x __MACOSX -x '*.orig' a/src/viewport/camera.rs b/src/viewport/camera.rs
+--- a/src/viewport/camera.rs	2026-10-09 14:17:57.668553786 +0000
++++ b/src/viewport/camera.rs	2026-10-09 14:16:46.645842877 +0000
+@@ -195,6 +195,7 @@
+                 let mesh = other.shared_mesh();
+                 points.extend(mesh.vertices.iter().map(|v| Vec3::from_array(*v)));
+                 points.extend(mesh.points.iter().map(|v| Vec3::from_array(*v)));
++                points.extend(mesh.curve_points.iter().map(|v| Vec3::from_array(*v)));
+             }
+             None => {}
+         }

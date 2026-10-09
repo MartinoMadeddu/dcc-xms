@@ -23,7 +23,7 @@ use std::sync::Arc;
 use bevy::math::{DMat4, DQuat, DVec3, Mat4};
 use xms_scene as rs;
 
-use crate::types::{MeshData, Placement};
+use crate::types::{MeshData, Placement, Purpose};
 use crate::usd_scene::{StageNode, StageTree, UsdCamera, UsdMaterial, UsdMesh, UsdScene, UsdSkeleton};
 
 /// Read a composed stage. `layer` is the root layer (a `.usdz` is unpacked
@@ -52,7 +52,7 @@ pub fn read(layer: &Path) -> Result<UsdScene, String> {
     for child in sc.children(&rs::Path::root()) {
         // Native-instance prototypes are reached through their instances.
         if child.name().starts_with("__Prototype") { continue; }
-        walk.prim(child, child.as_str().to_string(), root, None, 1, false, false);
+        walk.prim(child, child.as_str().to_string(), root, None, Purpose::Default, 1, false, false);
     }
     let Walk { nodes, counts, .. } = walk;
     scene.tree = Arc::new(StageTree { nodes });
@@ -68,8 +68,6 @@ pub fn read(layer: &Path) -> Result<UsdScene, String> {
 #[derive(Default)]
 struct Counts {
     nested:  usize,
-    curves:  usize,
-    points:  usize,
     gprims:  usize,
     subsets: usize,
     hidden:  usize,
@@ -80,11 +78,9 @@ impl Counts {
         let mut notes = vec![];
         let mut say = |n: usize, text: &str| if n > 0 { notes.push(format!("{n} {text}")) };
         say(self.nested, "point instancers inside the prototypes of another point instancer are not expanded");
-        say(self.curves, "curves are not read into packed primitives yet");
-        say(self.points, "point clouds are not read into packed primitives yet");
         say(self.gprims, "implicit shapes (sphere, cube, cylinder…) are not read yet");
         say(self.subsets, "meshes have face subsets (per-face materials): the mesh's own material is used");
-        say(self.hidden, "invisible or guide/proxy meshes are listed but not drawn");
+        say(self.hidden, "invisible meshes are listed but not drawn");
         notes
     }
 }
@@ -110,7 +106,7 @@ impl Walk<'_> {
     /// user sees it. `under_instance`: inside an expanded instance, where
     /// materials and cameras are not collected again.
     #[allow(clippy::too_many_arguments)]
-    fn prim(&mut self, src: &rs::Path, shown: String, parent: DMat4, binding: Option<String>, depth: usize, hidden: bool, under_instance: bool) {
+    fn prim(&mut self, src: &rs::Path, shown: String, parent: DMat4, binding: Option<String>, purpose: Purpose, depth: usize, hidden: bool, under_instance: bool) {
         // The scene outlives the walk: borrow it apart from `self`.
         let sc = self.sc;
         let Some(prim) = sc.get(src) else { return };
@@ -119,7 +115,8 @@ impl Walk<'_> {
         let key = if type_name.is_empty() { "(untyped)".to_string() } else { type_name.clone() };
         *self.scene.prim_counts.entry(key).or_default() += 1;
 
-        let hidden = hidden || !prim.visible_at(t) || matches!(prim.purpose, rs::Purpose::Guide | rs::Purpose::Proxy);
+        let hidden = hidden || !prim.visible_at(t);
+        let purpose = purpose_of(sc, src, &prim.purpose, purpose);
         let name = shown.rsplit('/').next().unwrap_or("").to_string();
         self.nodes.push(StageNode { path: shown.clone(), name, type_name: type_name.clone(), depth, hidden });
 
@@ -137,24 +134,25 @@ impl Walk<'_> {
             rs::PrimKind::Instance { prototype } => {
                 for child in sc.children(prototype) {
                     let child_shown = format!("{shown}/{}", child.name());
-                    self.prim(child, child_shown, world, binding.clone(), depth + 1, hidden, true);
+                    self.prim(child, child_shown, world, binding.clone(), purpose, depth + 1, hidden, true);
                 }
                 return;
             }
-            rs::PrimKind::Mesh(m) => {
+            rs::PrimKind::Mesh(_) | rs::PrimKind::Curves(_) | rs::PrimKind::Points(_) => {
+                if let rs::PrimKind::Mesh(m) = &prim.kind {
+                    if !m.subsets.is_empty() && !hidden && self.listing == 0 { self.counts.subsets += 1; }
+                }
                 if self.listing > 0 {
                     // A point instancer's prototype: drawn through the instancer.
                 } else if hidden {
                     self.counts.hidden += 1;
                 } else if under_instance {
                     // Shared with every other instance of the same prototype.
-                    if let Some(shared) = self.shared_mesh(src, m) {
-                        if !m.subsets.is_empty() { self.counts.subsets += 1; }
-                        self.scene.meshes.push(UsdMesh { path: shown.clone(), mesh: shared, material: binding.clone(), place: Placement::One(world.as_mat4()) });
+                    if let Some(shared) = self.shared_geometry(src, &prim.kind) {
+                        self.scene.meshes.push(UsdMesh { path: shown.clone(), mesh: shared, material: binding.clone(), place: Placement::One(world.as_mat4()), purpose });
                     }
-                } else if let Some(mesh) = mesh(m, t, &world) {
-                    if !m.subsets.is_empty() { self.counts.subsets += 1; }
-                    self.scene.meshes.push(UsdMesh { path: shown.clone(), mesh: Arc::new(mesh), material: binding.clone(), place: Placement::InPlace });
+                } else if let Some(geo) = geometry(&prim.kind, t, &world) {
+                    self.scene.meshes.push(UsdMesh { path: shown.clone(), mesh: Arc::new(geo), material: binding.clone(), place: Placement::InPlace, purpose });
                 }
             }
             rs::PrimKind::Camera(c) if !under_instance => self.scene.cameras.push(UsdCamera {
@@ -170,19 +168,17 @@ impl Walk<'_> {
                 if self.listing > 0 {
                     self.counts.nested += 1;
                 } else if !hidden {
-                    self.point_instancer(src, &shown, i, world, binding.clone());
+                    self.point_instancer(src, &shown, i, world, binding.clone(), purpose);
                 }
                 // Its prototypes usually sit below it: listed, not drawn as they are.
                 self.listing += 1;
                 for child in sc.children(src) {
                     let child_shown = format!("{shown}/{}", child.name());
-                    self.prim(child, child_shown, world, binding.clone(), depth + 1, hidden, under_instance);
+                    self.prim(child, child_shown, world, binding.clone(), purpose, depth + 1, hidden, under_instance);
                 }
                 self.listing -= 1;
                 return;
             }
-            rs::PrimKind::Curves(_) => self.counts.curves += 1,
-            rs::PrimKind::Points(_) => self.counts.points += 1,
             rs::PrimKind::Gprim(_) => self.counts.gprims += 1,
             _ => {
                 if type_name == "Skeleton" && !under_instance {
@@ -192,19 +188,20 @@ impl Walk<'_> {
         }
         for child in sc.children(src) {
             let child_shown = format!("{shown}/{}", child.name());
-            self.prim(child, child_shown, world, binding.clone(), depth + 1, hidden, under_instance);
+            self.prim(child, child_shown, world, binding.clone(), purpose, depth + 1, hidden, under_instance);
         }
     }
 
-    /// A mesh in its own space, made once and shared by every copy.
-    fn shared_mesh(&mut self, src: &rs::Path, m: &rs::Mesh) -> Option<Arc<MeshData>> {
+    /// A mesh, curves or points in their own space, made once and shared by
+    /// every copy.
+    fn shared_geometry(&mut self, src: &rs::Path, kind: &rs::PrimKind) -> Option<Arc<MeshData>> {
         let t = self.t;
-        self.shared.entry(src.as_str().to_string()).or_insert_with(|| mesh(m, t, &DMat4::IDENTITY).map(Arc::new)).clone()
+        self.shared.entry(src.as_str().to_string()).or_insert_with(|| geometry(kind, t, &DMat4::IDENTITY).map(Arc::new)).clone()
     }
 
     /// A point instancer: one packed primitive per mesh of each prototype,
     /// placed at every point that uses that prototype.
-    fn point_instancer(&mut self, src: &rs::Path, shown: &str, i: &rs::Instancer, world: DMat4, binding: Option<String>) {
+    fn point_instancer(&mut self, src: &rs::Path, shown: &str, i: &rs::Instancer, world: DMat4, binding: Option<String>, purpose: Purpose) {
         let (sc, t) = (self.sc, self.t);
         let positions = i.positions.at(t).unwrap_or_default();
         let scales = i.scales.as_ref().and_then(|s| s.at(t)).unwrap_or_default();
@@ -231,36 +228,55 @@ impl Walk<'_> {
                 None => format!("{shown}/{}", proto.name()),
             };
             let mut found = vec![];
-            self.gather(proto, proto_shown, DMat4::IDENTITY, binding.clone(), &mut found);
-            for (mesh_src, mesh_shown, inside, material) in found {
-                let Some(rs::PrimKind::Mesh(m)) = sc.get(&mesh_src).map(|p| &p.kind) else { continue };
-                let Some(shared) = self.shared_mesh(&mesh_src, m) else { continue };
-                if !m.subsets.is_empty() { self.counts.subsets += 1; }
+            self.gather(proto, proto_shown, DMat4::IDENTITY, binding.clone(), purpose, &mut found);
+            for (mesh_src, mesh_shown, inside, material, purpose) in found {
+                let Some(kind) = sc.get(&mesh_src).map(|p| &p.kind) else { continue };
+                let Some(shared) = self.shared_geometry(&mesh_src, kind) else { continue };
+                if let rs::PrimKind::Mesh(m) = kind { if !m.subsets.is_empty() { self.counts.subsets += 1; } }
                 let place: Arc<[Mat4]> = at.iter().map(|p| (*p * inside).as_mat4()).collect();
-                self.scene.meshes.push(UsdMesh { path: mesh_shown, mesh: shared, material, place: Placement::Many(place) });
+                self.scene.meshes.push(UsdMesh { path: mesh_shown, mesh: shared, material, place: Placement::Many(place), purpose });
             }
         }
     }
 
     /// The meshes of a prototype, with their transform inside it (its own
     /// root's included), their path as listed, and their material.
-    fn gather(&mut self, src: &rs::Path, shown: String, parent: DMat4, binding: Option<String>, out: &mut Vec<(rs::Path, String, DMat4, Option<String>)>) {
+    #[allow(clippy::type_complexity)]
+    fn gather(&mut self, src: &rs::Path, shown: String, parent: DMat4, binding: Option<String>, purpose: Purpose, out: &mut Vec<(rs::Path, String, DMat4, Option<String>, Purpose)>) {
         let (sc, t) = (self.sc, self.t);
         let Some(prim) = sc.get(src) else { return };
-        if !prim.visible_at(t) || matches!(prim.purpose, rs::Purpose::Guide | rs::Purpose::Proxy) { return; }
+        if !prim.visible_at(t) { return; }
+        let purpose = purpose_of(sc, src, &prim.purpose, purpose);
         let local = mat(&prim.local_xform_at(t));
         let inside = if prim.reset_xform_stack { local } else { parent * local };
         let binding = prim.material_binding.as_ref().map(|p| p.as_str().to_string()).or(binding);
         let below: &[rs::Path] = match &prim.kind {
-            rs::PrimKind::Mesh(_) => { out.push((src.clone(), shown.clone(), inside, binding.clone())); sc.children(src) }
+            rs::PrimKind::Mesh(_) | rs::PrimKind::Curves(_) | rs::PrimKind::Points(_) => { out.push((src.clone(), shown.clone(), inside, binding.clone(), purpose)); sc.children(src) }
             rs::PrimKind::Instance { prototype } => sc.children(prototype),
             rs::PrimKind::Instancer(_) => { self.counts.nested += 1; return; }
             rs::PrimKind::Material(_) => return,
             _ => sc.children(src),
         };
         for c in below {
-            self.gather(c, format!("{shown}/{}", c.name()), inside, binding.clone(), out);
+            self.gather(c, format!("{shown}/{}", c.name()), inside, binding.clone(), purpose, out);
         }
+    }
+}
+
+/// A prim's purpose: its own when authored, else its parent's. Render
+/// geometry notes whether its asset also carries proxy geometry: a sibling of
+/// the prim where render was set that is itself set to proxy (the usual
+/// `render` / `proxy` pair under one asset).
+fn purpose_of(sc: &rs::Scene, src: &rs::Path, own: &rs::Purpose, inherited: Purpose) -> Purpose {
+    match own {
+        rs::Purpose::Render => Purpose::Render {
+            has_proxy: src.parent().is_some_and(|parent| {
+                sc.children(&parent).iter().any(|c| sc.get(c).is_some_and(|p| matches!(p.purpose, rs::Purpose::Proxy)))
+            }),
+        },
+        rs::Purpose::Proxy => Purpose::Proxy,
+        rs::Purpose::Guide => Purpose::Guide,
+        _ => inherited,
     }
 }
 
@@ -268,6 +284,53 @@ impl Walk<'_> {
 /// the columns here, so the numbers are taken as they come.
 fn mat(m: &rs::Mat4d) -> DMat4 {
     DMat4::from_cols_array_2d(&m.0)
+}
+
+// ── Geometry ─────────────────────────────────────────────────────────────────
+
+/// A mesh, curves or points prim as packed geometry, placed by `world`.
+fn geometry(kind: &rs::PrimKind, t: f64, world: &DMat4) -> Option<MeshData> {
+    match kind {
+        rs::PrimKind::Mesh(m) => mesh(m, t, world),
+        rs::PrimKind::Curves(c) => curves(c, t, world),
+        rs::PrimKind::Points(p) => points(p, t, world),
+        _ => None,
+    }
+}
+
+fn place(points: &[[f32; 3]], world: &DMat4) -> Vec<[f32; 3]> {
+    points.iter().map(|p| world.transform_point3(DVec3::new(p[0] as f64, p[1] as f64, p[2] as f64)).as_vec3().to_array()).collect()
+}
+
+/// BasisCurves: control points, counts, basis and wrap, as USD has them.
+fn curves(c: &rs::Curves, t: f64, world: &DMat4) -> Option<MeshData> {
+    use crate::types::{CurveBasis, CurveWrap};
+    let points = c.points.at(t)?;
+    let total: usize = c.curve_vertex_counts.iter().map(|&n| n as usize).sum();
+    if points.is_empty() || c.curve_vertex_counts.is_empty() || total > points.len() { return None; }
+    let basis = if c.curve_type == "linear" { CurveBasis::Linear } else {
+        match c.basis.as_str() { "bspline" => CurveBasis::Bspline, "catmullRom" => CurveBasis::CatmullRom, _ => CurveBasis::Bezier }
+    };
+    let wrap = match c.wrap.as_str() { "periodic" => CurveWrap::Periodic, "pinned" => CurveWrap::Pinned, _ => CurveWrap::Nonperiodic };
+    Some(MeshData {
+        curve_points: place(&points, world),
+        curve_counts: c.curve_vertex_counts.clone(),
+        curve_basis:  basis,
+        curve_wrap:   wrap,
+        ..Default::default()
+    })
+}
+
+/// Points, with their widths scaled as the transform scales.
+fn points(p: &rs::Points, t: f64, world: &DMat4) -> Option<MeshData> {
+    let points = p.points.at(t)?;
+    if points.is_empty() { return None; }
+    let scale = world.determinant().abs().cbrt() as f32;
+    let widths = p.widths.as_ref().and_then(|pv| match pv.values.at(t)? {
+        rs::PrimvarValues::Float(w) => Some(w.into_iter().map(|w| w * scale).collect()),
+        _ => None,
+    }).unwrap_or_default();
+    Some(MeshData { points: place(&points, world), widths, ..Default::default() })
 }
 
 // ── Meshes ───────────────────────────────────────────────────────────────────

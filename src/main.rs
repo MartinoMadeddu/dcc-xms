@@ -8,6 +8,7 @@ mod ice;
 mod usd_loader;
 mod usd_scene;
 mod usd_stage;
+mod strands;
 mod usda_text;
 mod prim_inspector;
 mod fbx_loader;
@@ -1188,6 +1189,14 @@ fn update_generated_meshes(
         let handle = textures.entry(path.clone()).or_insert_with(|| images.add(texture_image(&decoded))).clone();
         Some((handle, decoded.has_alpha))
     };
+    // USD purposes the scene explorer's toggles leave out (guide, and render
+    // geometry that has a proxy, by default) are not drawn, nor boxed.
+    let packed = match packed {
+        Some(types::EvalResult::Named(prims)) if prims.iter().any(|p| p.purpose != types::Purpose::Default) => {
+            Some(types::EvalResult::Named(prims.into_iter().filter(|p| hierarchy.draws_purpose(p.purpose)).collect()))
+        }
+        other => other,
+    };
     // Composed stages: a prim closed in the scene explorer is drawn as the
     // box around what is below it; only what is opened is drawn as geometry.
     let packed = match packed {
@@ -1198,6 +1207,12 @@ fn update_generated_meshes(
         }
         other => other,
     };
+    // Curves and points of packed primitives, as lines. The surfaces are
+    // drawn below; these primitives have none.
+    let strands_drawn = matches!(packed, Some(types::EvalResult::Named(_)));
+    if let Some(types::EvalResult::Named(prims)) = &packed {
+        draw_strands(prims, mode, &mut commands, &mut meshes, &mut mats);
+    }
     // Instanced packed primitives: each shared mesh is made once and drawn at
     // every placement. The others are drawn as before.
     let packed = match packed {
@@ -1238,6 +1253,10 @@ fn update_generated_meshes(
     };
     if let Some(md) = shown {
         let md = &*md;
+        if !strands_drawn && strands::has_strands(md) {
+            let lines = std::slice::from_ref(md);
+            draw_strand_lines(lines, strand_colour(None, mode), Transform::IDENTITY, &mut commands, &mut meshes, &mut mats);
+        }
         if md.vertices.is_empty() { return; }
         let lines = matches!(mode, DisplayMode::HiddenLine | DisplayMode::Wireframe);
         if lines {
@@ -1366,6 +1385,141 @@ fn apply_viewport_rect(
         physical_size:     UVec2::new(width, height),
         ..default()
     });
+}
+
+/// The colour curves and points are drawn in: their look's in Textured
+/// mode, else a light grey that reads on the background.
+fn strand_colour(look: Option<&types::Look>, mode: viewport::display::DisplayMode) -> Color {
+    match look {
+        Some(l) if mode == viewport::display::DisplayMode::Textured => Color::srgb(l.color[0], l.color[1], l.color[2]),
+        _ => { let ink = theme::c(205, 205, 205); Color::srgb_u8(ink.r(), ink.g(), ink.b()) }
+    }
+}
+
+/// Some meshes' curves and points as one line mesh, in one colour.
+fn draw_strand_lines(
+    parts:     &[MeshData],
+    colour:    Color,
+    transform: Transform,
+    commands:  &mut Commands,
+    meshes:    &mut Assets<Mesh>,
+    mats:      &mut Assets<StandardMaterial>,
+) {
+    let (mut pos, mut idx) = (vec![], vec![]);
+    for md in parts {
+        let (p, i) = strands::lines(md);
+        let base = pos.len() as u32;
+        pos.extend(p);
+        idx.extend(i.into_iter().map(|k| k + base));
+    }
+    if idx.is_empty() { return; }
+    let mut mesh = Mesh::new(
+        bevy::render::mesh::PrimitiveTopology::LineList,
+        bevy::render::render_asset::RenderAssetUsages::default(),
+    );
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, pos);
+    mesh.insert_indices(bevy::render::mesh::Indices::U32(idx));
+    commands.spawn((
+        PbrBundle {
+            mesh: meshes.add(mesh),
+            material: mats.add(StandardMaterial { base_color: colour, unlit: true, ..default() }),
+            transform,
+            ..default()
+        },
+        GeneratedMesh,
+        bevy::pbr::NotShadowCaster,
+        bevy::pbr::NotShadowReceiver,
+    ));
+}
+
+/// Curves and points of packed primitives. Those in place are merged into
+/// one line mesh per colour. Instanced ones make their lines once per shared
+/// mesh: a few copies are entities, many go through GPU instancing.
+fn draw_strands(
+    prims:    &[types::NamedMesh],
+    mode:     viewport::display::DisplayMode,
+    commands: &mut Commands,
+    meshes:   &mut Assets<Mesh>,
+    mats:     &mut Assets<StandardMaterial>,
+) {
+    use viewport::instancing::{copy, GpuInstances, InstanceCopy};
+    let with: Vec<&types::NamedMesh> = prims.iter().filter(|p| strands::has_strands(&p.mesh)).collect();
+    if with.is_empty() { return; }
+    let colour_key = |c: Color| { let s = c.to_srgba(); [s.red, s.green, s.blue].map(|x| (x * 255.0).round() as u8) };
+
+    // In place: one line mesh per colour.
+    let mut in_place: Vec<([u8; 3], Color, Vec<MeshData>)> = vec![];
+    for p in with.iter().filter(|p| !p.place.is_placed()) {
+        let colour = strand_colour(p.look.as_deref(), mode);
+        let key = colour_key(colour);
+        let md = (*p.mesh).clone();
+        match in_place.iter_mut().find(|g| g.0 == key) {
+            Some(g) => g.2.push(md),
+            None => in_place.push((key, colour, vec![md])),
+        }
+    }
+    for (_, colour, parts) in in_place {
+        draw_strand_lines(&parts, colour, Transform::IDENTITY, commands, meshes, mats);
+    }
+
+    // Placed: by shared mesh.
+    let mut groups: Vec<(*const MeshData, Vec<&types::NamedMesh>)> = vec![];
+    for p in with.into_iter().filter(|p| p.place.is_placed()) {
+        let key = std::sync::Arc::as_ptr(&p.mesh);
+        match groups.iter_mut().find(|g| g.0 == key) {
+            Some(g) => g.1.push(p),
+            None => groups.push((key, vec![p])),
+        }
+    }
+    for (_, group) in groups {
+        let mesh = &group[0].mesh;
+        let (pos, idx) = strands::lines(mesh);
+        if idx.is_empty() { continue; }
+        let mut lines = Mesh::new(
+            bevy::render::mesh::PrimitiveTopology::LineList,
+            bevy::render::render_asset::RenderAssetUsages::default(),
+        );
+        lines.insert_attribute(Mesh::ATTRIBUTE_POSITION, pos);
+        lines.insert_indices(bevy::render::mesh::Indices::U32(idx));
+        let handle = meshes.add(lines);
+        let copies: usize = group.iter().map(|p| p.place.copies()).sum();
+        if copies <= ENTITY_COPIES {
+            let mut made: Vec<([u8; 3], Handle<StandardMaterial>)> = vec![];
+            for p in &group {
+                let colour = strand_colour(p.look.as_deref(), mode);
+                let key = colour_key(colour);
+                let material = match made.iter().find(|m| m.0 == key) {
+                    Some(m) => m.1.clone(),
+                    None => {
+                        let h = mats.add(StandardMaterial { base_color: colour, unlit: true, ..default() });
+                        made.push((key, h.clone()));
+                        h
+                    }
+                };
+                for m in p.place.matrices() {
+                    commands.spawn((
+                        PbrBundle { mesh: handle.clone(), material: material.clone(), transform: Transform::from_matrix(*m), ..default() },
+                        GeneratedMesh,
+                        bevy::pbr::NotShadowCaster,
+                        bevy::pbr::NotShadowReceiver,
+                    ));
+                }
+            }
+        } else {
+            let all: Vec<InstanceCopy> = group.iter().flat_map(|p| {
+                let l = strand_colour(p.look.as_deref(), mode).to_linear();
+                let colour = [l.red, l.green, l.blue];
+                p.place.matrices().iter().map(move |m| copy(m, colour, false))
+            }).collect();
+            commands.spawn((
+                handle,
+                SpatialBundle::INHERITED_IDENTITY,
+                GpuInstances(all.into()),
+                bevy::render::view::NoFrustumCulling,
+                GeneratedMesh,
+            ));
+        }
+    }
 }
 
 /// Bounding boxes, all in one line mesh.

@@ -44,50 +44,71 @@ pub fn draw_scene_explorer(
                     {
                         hierarchy.set_show_all_geometry(all);
                     }
+                    ui.separator();
+                    // USD purposes drawn in the viewport. Laid out right to left.
+                    use crate::types::PurposeKind;
+                    for (kind, label, tip) in [
+                        (PurposeKind::Render, "render", "Draw render-purpose geometry. Where the same asset also has proxy geometry and proxy is on, the proxy is drawn instead"),
+                        (PurposeKind::Proxy,  "proxy",  "Draw proxy-purpose geometry: the light stand-ins assets carry for their render geometry"),
+                        (PurposeKind::Guide,  "guide",  "Draw guide-purpose geometry: helpers that are never rendered"),
+                    ] {
+                        let mut on = hierarchy.purpose_shown(kind);
+                        if ui.toggle_value(&mut on, egui::RichText::new(label).size(11.5)).on_hover_text(tip).changed() {
+                            hierarchy.set_purpose_shown(kind, on);
+                        }
+                    }
                 });
             });
             ui.separator();
 
+            let mut toggle_id = None;
+            let mut geometry_toggle: Option<String> = None;
+            let mut select_id: Option<(SceneObjectId, NodeId, Option<String>)> = None;
+
+            let n = hierarchy.objects.len();
+            // Whether each row is the last of its siblings, in one pass
+            // from the end: the next row at its depth or shallower is
+            // shallower.
+            let mut last_of_siblings = vec![true; n];
+            {
+                let mut next_at: Vec<usize> = vec![];   // depths of rows seen below, nearest last
+                for i in (0..n).rev() {
+                    let d = hierarchy.objects[i].depth;
+                    while next_at.last().is_some_and(|&x| x > d) { next_at.pop(); }
+                    last_of_siblings[i] = next_at.last() != Some(&d);
+                    next_at.push(d);
+                }
+            }
+            // The rows to show (none inside a closed row), each with which of
+            // its levels end there: what its tree lines need. Only the rows in
+            // view are then laid out and drawn, so a stage of tens of
+            // thousands of prims costs no more than the rows on screen.
+            let mut shown: Vec<(usize, u16)> = Vec::with_capacity(n);
+            {
+                let mut last_mask: u16 = 0;
+                let mut collapsed_at_depth: Option<usize> = None;
+                for idx in 0..n {
+                    let obj = &hierarchy.objects[idx];
+                    if let Some(cd) = collapsed_at_depth {
+                        if obj.depth > cd { continue; }
+                        collapsed_at_depth = None;
+                    }
+                    if obj.depth < 16 {
+                        if last_of_siblings[idx] { last_mask |= 1 << obj.depth; } else { last_mask &= !(1 << obj.depth); }
+                    }
+                    shown.push((idx, last_mask));
+                    if obj.has_children && !obj.expanded { collapsed_at_depth = Some(obj.depth); }
+                }
+            }
+
             egui::ScrollArea::vertical()
                 .id_source("scene_explorer_scroll")
-                .show(ui, |ui| {
-                    let mut toggle_id = None;
-                    let mut geometry_toggle: Option<String> = None;
-                    let mut select_id: Option<(SceneObjectId, NodeId, Option<String>)> = None;
-
-                    let n = hierarchy.objects.len();
-                    // Whether each row is the last of its siblings, in one pass
-                    // from the end: the next row at its depth or shallower is
-                    // shallower.
-                    let mut last_of_siblings = vec![true; n];
-                    {
-                        let mut next_at: Vec<usize> = vec![];   // depths of rows seen below, nearest last
-                        for i in (0..n).rev() {
-                            let d = hierarchy.objects[i].depth;
-                            while next_at.last().is_some_and(|&x| x > d) { next_at.pop(); }
-                            last_of_siblings[i] = next_at.last() != Some(&d);
-                            next_at.push(d);
-                        }
-                    }
-                    let mut last_at_depth: Vec<bool> = vec![false; 16];
-                    let mut collapsed_at_depth: Option<usize> = None;
-
-                    for idx in 0..n {
+                .auto_shrink([false, false])
+                .show_rows(ui, ROW_H, shown.len(), |ui, range| {
+                    for &(idx, last_mask) in &shown[range] {
                         let obj   = &hierarchy.objects[idx];
                         let depth = obj.depth;
-
-                        // Skip rows that are inside a collapsed subtree
-                        if let Some(cd) = collapsed_at_depth {
-                            if depth > cd {
-                                continue;
-                            } else {
-                                collapsed_at_depth = None;
-                            }
-                        }
-
-                        // Is this the last item at its depth among its siblings?
                         let is_last = last_of_siblings[idx];
-                        if depth < 16 { last_at_depth[depth] = is_last; }
 
                         let is_sel = hierarchy.selected.map(|s| s == obj.id).unwrap_or(false);
 
@@ -152,7 +173,7 @@ pub fn draw_scene_explorer(
                         // ── Tree lines ────────────────────────────────────────
 
                         for d in 0..depth {
-                            if d < 16 && !last_at_depth[d] {
+                            if d < 16 && (last_mask >> d) & 1 == 0 {
                                 let x = row_rect.min.x + d as f32 * INDENT + TREE_LINE_X;
                                 painter.line_segment(
                                     [egui::pos2(x, row_rect.min.y),
@@ -201,25 +222,21 @@ pub fn draw_scene_explorer(
                             );
                         }
 
-                        // Track collapsed subtrees AFTER rendering this row
-                        if obj.has_children && !obj.expanded {
-                            collapsed_at_depth = Some(depth);
-                        }
-                    }
-
-                    if let Some(id) = toggle_id {
-                        hierarchy.toggle_expanded(id);
-                    }
-                    if let Some(path) = &geometry_toggle {
-                        hierarchy.toggle_geometry(path);
-                    }
-                    // A click on the geometry square is not a click on the row.
-                    if let (Some((scene_id, node_id, prim_path)), None) = (select_id, geometry_toggle) {
-                        hierarchy.selected           = Some(scene_id);
-                        hierarchy.selected_prim_path = prim_path;
-                        graph.selected_node          = Some(node_id);
                     }
                 });
+
+            if let Some(id) = toggle_id {
+                hierarchy.toggle_expanded(id);
+            }
+            if let Some(path) = &geometry_toggle {
+                hierarchy.toggle_geometry(path);
+            }
+            // A click on the geometry square is not a click on the row.
+            if let (Some((scene_id, node_id, prim_path)), None) = (select_id, geometry_toggle) {
+                hierarchy.selected           = Some(scene_id);
+                hierarchy.selected_prim_path = prim_path;
+                graph.selected_node          = Some(node_id);
+            }
         });
 }
 

@@ -448,6 +448,35 @@ pub struct MeshData {
     /// Texture coordinates, one pair per triangle corner in the order of
     /// `indices`. Empty when the mesh has none.
     pub uvs:        Vec<[f32; 2]>,
+    /// Curves: their control points end to end, and how many each one has.
+    pub curve_points: Vec<[f32; 3]>,
+    pub curve_counts: Vec<u32>,
+    /// How the curves pass through their control points (USD BasisCurves).
+    pub curve_basis:  CurveBasis,
+    pub curve_wrap:   CurveWrap,
+    /// Width of each of `points`, or one for them all. Empty, or 0 for a
+    /// point: drawn at a size of the viewport's choosing.
+    pub widths:       Vec<f32>,
+}
+
+/// How curves pass through their control points (USD `basis`, with `type`
+/// linear as `Linear`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CurveBasis {
+    #[default]
+    Linear,
+    Bezier,
+    Bspline,
+    CatmullRom,
+}
+
+/// How curves end (USD `wrap`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CurveWrap {
+    #[default]
+    Nonperiodic,
+    Periodic,
+    Pinned,
 }
 
 impl MeshData {
@@ -586,7 +615,28 @@ pub struct NamedMesh {
     pub stage:    Option<std::sync::Arc<crate::usd_scene::StageTree>>,
     /// Where `mesh` is drawn: as it is, or as copies of a shared mesh.
     pub place:    Placement,
+    /// Its USD purpose, which the scene explorer's purpose toggles filter by.
+    pub purpose:  Purpose,
 }
+
+/// A packed primitive's USD purpose: what kind of drawing it is for.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Purpose {
+    /// No purpose: always drawn.
+    #[default]
+    Default,
+    /// Final geometry. `has_proxy`: its asset also carries proxy geometry,
+    /// drawn in its place while proxies are shown.
+    Render { has_proxy: bool },
+    /// A light stand-in for render geometry.
+    Proxy,
+    /// A helper, never rendered.
+    Guide,
+}
+
+/// The purposes the viewport can show or hide.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PurposeKind { Render, Proxy, Guide }
 
 /// Where a packed primitive's mesh is drawn.
 ///
@@ -655,7 +705,7 @@ pub struct Look {
 
 impl NamedMesh {
     pub fn new(path: String, mesh: MeshData) -> Self {
-        Self { path, mesh: std::sync::Arc::new(mesh), picked: false, material: None, look: None, stage: None, place: Placement::InPlace }
+        Self { path, mesh: std::sync::Arc::new(mesh), picked: false, material: None, look: None, stage: None, place: Placement::InPlace, purpose: Purpose::Default }
     }
 
     /// The mesh where it is drawn: as it is when in place, else every copy
@@ -761,7 +811,7 @@ impl EvalResult {
                 for p in prims {
                     if !p.picked { out.push(p.clone()); continue; }
                     if let Some(mesh) = result.take() {
-                        out.push(NamedMesh { path: p.path.clone(), mesh: std::sync::Arc::new(mesh), picked: true, material: p.material.clone(), look: p.look.clone(), stage: p.stage.clone(), place: Placement::InPlace });
+                        out.push(NamedMesh { path: p.path.clone(), mesh: std::sync::Arc::new(mesh), picked: true, material: p.material.clone(), look: p.look.clone(), stage: p.stage.clone(), place: Placement::InPlace, purpose: p.purpose });
                     }
                 }
                 EvalResult::Named(out)
@@ -897,7 +947,7 @@ fn prim_icon(name: &str, has_children: bool) -> &'static str {
 /// Icon for a prim of a composed stage, by its type.
 fn stage_icon(n: &crate::usd_scene::StageNode, has_children: bool) -> &'static str {
     match n.type_name.as_str() {
-        "Mesh" => prim_icon(&n.name, false),
+        "Mesh" | "BasisCurves" | "NurbsCurves" | "HermiteCurves" | "Points" => prim_icon(&n.name, false),
         "Material" => "🎨",
         "Camera" => "🎥",
         "Skeleton" | "SkelRoot" => "🦴",
@@ -943,6 +993,11 @@ pub struct SceneHierarchy {
     geometry:               std::collections::HashSet<String>,
     /// Every composed stage drawn as geometry: no boxes at all.
     pub show_all_geometry:  bool,
+    /// Purposes drawn, stored so that the default is guide off, proxy on
+    /// and render on.
+    show_guide:             bool,
+    hide_proxy:             bool,
+    hide_render:            bool,
     /// Counts changes to what the viewport should draw (expansion, geometry
     /// toggles). The viewport redraws when it moves.
     pub display_revision:   u64,
@@ -986,6 +1041,36 @@ impl SceneHierarchy {
         self.display_revision += 1;
     }
 
+    pub fn purpose_shown(&self, kind: PurposeKind) -> bool {
+        match kind {
+            PurposeKind::Guide  => self.show_guide,
+            PurposeKind::Proxy  => !self.hide_proxy,
+            PurposeKind::Render => !self.hide_render,
+        }
+    }
+
+    pub fn set_purpose_shown(&mut self, kind: PurposeKind, on: bool) {
+        if self.purpose_shown(kind) == on { return; }
+        match kind {
+            PurposeKind::Guide  => self.show_guide = on,
+            PurposeKind::Proxy  => self.hide_proxy = !on,
+            PurposeKind::Render => self.hide_render = !on,
+        }
+        self.display_revision += 1;
+    }
+
+    /// Whether the viewport draws a primitive of this purpose. Without a
+    /// purpose it always is. Render geometry whose asset has a proxy gives
+    /// way to the proxy while proxies are shown.
+    pub fn draws_purpose(&self, purpose: Purpose) -> bool {
+        match purpose {
+            Purpose::Default => true,
+            Purpose::Guide => self.show_guide,
+            Purpose::Proxy => !self.hide_proxy,
+            Purpose::Render { has_proxy } => !self.hide_render && !(has_proxy && !self.hide_proxy),
+        }
+    }
+
     pub fn set_show_all_geometry(&mut self, on: bool) {
         if self.show_all_geometry != on {
             self.show_all_geometry = on;
@@ -1006,7 +1091,8 @@ impl SceneHierarchy {
         listed:     &mut std::collections::HashSet<String>,
     ) {
         let nodes = &tree.nodes;
-        let is_mesh = |i: usize| nodes[i].type_name == "Mesh";
+        // Prims that become packed geometry: meshes, curves, points.
+        let is_mesh = |i: usize| matches!(nodes[i].type_name.as_str(), "Mesh" | "BasisCurves" | "NurbsCurves" | "HermiteCurves" | "Points");
         // Which prims hold meshes below them, and which hold ones still present.
         let (mut holds, mut holds_present) = (vec![false; nodes.len()], vec![false; nodes.len()]);
         let mut parents: Vec<usize> = vec![];
@@ -1204,3 +1290,25 @@ impl SceneHierarchy {
 fn yes() -> bool { true }
 
 fn one_tile() -> u32 { 1 }
+
+#[cfg(test)]
+mod purpose_tests {
+    use super::*;
+
+    #[test]
+    fn the_purpose_toggles_decide_what_is_drawn() {
+        let mut h = SceneHierarchy::default();
+        let (render, paired, proxy, guide) = (Purpose::Render { has_proxy: false }, Purpose::Render { has_proxy: true }, Purpose::Proxy, Purpose::Guide);
+        // Defaults: guide off, proxy on, render on, a proxied render mesh gives way.
+        assert!(h.draws_purpose(Purpose::Default) && h.draws_purpose(render) && h.draws_purpose(proxy));
+        assert!(!h.draws_purpose(paired) && !h.draws_purpose(guide));
+        // Proxy off: the render mesh comes back.
+        h.set_purpose_shown(PurposeKind::Proxy, false);
+        assert!(h.draws_purpose(paired) && !h.draws_purpose(proxy));
+        // Render off: no render geometry at all; unpurposed still drawn.
+        h.set_purpose_shown(PurposeKind::Render, false);
+        assert!(!h.draws_purpose(render) && !h.draws_purpose(paired) && h.draws_purpose(Purpose::Default));
+        h.set_purpose_shown(PurposeKind::Guide, true);
+        assert!(h.draws_purpose(guide));
+    }
+}

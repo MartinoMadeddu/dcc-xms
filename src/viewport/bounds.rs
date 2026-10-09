@@ -37,7 +37,7 @@ fn mesh_bounds(mesh: &Arc<MeshData>) -> Option<Bounds> {
     if let Some((weak, b)) = kept.get(&key) {
         if weak.upgrade().is_some_and(|m| Arc::ptr_eq(&m, mesh)) { return *b; }
     }
-    let b = mesh.vertices.iter().chain(&mesh.points)
+    let b = mesh.vertices.iter().chain(&mesh.points).chain(&mesh.curve_points)
         .map(|v| Vec3::from_array(*v))
         .fold(None, |acc, v| union(acc, (v, v)));
     if kept.len() > 8192 { kept.retain(|_, (w, _)| w.strong_count() > 0); }

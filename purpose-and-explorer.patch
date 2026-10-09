@@ -1,0 +1,576 @@
+diff -ruN -x __MACOSX -x '*.orig' a/src/main.rs b/src/main.rs
+--- a/src/main.rs	2026-10-09 13:54:23.629945982 +0000
++++ b/src/main.rs	2026-10-09 13:54:14.353911444 +0000
+@@ -1188,6 +1188,14 @@
+         let handle = textures.entry(path.clone()).or_insert_with(|| images.add(texture_image(&decoded))).clone();
+         Some((handle, decoded.has_alpha))
+     };
++    // USD purposes the scene explorer's toggles leave out (guide, and render
++    // geometry that has a proxy, by default) are not drawn, nor boxed.
++    let packed = match packed {
++        Some(types::EvalResult::Named(prims)) if prims.iter().any(|p| p.purpose != types::Purpose::Default) => {
++            Some(types::EvalResult::Named(prims.into_iter().filter(|p| hierarchy.draws_purpose(p.purpose)).collect()))
++        }
++        other => other,
++    };
+     // Composed stages: a prim closed in the scene explorer is drawn as the
+     // box around what is below it; only what is opened is drawn as geometry.
+     let packed = match packed {
+diff -ruN -x __MACOSX -x '*.orig' a/src/node_graph/nodes.rs b/src/node_graph/nodes.rs
+--- a/src/node_graph/nodes.rs	2026-10-09 13:54:23.625850296 +0000
++++ b/src/node_graph/nodes.rs	2026-10-09 13:53:33.362681537 +0000
+@@ -32,6 +32,7 @@
+                         look: m.material.as_ref().and_then(|p| looks.get(p).cloned()),
+                         stage: Some(scene.tree.clone()),
+                         place: m.place.clone(),
++                        purpose: m.purpose,
+                     }).collect()))
+                 }
+                 Err(_) => None,
+@@ -181,7 +182,7 @@
+         NodeType::LoadFbxMesh { path } => {
+             let meshes = crate::fbx_loader::load_meshes_cached(path).ok()?;
+             Some(EvalResult::Named(meshes.iter().map(|(name, mesh)| NamedMesh {
+-                path: format!("/{name}"), mesh: mesh.clone(), picked: false, material: None, look: None, stage: None, place: Placement::InPlace,
++                path: format!("/{name}"), mesh: mesh.clone(), picked: false, material: None, look: None, stage: None, place: Placement::InPlace, purpose: Default::default(),
+             }).collect()))
+         }
+         NodeType::Calamari { hulls, detail } =>
+diff -ruN -x __MACOSX -x '*.orig' a/src/scene_graph/ui.rs b/src/scene_graph/ui.rs
+--- a/src/scene_graph/ui.rs	2026-10-09 13:54:23.623632457 +0000
++++ b/src/scene_graph/ui.rs	2026-10-09 13:53:33.359692265 +0000
+@@ -44,50 +44,71 @@
+                     {
+                         hierarchy.set_show_all_geometry(all);
+                     }
++                    ui.separator();
++                    // USD purposes drawn in the viewport. Laid out right to left.
++                    use crate::types::PurposeKind;
++                    for (kind, label, tip) in [
++                        (PurposeKind::Render, "render", "Draw render-purpose geometry. Where the same asset also has proxy geometry and proxy is on, the proxy is drawn instead"),
++                        (PurposeKind::Proxy,  "proxy",  "Draw proxy-purpose geometry: the light stand-ins assets carry for their render geometry"),
++                        (PurposeKind::Guide,  "guide",  "Draw guide-purpose geometry: helpers that are never rendered"),
++                    ] {
++                        let mut on = hierarchy.purpose_shown(kind);
++                        if ui.toggle_value(&mut on, egui::RichText::new(label).size(11.5)).on_hover_text(tip).changed() {
++                            hierarchy.set_purpose_shown(kind, on);
++                        }
++                    }
+                 });
+             });
+             ui.separator();
+ 
++            let mut toggle_id = None;
++            let mut geometry_toggle: Option<String> = None;
++            let mut select_id: Option<(SceneObjectId, NodeId, Option<String>)> = None;
++
++            let n = hierarchy.objects.len();
++            // Whether each row is the last of its siblings, in one pass
++            // from the end: the next row at its depth or shallower is
++            // shallower.
++            let mut last_of_siblings = vec![true; n];
++            {
++                let mut next_at: Vec<usize> = vec![];   // depths of rows seen below, nearest last
++                for i in (0..n).rev() {
++                    let d = hierarchy.objects[i].depth;
++                    while next_at.last().is_some_and(|&x| x > d) { next_at.pop(); }
++                    last_of_siblings[i] = next_at.last() != Some(&d);
++                    next_at.push(d);
++                }
++            }
++            // The rows to show (none inside a closed row), each with which of
++            // its levels end there: what its tree lines need. Only the rows in
++            // view are then laid out and drawn, so a stage of tens of
++            // thousands of prims costs no more than the rows on screen.
++            let mut shown: Vec<(usize, u16)> = Vec::with_capacity(n);
++            {
++                let mut last_mask: u16 = 0;
++                let mut collapsed_at_depth: Option<usize> = None;
++                for idx in 0..n {
++                    let obj = &hierarchy.objects[idx];
++                    if let Some(cd) = collapsed_at_depth {
++                        if obj.depth > cd { continue; }
++                        collapsed_at_depth = None;
++                    }
++                    if obj.depth < 16 {
++                        if last_of_siblings[idx] { last_mask |= 1 << obj.depth; } else { last_mask &= !(1 << obj.depth); }
++                    }
++                    shown.push((idx, last_mask));
++                    if obj.has_children && !obj.expanded { collapsed_at_depth = Some(obj.depth); }
++                }
++            }
++
+             egui::ScrollArea::vertical()
+                 .id_source("scene_explorer_scroll")
+-                .show(ui, |ui| {
+-                    let mut toggle_id = None;
+-                    let mut geometry_toggle: Option<String> = None;
+-                    let mut select_id: Option<(SceneObjectId, NodeId, Option<String>)> = None;
+-
+-                    let n = hierarchy.objects.len();
+-                    // Whether each row is the last of its siblings, in one pass
+-                    // from the end: the next row at its depth or shallower is
+-                    // shallower.
+-                    let mut last_of_siblings = vec![true; n];
+-                    {
+-                        let mut next_at: Vec<usize> = vec![];   // depths of rows seen below, nearest last
+-                        for i in (0..n).rev() {
+-                            let d = hierarchy.objects[i].depth;
+-                            while next_at.last().is_some_and(|&x| x > d) { next_at.pop(); }
+-                            last_of_siblings[i] = next_at.last() != Some(&d);
+-                            next_at.push(d);
+-                        }
+-                    }
+-                    let mut last_at_depth: Vec<bool> = vec![false; 16];
+-                    let mut collapsed_at_depth: Option<usize> = None;
+-
+-                    for idx in 0..n {
++                .auto_shrink([false, false])
++                .show_rows(ui, ROW_H, shown.len(), |ui, range| {
++                    for &(idx, last_mask) in &shown[range] {
+                         let obj   = &hierarchy.objects[idx];
+                         let depth = obj.depth;
+-
+-                        // Skip rows that are inside a collapsed subtree
+-                        if let Some(cd) = collapsed_at_depth {
+-                            if depth > cd {
+-                                continue;
+-                            } else {
+-                                collapsed_at_depth = None;
+-                            }
+-                        }
+-
+-                        // Is this the last item at its depth among its siblings?
+                         let is_last = last_of_siblings[idx];
+-                        if depth < 16 { last_at_depth[depth] = is_last; }
+ 
+                         let is_sel = hierarchy.selected.map(|s| s == obj.id).unwrap_or(false);
+ 
+@@ -152,7 +173,7 @@
+                         // ── Tree lines ────────────────────────────────────────
+ 
+                         for d in 0..depth {
+-                            if d < 16 && !last_at_depth[d] {
++                            if d < 16 && (last_mask >> d) & 1 == 0 {
+                                 let x = row_rect.min.x + d as f32 * INDENT + TREE_LINE_X;
+                                 painter.line_segment(
+                                     [egui::pos2(x, row_rect.min.y),
+@@ -201,25 +222,21 @@
+                             );
+                         }
+ 
+-                        // Track collapsed subtrees AFTER rendering this row
+-                        if obj.has_children && !obj.expanded {
+-                            collapsed_at_depth = Some(depth);
+-                        }
+-                    }
+-
+-                    if let Some(id) = toggle_id {
+-                        hierarchy.toggle_expanded(id);
+-                    }
+-                    if let Some(path) = &geometry_toggle {
+-                        hierarchy.toggle_geometry(path);
+-                    }
+-                    // A click on the geometry square is not a click on the row.
+-                    if let (Some((scene_id, node_id, prim_path)), None) = (select_id, geometry_toggle) {
+-                        hierarchy.selected           = Some(scene_id);
+-                        hierarchy.selected_prim_path = prim_path;
+-                        graph.selected_node          = Some(node_id);
+                     }
+                 });
++
++            if let Some(id) = toggle_id {
++                hierarchy.toggle_expanded(id);
++            }
++            if let Some(path) = &geometry_toggle {
++                hierarchy.toggle_geometry(path);
++            }
++            // A click on the geometry square is not a click on the row.
++            if let (Some((scene_id, node_id, prim_path)), None) = (select_id, geometry_toggle) {
++                hierarchy.selected           = Some(scene_id);
++                hierarchy.selected_prim_path = prim_path;
++                graph.selected_node          = Some(node_id);
++            }
+         });
+ }
+ 
+diff -ruN -x __MACOSX -x '*.orig' a/src/types.rs b/src/types.rs
+--- a/src/types.rs	2026-10-09 13:54:23.623790805 +0000
++++ b/src/types.rs	2026-10-09 13:54:14.355800700 +0000
+@@ -586,8 +586,29 @@
+     pub stage:    Option<std::sync::Arc<crate::usd_scene::StageTree>>,
+     /// Where `mesh` is drawn: as it is, or as copies of a shared mesh.
+     pub place:    Placement,
++    /// Its USD purpose, which the scene explorer's purpose toggles filter by.
++    pub purpose:  Purpose,
+ }
+ 
++/// A packed primitive's USD purpose: what kind of drawing it is for.
++#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
++pub enum Purpose {
++    /// No purpose: always drawn.
++    #[default]
++    Default,
++    /// Final geometry. `has_proxy`: its asset also carries proxy geometry,
++    /// drawn in its place while proxies are shown.
++    Render { has_proxy: bool },
++    /// A light stand-in for render geometry.
++    Proxy,
++    /// A helper, never rendered.
++    Guide,
++}
++
++/// The purposes the viewport can show or hide.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum PurposeKind { Render, Proxy, Guide }
++
+ /// Where a packed primitive's mesh is drawn.
+ ///
+ /// Instanced primitives share one mesh in its own space and differ only in
+@@ -655,7 +676,7 @@
+ 
+ impl NamedMesh {
+     pub fn new(path: String, mesh: MeshData) -> Self {
+-        Self { path, mesh: std::sync::Arc::new(mesh), picked: false, material: None, look: None, stage: None, place: Placement::InPlace }
++        Self { path, mesh: std::sync::Arc::new(mesh), picked: false, material: None, look: None, stage: None, place: Placement::InPlace, purpose: Purpose::Default }
+     }
+ 
+     /// The mesh where it is drawn: as it is when in place, else every copy
+@@ -761,7 +782,7 @@
+                 for p in prims {
+                     if !p.picked { out.push(p.clone()); continue; }
+                     if let Some(mesh) = result.take() {
+-                        out.push(NamedMesh { path: p.path.clone(), mesh: std::sync::Arc::new(mesh), picked: true, material: p.material.clone(), look: p.look.clone(), stage: p.stage.clone(), place: Placement::InPlace });
++                        out.push(NamedMesh { path: p.path.clone(), mesh: std::sync::Arc::new(mesh), picked: true, material: p.material.clone(), look: p.look.clone(), stage: p.stage.clone(), place: Placement::InPlace, purpose: p.purpose });
+                     }
+                 }
+                 EvalResult::Named(out)
+@@ -943,6 +964,11 @@
+     geometry:               std::collections::HashSet<String>,
+     /// Every composed stage drawn as geometry: no boxes at all.
+     pub show_all_geometry:  bool,
++    /// Purposes drawn, stored so that the default is guide off, proxy on
++    /// and render on.
++    show_guide:             bool,
++    hide_proxy:             bool,
++    hide_render:            bool,
+     /// Counts changes to what the viewport should draw (expansion, geometry
+     /// toggles). The viewport redraws when it moves.
+     pub display_revision:   u64,
+@@ -986,6 +1012,36 @@
+         self.display_revision += 1;
+     }
+ 
++    pub fn purpose_shown(&self, kind: PurposeKind) -> bool {
++        match kind {
++            PurposeKind::Guide  => self.show_guide,
++            PurposeKind::Proxy  => !self.hide_proxy,
++            PurposeKind::Render => !self.hide_render,
++        }
++    }
++
++    pub fn set_purpose_shown(&mut self, kind: PurposeKind, on: bool) {
++        if self.purpose_shown(kind) == on { return; }
++        match kind {
++            PurposeKind::Guide  => self.show_guide = on,
++            PurposeKind::Proxy  => self.hide_proxy = !on,
++            PurposeKind::Render => self.hide_render = !on,
++        }
++        self.display_revision += 1;
++    }
++
++    /// Whether the viewport draws a primitive of this purpose. Without a
++    /// purpose it always is. Render geometry whose asset has a proxy gives
++    /// way to the proxy while proxies are shown.
++    pub fn draws_purpose(&self, purpose: Purpose) -> bool {
++        match purpose {
++            Purpose::Default => true,
++            Purpose::Guide => self.show_guide,
++            Purpose::Proxy => !self.hide_proxy,
++            Purpose::Render { has_proxy } => !self.hide_render && !(has_proxy && !self.hide_proxy),
++        }
++    }
++
+     pub fn set_show_all_geometry(&mut self, on: bool) {
+         if self.show_all_geometry != on {
+             self.show_all_geometry = on;
+@@ -1204,3 +1260,25 @@
+ fn yes() -> bool { true }
+ 
+ fn one_tile() -> u32 { 1 }
++
++#[cfg(test)]
++mod purpose_tests {
++    use super::*;
++
++    #[test]
++    fn the_purpose_toggles_decide_what_is_drawn() {
++        let mut h = SceneHierarchy::default();
++        let (render, paired, proxy, guide) = (Purpose::Render { has_proxy: false }, Purpose::Render { has_proxy: true }, Purpose::Proxy, Purpose::Guide);
++        // Defaults: guide off, proxy on, render on, a proxied render mesh gives way.
++        assert!(h.draws_purpose(Purpose::Default) && h.draws_purpose(render) && h.draws_purpose(proxy));
++        assert!(!h.draws_purpose(paired) && !h.draws_purpose(guide));
++        // Proxy off: the render mesh comes back.
++        h.set_purpose_shown(PurposeKind::Proxy, false);
++        assert!(h.draws_purpose(paired) && !h.draws_purpose(proxy));
++        // Render off: no render geometry at all; unpurposed still drawn.
++        h.set_purpose_shown(PurposeKind::Render, false);
++        assert!(!h.draws_purpose(render) && !h.draws_purpose(paired) && h.draws_purpose(Purpose::Default));
++        h.set_purpose_shown(PurposeKind::Guide, true);
++        assert!(h.draws_purpose(guide));
++    }
++}
+diff -ruN -x __MACOSX -x '*.orig' a/src/usd_scene.rs b/src/usd_scene.rs
+--- a/src/usd_scene.rs	2026-10-09 13:54:23.625396651 +0000
++++ b/src/usd_scene.rs	2026-10-09 13:54:14.354569703 +0000
+@@ -28,6 +28,8 @@
+     pub material: Option<String>,
+     /// In place, or copies of a mesh shared between instances.
+     pub place:    crate::types::Placement,
++    /// Its USD purpose (render, proxy, guide, or none).
++    pub purpose:  crate::types::Purpose,
+ }
+ 
+ #[derive(Clone, Debug, Default)]
+@@ -408,7 +410,7 @@
+                 "Mesh" => {
+                     if let Some(mesh) = read_mesh(&mut r, &prim, &props, &world) {
+                         let material = r.target(&prim, "material:binding", "targetPaths");
+-                        scene.meshes.push(UsdMesh { path: prim.clone(), mesh: Arc::new(mesh), material, place: Default::default() });
++                        scene.meshes.push(UsdMesh { path: prim.clone(), mesh: Arc::new(mesh), material, place: Default::default(), purpose: Default::default() });
+                     }
+                 }
+                 "Camera" => {
+@@ -539,7 +541,7 @@
+             // The older text reader copes with some files this one refuses.
+             let meshes = crate::usd_loader::load_usd_meshes(layer).map_err(|_| e.clone())?;
+             let mut scene = UsdScene { up_axis: "Y".into(), ..Default::default() };
+-            scene.meshes = meshes.into_iter().map(|(path, mesh)| UsdMesh { path, mesh: Arc::new(mesh), material: None, place: Default::default() }).collect();
++            scene.meshes = meshes.into_iter().map(|(path, mesh)| UsdMesh { path, mesh: Arc::new(mesh), material: None, place: Default::default(), purpose: Default::default() }).collect();
+             scene.notes.push(format!("Read with the fallback text reader, meshes only ({e})"));
+             scene
+         }
+@@ -549,7 +551,7 @@
+         // Nothing found: let the older text reader try.
+         if let Ok(meshes) = crate::usd_loader::load_usd_meshes(layer) {
+             if !meshes.is_empty() {
+-                scene.meshes = meshes.into_iter().map(|(path, mesh)| UsdMesh { path, mesh: Arc::new(mesh), material: None, place: Default::default() }).collect();
++                scene.meshes = meshes.into_iter().map(|(path, mesh)| UsdMesh { path, mesh: Arc::new(mesh), material: None, place: Default::default(), purpose: Default::default() }).collect();
+                 scene.notes.push("Read with the fallback text reader, meshes only".into());
+             }
+         }
+@@ -777,6 +779,42 @@
+     }
+ 
+     #[test]
++    fn purposes_are_kept_and_render_knows_its_proxy() {
++        use crate::types::Purpose;
++        let path = write("purposes.usda", &format!(r#"#usda 1.0
++def Xform "asset" {{
++    def Scope "render" {{
++        uniform token purpose = "render"
++        def Mesh "hi" {{
++{QUAD}        }}
++    }}
++    def Scope "proxy" {{
++        uniform token purpose = "proxy"
++        def Mesh "lo" {{
++{QUAD}        }}
++    }}
++    def Mesh "helper" {{
++        uniform token purpose = "guide"
++{QUAD}    }}
++}}
++def Mesh "plain" {{
++{QUAD}}}
++"#));
++        let scene = load(&path).unwrap();
++        let purpose = |p: &str| scene.meshes.iter().find(|m| m.path == p).map(|m| m.purpose)
++            .unwrap_or_else(|| panic!("no {p}: {:?}", scene.notes));
++        assert_eq!(purpose("/asset/render/hi"), Purpose::Render { has_proxy: true });
++        assert_eq!(purpose("/asset/proxy/lo"), Purpose::Proxy);
++        assert_eq!(purpose("/asset/helper"), Purpose::Guide);
++        assert_eq!(purpose("/plain"), Purpose::Default);
++
++        // By default: the proxy stands in for the render mesh, guides are off.
++        let h = crate::types::SceneHierarchy::default();
++        let drawn: Vec<&str> = scene.meshes.iter().filter(|m| h.draws_purpose(m.purpose)).map(|m| m.path.as_str()).collect();
++        assert_eq!(drawn, vec!["/asset/proxy/lo", "/plain"]);
++    }
++
++    #[test]
+     fn a_missing_file_is_an_error_and_loads_are_cached() {
+         assert!(load_cached("/nowhere/at/all.usda").is_err());
+         let path = write("cached.usda", &format!("#usda 1.0\ndef Mesh \"m\" {{\n{QUAD}}}\n"));
+diff -ruN -x __MACOSX -x '*.orig' a/src/usd_stage.rs b/src/usd_stage.rs
+--- a/src/usd_stage.rs	2026-10-09 13:54:23.626674390 +0000
++++ b/src/usd_stage.rs	2026-10-09 13:53:54.592252862 +0000
+@@ -23,7 +23,7 @@
+ use bevy::math::{DMat4, DQuat, DVec3, Mat4};
+ use xms_scene as rs;
+ 
+-use crate::types::{MeshData, Placement};
++use crate::types::{MeshData, Placement, Purpose};
+ use crate::usd_scene::{StageNode, StageTree, UsdCamera, UsdMaterial, UsdMesh, UsdScene, UsdSkeleton};
+ 
+ /// Read a composed stage. `layer` is the root layer (a `.usdz` is unpacked
+@@ -52,7 +52,7 @@
+     for child in sc.children(&rs::Path::root()) {
+         // Native-instance prototypes are reached through their instances.
+         if child.name().starts_with("__Prototype") { continue; }
+-        walk.prim(child, child.as_str().to_string(), root, None, 1, false, false);
++        walk.prim(child, child.as_str().to_string(), root, None, Purpose::Default, 1, false, false);
+     }
+     let Walk { nodes, counts, .. } = walk;
+     scene.tree = Arc::new(StageTree { nodes });
+@@ -84,7 +84,7 @@
+         say(self.points, "point clouds are not read into packed primitives yet");
+         say(self.gprims, "implicit shapes (sphere, cube, cylinder…) are not read yet");
+         say(self.subsets, "meshes have face subsets (per-face materials): the mesh's own material is used");
+-        say(self.hidden, "invisible or guide/proxy meshes are listed but not drawn");
++        say(self.hidden, "invisible meshes are listed but not drawn");
+         notes
+     }
+ }
+@@ -110,7 +110,7 @@
+     /// user sees it. `under_instance`: inside an expanded instance, where
+     /// materials and cameras are not collected again.
+     #[allow(clippy::too_many_arguments)]
+-    fn prim(&mut self, src: &rs::Path, shown: String, parent: DMat4, binding: Option<String>, depth: usize, hidden: bool, under_instance: bool) {
++    fn prim(&mut self, src: &rs::Path, shown: String, parent: DMat4, binding: Option<String>, purpose: Purpose, depth: usize, hidden: bool, under_instance: bool) {
+         // The scene outlives the walk: borrow it apart from `self`.
+         let sc = self.sc;
+         let Some(prim) = sc.get(src) else { return };
+@@ -119,7 +119,8 @@
+         let key = if type_name.is_empty() { "(untyped)".to_string() } else { type_name.clone() };
+         *self.scene.prim_counts.entry(key).or_default() += 1;
+ 
+-        let hidden = hidden || !prim.visible_at(t) || matches!(prim.purpose, rs::Purpose::Guide | rs::Purpose::Proxy);
++        let hidden = hidden || !prim.visible_at(t);
++        let purpose = purpose_of(sc, src, &prim.purpose, purpose);
+         let name = shown.rsplit('/').next().unwrap_or("").to_string();
+         self.nodes.push(StageNode { path: shown.clone(), name, type_name: type_name.clone(), depth, hidden });
+ 
+@@ -137,7 +138,7 @@
+             rs::PrimKind::Instance { prototype } => {
+                 for child in sc.children(prototype) {
+                     let child_shown = format!("{shown}/{}", child.name());
+-                    self.prim(child, child_shown, world, binding.clone(), depth + 1, hidden, true);
++                    self.prim(child, child_shown, world, binding.clone(), purpose, depth + 1, hidden, true);
+                 }
+                 return;
+             }
+@@ -150,11 +151,11 @@
+                     // Shared with every other instance of the same prototype.
+                     if let Some(shared) = self.shared_mesh(src, m) {
+                         if !m.subsets.is_empty() { self.counts.subsets += 1; }
+-                        self.scene.meshes.push(UsdMesh { path: shown.clone(), mesh: shared, material: binding.clone(), place: Placement::One(world.as_mat4()) });
++                        self.scene.meshes.push(UsdMesh { path: shown.clone(), mesh: shared, material: binding.clone(), place: Placement::One(world.as_mat4()), purpose });
+                     }
+                 } else if let Some(mesh) = mesh(m, t, &world) {
+                     if !m.subsets.is_empty() { self.counts.subsets += 1; }
+-                    self.scene.meshes.push(UsdMesh { path: shown.clone(), mesh: Arc::new(mesh), material: binding.clone(), place: Placement::InPlace });
++                    self.scene.meshes.push(UsdMesh { path: shown.clone(), mesh: Arc::new(mesh), material: binding.clone(), place: Placement::InPlace, purpose });
+                 }
+             }
+             rs::PrimKind::Camera(c) if !under_instance => self.scene.cameras.push(UsdCamera {
+@@ -170,13 +171,13 @@
+                 if self.listing > 0 {
+                     self.counts.nested += 1;
+                 } else if !hidden {
+-                    self.point_instancer(src, &shown, i, world, binding.clone());
++                    self.point_instancer(src, &shown, i, world, binding.clone(), purpose);
+                 }
+                 // Its prototypes usually sit below it: listed, not drawn as they are.
+                 self.listing += 1;
+                 for child in sc.children(src) {
+                     let child_shown = format!("{shown}/{}", child.name());
+-                    self.prim(child, child_shown, world, binding.clone(), depth + 1, hidden, under_instance);
++                    self.prim(child, child_shown, world, binding.clone(), purpose, depth + 1, hidden, under_instance);
+                 }
+                 self.listing -= 1;
+                 return;
+@@ -192,7 +193,7 @@
+         }
+         for child in sc.children(src) {
+             let child_shown = format!("{shown}/{}", child.name());
+-            self.prim(child, child_shown, world, binding.clone(), depth + 1, hidden, under_instance);
++            self.prim(child, child_shown, world, binding.clone(), purpose, depth + 1, hidden, under_instance);
+         }
+     }
+ 
+@@ -204,7 +205,7 @@
+ 
+     /// A point instancer: one packed primitive per mesh of each prototype,
+     /// placed at every point that uses that prototype.
+-    fn point_instancer(&mut self, src: &rs::Path, shown: &str, i: &rs::Instancer, world: DMat4, binding: Option<String>) {
++    fn point_instancer(&mut self, src: &rs::Path, shown: &str, i: &rs::Instancer, world: DMat4, binding: Option<String>, purpose: Purpose) {
+         let (sc, t) = (self.sc, self.t);
+         let positions = i.positions.at(t).unwrap_or_default();
+         let scales = i.scales.as_ref().and_then(|s| s.at(t)).unwrap_or_default();
+@@ -231,39 +232,58 @@
+                 None => format!("{shown}/{}", proto.name()),
+             };
+             let mut found = vec![];
+-            self.gather(proto, proto_shown, DMat4::IDENTITY, binding.clone(), &mut found);
+-            for (mesh_src, mesh_shown, inside, material) in found {
++            self.gather(proto, proto_shown, DMat4::IDENTITY, binding.clone(), purpose, &mut found);
++            for (mesh_src, mesh_shown, inside, material, purpose) in found {
+                 let Some(rs::PrimKind::Mesh(m)) = sc.get(&mesh_src).map(|p| &p.kind) else { continue };
+                 let Some(shared) = self.shared_mesh(&mesh_src, m) else { continue };
+                 if !m.subsets.is_empty() { self.counts.subsets += 1; }
+                 let place: Arc<[Mat4]> = at.iter().map(|p| (*p * inside).as_mat4()).collect();
+-                self.scene.meshes.push(UsdMesh { path: mesh_shown, mesh: shared, material, place: Placement::Many(place) });
++                self.scene.meshes.push(UsdMesh { path: mesh_shown, mesh: shared, material, place: Placement::Many(place), purpose });
+             }
+         }
+     }
+ 
+     /// The meshes of a prototype, with their transform inside it (its own
+     /// root's included), their path as listed, and their material.
+-    fn gather(&mut self, src: &rs::Path, shown: String, parent: DMat4, binding: Option<String>, out: &mut Vec<(rs::Path, String, DMat4, Option<String>)>) {
++    #[allow(clippy::type_complexity)]
++    fn gather(&mut self, src: &rs::Path, shown: String, parent: DMat4, binding: Option<String>, purpose: Purpose, out: &mut Vec<(rs::Path, String, DMat4, Option<String>, Purpose)>) {
+         let (sc, t) = (self.sc, self.t);
+         let Some(prim) = sc.get(src) else { return };
+-        if !prim.visible_at(t) || matches!(prim.purpose, rs::Purpose::Guide | rs::Purpose::Proxy) { return; }
++        if !prim.visible_at(t) { return; }
++        let purpose = purpose_of(sc, src, &prim.purpose, purpose);
+         let local = mat(&prim.local_xform_at(t));
+         let inside = if prim.reset_xform_stack { local } else { parent * local };
+         let binding = prim.material_binding.as_ref().map(|p| p.as_str().to_string()).or(binding);
+         let below: &[rs::Path] = match &prim.kind {
+-            rs::PrimKind::Mesh(_) => { out.push((src.clone(), shown.clone(), inside, binding.clone())); sc.children(src) }
++            rs::PrimKind::Mesh(_) => { out.push((src.clone(), shown.clone(), inside, binding.clone(), purpose)); sc.children(src) }
+             rs::PrimKind::Instance { prototype } => sc.children(prototype),
+             rs::PrimKind::Instancer(_) => { self.counts.nested += 1; return; }
+             rs::PrimKind::Material(_) => return,
+             _ => sc.children(src),
+         };
+         for c in below {
+-            self.gather(c, format!("{shown}/{}", c.name()), inside, binding.clone(), out);
++            self.gather(c, format!("{shown}/{}", c.name()), inside, binding.clone(), purpose, out);
+         }
+     }
+ }
+ 
++/// A prim's purpose: its own when authored, else its parent's. Render
++/// geometry notes whether its asset also carries proxy geometry: a sibling of
++/// the prim where render was set that is itself set to proxy (the usual
++/// `render` / `proxy` pair under one asset).
++fn purpose_of(sc: &rs::Scene, src: &rs::Path, own: &rs::Purpose, inherited: Purpose) -> Purpose {
++    match own {
++        rs::Purpose::Render => Purpose::Render {
++            has_proxy: src.parent().is_some_and(|parent| {
++                sc.children(&parent).iter().any(|c| sc.get(c).is_some_and(|p| matches!(p.purpose, rs::Purpose::Proxy)))
++            }),
++        },
++        rs::Purpose::Proxy => Purpose::Proxy,
++        rs::Purpose::Guide => Purpose::Guide,
++        _ => inherited,
++    }
++}
++
+ /// The scene layer's row-vector matrix as a column-vector one: USD's rows are
+ /// the columns here, so the numbers are taken as they come.
+ fn mat(m: &rs::Mat4d) -> DMat4 {

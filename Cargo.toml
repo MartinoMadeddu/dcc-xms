@@ -1,6 +1,6 @@
 [package]
-name = "bevy_dcc"
-version = "0.1.0"
+name = "xms-imago"
+version = "0.1.5"
 edition = "2021"
 
 [workspace]

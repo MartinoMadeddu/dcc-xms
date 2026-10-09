@@ -520,26 +520,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bevy_dcc"
-version = "0.1.0"
-dependencies = [
- "bevy",
- "bevy_egui",
- "egui_dock",
- "flate2",
- "image",
- "openusd 0.1.4",
- "regex",
- "serde",
- "serde_json",
- "ufbx",
- "winit",
- "xms-scene",
- "xms-usd",
- "xms_ragdoll",
-]
-
-[[package]]
 name = "bevy_derive"
 version = "0.14.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5941,6 +5921,26 @@ name = "xml-rs"
 version = "0.8.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ae8337f8a065cfc972643663ea4279e04e7256de865aa66fe25cec5fb912d3f"
+
+[[package]]
+name = "xms-imago"
+version = "0.1.5"
+dependencies = [
+ "bevy",
+ "bevy_egui",
+ "egui_dock",
+ "flate2",
+ "image",
+ "openusd 0.1.4",
+ "regex",
+ "serde",
+ "serde_json",
+ "ufbx",
+ "winit",
+ "xms-scene",
+ "xms-usd",
+ "xms_ragdoll",
+]
 
 [[package]]
 name = "xms-scene"

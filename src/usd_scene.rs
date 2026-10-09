@@ -28,6 +28,8 @@ pub struct UsdMesh {
     pub material: Option<String>,
     /// In place, or copies of a mesh shared between instances.
     pub place:    crate::types::Placement,
+    /// Its USD purpose (render, proxy, guide, or none).
+    pub purpose:  crate::types::Purpose,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -408,7 +410,7 @@ fn read_scene(data: Layer) -> UsdScene {
                 "Mesh" => {
                     if let Some(mesh) = read_mesh(&mut r, &prim, &props, &world) {
                         let material = r.target(&prim, "material:binding", "targetPaths");
-                        scene.meshes.push(UsdMesh { path: prim.clone(), mesh: Arc::new(mesh), material, place: Default::default() });
+                        scene.meshes.push(UsdMesh { path: prim.clone(), mesh: Arc::new(mesh), material, place: Default::default(), purpose: Default::default() });
                     }
                 }
                 "Camera" => {
@@ -539,7 +541,7 @@ fn load_root_layer(layer: &Path, ext: &str) -> Result<UsdScene, String> {
             // The older text reader copes with some files this one refuses.
             let meshes = crate::usd_loader::load_usd_meshes(layer).map_err(|_| e.clone())?;
             let mut scene = UsdScene { up_axis: "Y".into(), ..Default::default() };
-            scene.meshes = meshes.into_iter().map(|(path, mesh)| UsdMesh { path, mesh: Arc::new(mesh), material: None, place: Default::default() }).collect();
+            scene.meshes = meshes.into_iter().map(|(path, mesh)| UsdMesh { path, mesh: Arc::new(mesh), material: None, place: Default::default(), purpose: Default::default() }).collect();
             scene.notes.push(format!("Read with the fallback text reader, meshes only ({e})"));
             scene
         }
@@ -549,7 +551,7 @@ fn load_root_layer(layer: &Path, ext: &str) -> Result<UsdScene, String> {
         // Nothing found: let the older text reader try.
         if let Ok(meshes) = crate::usd_loader::load_usd_meshes(layer) {
             if !meshes.is_empty() {
-                scene.meshes = meshes.into_iter().map(|(path, mesh)| UsdMesh { path, mesh: Arc::new(mesh), material: None, place: Default::default() }).collect();
+                scene.meshes = meshes.into_iter().map(|(path, mesh)| UsdMesh { path, mesh: Arc::new(mesh), material: None, place: Default::default(), purpose: Default::default() }).collect();
                 scene.notes.push("Read with the fallback text reader, meshes only".into());
             }
         }
@@ -774,6 +776,76 @@ def PointInstancer "trees" {{
         // A copy made into a mesh lands where it is placed.
         let placed = crate::node_graph::nodes::place_mesh(&b.mesh, &b.place.matrices()[0]);
         assert!((bounds(&placed).0 - Vec3::new(20.0, 0.0, 0.0)).length() < 1e-4);
+    }
+
+    #[test]
+    fn purposes_are_kept_and_render_knows_its_proxy() {
+        use crate::types::Purpose;
+        let path = write("purposes.usda", &format!(r#"#usda 1.0
+def Xform "asset" {{
+    def Scope "render" {{
+        uniform token purpose = "render"
+        def Mesh "hi" {{
+{QUAD}        }}
+    }}
+    def Scope "proxy" {{
+        uniform token purpose = "proxy"
+        def Mesh "lo" {{
+{QUAD}        }}
+    }}
+    def Mesh "helper" {{
+        uniform token purpose = "guide"
+{QUAD}    }}
+}}
+def Mesh "plain" {{
+{QUAD}}}
+"#));
+        let scene = load(&path).unwrap();
+        let purpose = |p: &str| scene.meshes.iter().find(|m| m.path == p).map(|m| m.purpose)
+            .unwrap_or_else(|| panic!("no {p}: {:?}", scene.notes));
+        assert_eq!(purpose("/asset/render/hi"), Purpose::Render { has_proxy: true });
+        assert_eq!(purpose("/asset/proxy/lo"), Purpose::Proxy);
+        assert_eq!(purpose("/asset/helper"), Purpose::Guide);
+        assert_eq!(purpose("/plain"), Purpose::Default);
+
+        // By default: the proxy stands in for the render mesh, guides are off.
+        let h = crate::types::SceneHierarchy::default();
+        let drawn: Vec<&str> = scene.meshes.iter().filter(|m| h.draws_purpose(m.purpose)).map(|m| m.path.as_str()).collect();
+        assert_eq!(drawn, vec!["/asset/proxy/lo", "/plain"]);
+    }
+
+    #[test]
+    fn curves_and_points_are_read_as_they_are_authored() {
+        use crate::types::{CurveBasis, CurveWrap};
+        let path = write("strands.usda", r#"#usda 1.0
+def Xform "groom" {
+    double3 xformOp:translate = (0, 10, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+    def BasisCurves "hair" {
+        uniform token type = "cubic"
+        uniform token basis = "catmullRom"
+        int[] curveVertexCounts = [4, 4]
+        point3f[] points = [(0, 0, 0), (0, 1, 0), (0, 2, 0), (0, 3, 0), (1, 0, 0), (1, 1, 0), (1, 2, 0), (1, 3, 0)]
+        float[] widths = [0.1]
+    }
+    def Points "dust" {
+        point3f[] points = [(5, 0, 0), (6, 0, 0)]
+        float[] widths = [0.5, 0.25]
+    }
+}
+"#);
+        let scene = load(&path).unwrap();
+        let find = |p: &str| scene.meshes.iter().find(|m| m.path == p).unwrap_or_else(|| panic!("no {p}: {:?}", scene.notes));
+        let hair = &find("/groom/hair").mesh;
+        assert_eq!(hair.curve_counts, vec![4, 4]);
+        assert_eq!((hair.curve_basis, hair.curve_wrap), (CurveBasis::CatmullRom, CurveWrap::Nonperiodic));
+        // In world space, like meshes.
+        assert_eq!(hair.curve_points[1], [0.0, 11.0, 0.0]);
+        let dust = &find("/groom/dust").mesh;
+        assert_eq!(dust.points, vec![[5.0, 10.0, 0.0], [6.0, 10.0, 0.0]]);
+        assert_eq!(dust.widths, vec![0.5, 0.25]);
+        // Listed in the hierarchy as geometry, like meshes.
+        assert!(scene.tree.nodes.iter().any(|n| n.path == "/groom/hair" && n.type_name == "BasisCurves"));
     }
 
     #[test]

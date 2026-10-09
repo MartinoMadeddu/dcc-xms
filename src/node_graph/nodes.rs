@@ -32,6 +32,7 @@ pub fn evaluate_node_type(
                         look: m.material.as_ref().and_then(|p| looks.get(p).cloned()),
                         stage: Some(scene.tree.clone()),
                         place: m.place.clone(),
+                        purpose: m.purpose,
                     }).collect()))
                 }
                 Err(_) => None,
@@ -181,7 +182,7 @@ pub fn evaluate_node_type(
         NodeType::LoadFbxMesh { path } => {
             let meshes = crate::fbx_loader::load_meshes_cached(path).ok()?;
             Some(EvalResult::Named(meshes.iter().map(|(name, mesh)| NamedMesh {
-                path: format!("/{name}"), mesh: mesh.clone(), picked: false, material: None, look: None, stage: None, place: Placement::InPlace,
+                path: format!("/{name}"), mesh: mesh.clone(), picked: false, material: None, look: None, stage: None, place: Placement::InPlace, purpose: Default::default(),
             }).collect()))
         }
         NodeType::Calamari { hulls, detail } =>
@@ -349,6 +350,13 @@ pub fn transform(mesh: &MeshData, t: Vec3, r: Vec3, s: Vec3) -> MeshData {
         polys:      mesh.polys.clone(),
         face_count: mesh.face_count,
         uvs:        mesh.uvs.clone(),
+        curve_points: mesh.curve_points.iter()
+            .map(|p| (rot * (Vec3::from_array(*p) * s) + t).to_array())
+            .collect(),
+        curve_counts: mesh.curve_counts.clone(),
+        curve_basis:  mesh.curve_basis,
+        curve_wrap:   mesh.curve_wrap,
+        widths:       mesh.widths.clone(),
         ..Default::default()
     };
     // Recompute normals after transform so they stay correct
@@ -368,6 +376,11 @@ pub fn place_mesh(mesh: &MeshData, m: &bevy::math::Mat4) -> MeshData {
         polys:      mesh.polys.clone(),
         face_count: mesh.face_count,
         uvs:        mesh.uvs.clone(),
+        curve_points: mesh.curve_points.iter().map(|p| m.transform_point3(Vec3::from_array(*p)).to_array()).collect(),
+        curve_counts: mesh.curve_counts.clone(),
+        curve_basis:  mesh.curve_basis,
+        curve_wrap:   mesh.curve_wrap,
+        widths:       mesh.widths.clone(),
         ..Default::default()
     };
     if m.determinant() < 0.0 {
@@ -392,7 +405,28 @@ pub fn merge_all(parts: &[&MeshData]) -> MeshData {
     let any_polys = parts.iter().any(|p| !p.polys.is_empty());
     let any_uvs = parts.iter().any(|p| !p.uvs.is_empty());
     let all_normals = parts.iter().all(|p| p.normals.len() == p.vertices.len());
+    // Curves of one kind stay as they are; of several, they become polylines.
+    let mut kinds = parts.iter().filter(|p| !p.curve_counts.is_empty()).map(|p| (p.curve_basis, p.curve_wrap));
+    let first_kind = kinds.next();
+    let one_kind = kinds.all(|k| Some(k) == first_kind);
+    if let (Some((basis, wrap)), true) = (first_kind, one_kind) { m.curve_basis = basis; m.curve_wrap = wrap; }
+    let any_widths = parts.iter().any(|p| !p.widths.is_empty());
     for p in parts {
+        if !p.curve_counts.is_empty() {
+            if one_kind {
+                m.curve_points.extend_from_slice(&p.curve_points);
+                m.curve_counts.extend_from_slice(&p.curve_counts);
+            } else {
+                let (points, counts) = crate::strands::as_polylines(p);
+                m.curve_points.extend(points);
+                m.curve_counts.extend(counts);
+            }
+        }
+        if any_widths {
+            // One per point; a part without widths gets 0, the default size.
+            let w = |i: usize| p.widths.get(i).or(p.widths.first()).copied().unwrap_or(0.0);
+            m.widths.extend((0..p.points.len()).map(w));
+        }
         let off = m.vertices.len() as u32;
         m.vertices.extend_from_slice(&p.vertices);
         m.indices.extend(p.indices.iter().map(|i| i + off));

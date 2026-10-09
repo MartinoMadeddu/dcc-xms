@@ -195,6 +195,7 @@ pub fn focus_camera(
                 let mesh = other.shared_mesh();
                 points.extend(mesh.vertices.iter().map(|v| Vec3::from_array(*v)));
                 points.extend(mesh.points.iter().map(|v| Vec3::from_array(*v)));
+                points.extend(mesh.curve_points.iter().map(|v| Vec3::from_array(*v)));
             }
             None => {}
         }
