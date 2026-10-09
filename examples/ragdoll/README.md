@@ -11,3 +11,7 @@ The take and the car are Simon Legrand's. As FBX they are 205 MB and 99 MB, more
 To make them again from the FBX files:
 
     XMS_PACK_CLIP=take.fbx XMS_PACK_SET=set.fbx cargo test pack_ragdoll_example -- --ignored --nocapture
+
+To solve the take again after a change to the solver, and put the result in `solved/` in place of the one there:
+
+    cargo test solve_the_template -- --ignored --nocapture

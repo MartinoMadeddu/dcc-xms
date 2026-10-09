@@ -187,6 +187,7 @@ impl NodeGraphState {
             NodeType::Ragdoll { .. }        => (vec![i("Clip"), i("Collider")], vec![o("Clip")]),
             NodeType::BlendClips { .. }     => (vec![i("First"), i("Next")], vec![o("Clip")]),
             NodeType::Retarget              => (vec![i("Motion"), i("Skeleton")], vec![o("Clip")]),
+            NodeType::Characterize { .. }   => (vec![i("Clip")], vec![o("Clip")]),
             NodeType::UvUnwrap { .. }
             | NodeType::UvTransform { .. }
             | NodeType::UvEdit { .. }       => (vec![i("Mesh")], vec![o("Mesh")]),
@@ -632,7 +633,7 @@ impl NodeGraphState {
         };
         // Body Collide can show the bodies it collides instead of the skin.
         let bodies = self.body_collide_node().and_then(|n| match &n.node_type {
-            NodeType::Ragdoll { settings, view } => Some((*view, settings.detail)), _ => None,
+            NodeType::Ragdoll { settings, view, .. } => Some((*view, settings.detail)), _ => None,
         });
         match bodies {
             Some((view @ (BodyView::Pieces | BodyView::Hulls), detail)) => {

@@ -28,11 +28,14 @@ use bevy::math::{Mat3, Mat4, Quat, Vec3};
 use bevy::prelude::Transform;
 use xms_ragdoll::{BakeInput, BakeReport, BodyDef, Bvh, Hinge, Hull, Params, Pose, Role, Side, Solver};
 
+use crate::core::human::{Human, Slot};
+use crate::core::human_ik::Limits;
+
 use crate::core::anim::{AnimData, SkinMesh, Track};
 use crate::types::MeshData;
 
 /// Bumped when solved files of an earlier build must not be reused.
-const VERSION: u32 = 3;
+const VERSION: u32 = 4;
 
 /// What the Ragdoll node sets.
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -122,16 +125,31 @@ pub fn body_poses(clip: &AnimData, joints: &[usize], index: usize) -> Vec<Pose> 
     joints.iter().map(|j| pose_of(&world[*j])).collect()
 }
 
-/// The bodies of a clip: one per joint whose name is a known part of a
-/// human, shaped by the skin that follows it.
-pub fn build_rig(clip: &AnimData, settings: &Settings) -> Result<Rig, String> {
-    let mut picked = vec![];
-    for (j, joint) in clip.joints.iter().enumerate() {
-        if !joint.is_bone { continue; }
-        // Toes are part of the foot, and collar bones part of the chest:
-        // too small to push anything around, and thrown about if they try.
-        if let Some(r) = Role::from_name(&joint.name).filter(|r| !matches!(r.0, Role::Toe | Role::Clavicle)) { picked.push((j, r)); }
+/// The joints that get a body, from what the skeleton is: hips, spine,
+/// neck, head, and three per limb. Toes are part of the foot, and collar
+/// bones part of the chest: too small to push anything around, and thrown
+/// about if they try. Twist joints are part of their limb.
+fn bodies_of(h: &Human) -> Vec<(usize, (Role, Side))> {
+    let mut out: Vec<(usize, (Role, Side))> = vec![];
+    let mut add = |j: Option<usize>, r: Role, s: Side| { if let Some(j) = j { if !out.iter().any(|o| o.0 == j) { out.push((j, (r, s))); } } };
+    add(h.get(Slot::Hips), Role::Pelvis, Side::Centre);
+    for j in &h.spine { add(Some(*j), Role::Spine, Side::Centre); }
+    for j in &h.neck { add(Some(*j), Role::Neck, Side::Centre); }
+    add(h.get(Slot::Head), Role::Head, Side::Centre);
+    for l in &h.limbs {
+        let s = if l.left { Side::Left } else { Side::Right };
+        let (a, b, c) = if l.arm { (Role::UpperArm, Role::LowerArm, Role::Hand) } else { (Role::Thigh, Role::Calf, Role::Foot) };
+        add(l.upper, a, s); add(l.mid, b, s); add(l.end, c, s);
     }
+    // Parents before children.
+    out.sort_by_key(|o| o.0);
+    out
+}
+
+/// The bodies of a clip: one per main joint of a human, shaped by the
+/// skin that follows it.
+pub fn build_rig(clip: &AnimData, settings: &Settings) -> Result<Rig, String> {
+    let picked = bodies_of(&Human::of(clip));
     // A sliver of a body between two heavy ones is thrown about by them. A
     // part that comes out far lighter than its neighbours is not a body:
     // its skin goes to the part above and its joint keeps its capture.
@@ -149,7 +167,7 @@ fn rig_of(clip: &AnimData, settings: &Settings, picked: &[(usize, (Role, Side))]
     let joints: Vec<usize> = picked.iter().map(|p| p.0).collect();
     let roles: Vec<(Role, Side)> = picked.iter().map(|p| p.1).collect();
     if !roles.iter().any(|r| r.0 == Role::Pelvis) || joints.len() < 4 {
-        return Err("No human skeleton found. Joints are recognised by name: pelvis or Hips, spine, neck, head, clavicle, upperarm, lowerarm, hand, thigh, calf, foot (Unreal), or Spine, LeftArm, LeftForeArm, LeftUpLeg, LeftLeg, LeftFoot (HumanIK, Mixamo).".into());
+        return Err("No human skeleton found: the hips and the limbs are not known from the joint names. Put a Characterize node before this one and set which joint is which.".into());
     }
     // Nearest body at or above each joint.
     let mut body_of_joint: Vec<Option<usize>> = vec![None; n];
@@ -232,6 +250,7 @@ fn rig_of(clip: &AnimData, settings: &Settings, picked: &[(usize, (Role, Side))]
             twist: t.twist.to_radians(),
             twist_axis: axis,
             hinge: None,
+            range: None,
             core: t.core,
             sink: if t.core { (settings.sink * 0.01).max(0.0) } else { 0.0 },
         });
@@ -242,6 +261,11 @@ fn rig_of(clip: &AnimData, settings: &Settings, picked: &[(usize, (Role, Side))]
         let Some(p) = defs[b].parent else { continue };
         defs[b].hinge = find_hinge(clip, joints[p], joints[b], child_of(b).map(|c| joints[c]));
         if defs[b].hinge.is_none() { defs[b].swing = 25f32.to_radians(); }
+    }
+    // Wrists and ankles: within what a human wrist or ankle does.
+    for (end, mid, range) in crate::core::human_ik::end_ranges(clip, &Human::of(clip)) {
+        let Some(b) = joints.iter().position(|j| *j == end) else { continue };
+        if defs[b].parent.map(|p| joints[p]) == Some(mid) { defs[b].range = Some(range); }
     }
     Ok(Rig { joints, roles, defs, bind, body_of_joint, stand_ins })
 }
@@ -267,6 +291,19 @@ fn find_hinge(clip: &AnimData, parent: usize, joint: usize, child: Option<usize>
         rels.push(rel);
     }
     let reference = if child.is_some() { straightest.1 } else { rels[0] };
+    // With a bone below, the axis is square to the plane the two bones
+    // make where the joint is well bent: the hinge itself, whatever else
+    // the joint does. In the joint's frame.
+    let mut plane = Vec3::ZERO;
+    if let Some(c) = child {
+        for k in 0..count {
+            let world = clip.world_pose(k * (frames - 1).max(1) / (count - 1).max(1));
+            let upper = (world[joint].w_axis.truncate() - world[parent].w_axis.truncate()).normalize_or_zero();
+            let lower = (world[c].w_axis.truncate() - world[joint].w_axis.truncate()).normalize_or_zero();
+            let n = upper.cross(lower);
+            if n.length() > 20f32.to_radians().sin() { plane += pose_of(&world[joint]).q.inverse() * n; }
+        }
+    }
     // Rotation vectors away from the reference, in the joint's frame.
     let vectors: Vec<Vec3> = rels.iter().map(|r| {
         let d = (reference.inverse() * *r).normalize();
@@ -280,6 +317,7 @@ fn find_hinge(clip: &AnimData, parent: usize, joint: usize, child: Option<usize>
     // Largest direction of the spread, by repeated multiplication.
     let mut axis = Vec3::new(0.577, 0.577, 0.577);
     for _ in 0..40 { axis = (cov * axis).normalize_or_zero(); if axis == Vec3::ZERO { return None; } }
+    if plane.length() > 1e-3 { axis = plane.normalize(); }
     let bends: Vec<f32> = rels.iter().map(|r| xms_ragdoll::solver::twist_angle((reference.inverse() * *r).normalize(), axis)).collect();
     let (lo, hi) = bends.iter().fold((f32::MAX, f32::MIN), |(a, b), x| (a.min(*x), b.max(*x)));
     // A joint that hardly bends in the clip tells nothing about its axis.
@@ -476,6 +514,10 @@ pub fn key(clip: &Arc<AnimData>, collider: Option<&Arc<MeshData>>, settings: &Se
     clip_print(clip).hash(&mut h);
     collider.map(mesh_print).hash(&mut h);
     serde_json::to_string(settings).unwrap_or_default().hash(&mut h);
+    // Joints set by hand make another rig. Picks that say what the names say do not.
+    if let Some(p) = &clip.human {
+        if !Human::of(clip).same_skeleton(&Human::detect(&clip.joints, &vec![])) { serde_json::to_string(&**p).unwrap_or_default().hash(&mut h); }
+    }
     h.finish()
 }
 
@@ -688,10 +730,27 @@ fn solve(clip: &Arc<AnimData>, collider: Option<&Arc<MeshData>>, settings: &Sett
 
 /// The clip a Ragdoll node puts out: the solved one when there is a result
 /// for exactly this clip, collider and settings, the clip as it came otherwise.
-pub fn output(clip: &Arc<AnimData>, collider: Option<&Arc<MeshData>>, settings: &Settings) -> Arc<AnimData> {
+///
+/// The solved clip then goes through the human pass: elbows and knees bend
+/// the way they bend, wrists and ankles stay within their range.
+pub fn output(clip: &Arc<AnimData>, collider: Option<&Arc<MeshData>>, settings: &Settings, limits: &Limits) -> Arc<AnimData> {
     let key = key(clip, collider, settings);
     let Some(s) = solved(key) else { return clip.clone() };
-    crate::core::anim::memo(&format!("ragdoll:{key:x}"), Some(clip), || Some(apply(clip, &s))).unwrap_or_else(|| clip.clone())
+    let params = format!("ragdoll:{key:x}:{}", serde_json::to_string(limits).unwrap_or_default());
+    crate::core::anim::memo(&params, Some(clip), || {
+        let moved = apply(clip, &s);
+        let bvh = collider.map(tree);
+        let crosses = |a: Vec3, b: Vec3| bvh.as_ref().map(|t| t.segment(a, b).is_some()).unwrap_or(false);
+        let (out, report) = crate::core::human_ik::humanize(clip, &moved, &Human::of(clip), limits, bvh.as_ref().map(|_| &crosses as &(dyn Fn(Vec3, Vec3) -> bool + Sync)));
+        *last_report().lock().unwrap() = Some((key, report));
+        Some(out)
+    }).unwrap_or_else(|| clip.clone())
+}
+
+/// What the human pass did on the last result it made, and for which solve.
+pub fn last_report() -> &'static Mutex<Option<(u64, crate::core::human_ik::Report)>> {
+    static R: OnceLock<Mutex<Option<(u64, crate::core::human_ik::Report)>>> = OnceLock::new();
+    R.get_or_init(|| Mutex::new(None))
 }
 
 // ============================================================================
@@ -732,9 +791,16 @@ mod tests {
     #[test]
     fn a_skeleton_that_is_not_a_human_is_refused_with_the_names_it_wants() {
         let mut clip = (*walk()).clone();
-        for j in clip.joints.iter_mut() { j.name = format!("bone_{}", j.name.len()); }
+        for (i, j) in clip.joints.iter_mut().enumerate() { j.name = format!("bone_{i}"); }
         let err = build_rig(&clip, &Settings::default()).err().unwrap();
-        assert!(err.contains("pelvis") && err.contains("Hips"));
+        assert!(err.contains("Characterize"), "{err}");
+        // Set by hand, the same skeleton is a human again.
+        let names: Vec<String> = clip.joints.iter().map(|j| j.name.clone()).collect();
+        let walk = walk();
+        let auto = Human::of(&walk);
+        let picks: crate::core::human::Picks = Slot::ALL.iter().filter_map(|s| auto.get(*s).map(|j| (*s, names[j].clone()))).collect();
+        let set = crate::core::human::with_picks(&clip, &picks);
+        assert_eq!(build_rig(&set, &Settings::default()).unwrap().defs.len(), 17);
     }
 
     #[test]
@@ -805,12 +871,17 @@ mod tests {
         let solved = solved(key).expect("solved");
         assert_eq!(solved.frames, clip.frames);
         assert!(solved.report.contact_frames > 10 && solved.report.resets == 0);
-        let out = output(&clip, Some(&floor), &settings);
+        let out = output(&clip, Some(&floor), &settings, &Limits::default());
         assert!(!Arc::ptr_eq(&out, &clip));
         let ankles: Vec<usize> = clip.joints.iter().enumerate().filter(|(_, j)| j.name.ends_with("Foot")).map(|(i, _)| i).collect();
         let lowest = |c: &AnimData| (0..c.frames).map(|f| { let w = c.world_pose(f); ankles.iter().map(|j| w[*j].w_axis.y).fold(f32::MAX, f32::min) }).fold(f32::MAX, f32::min);
         assert!(lowest(&clip) < 0.08, "the walk reaches {}", lowest(&clip));
-        assert!(lowest(&out) > 0.13, "after: {}", lowest(&out));
+        // Nothing held is left in the floor. The ankles come up from 7 cm to
+        // about 12: with the ankle kept within a human range the foot cannot
+        // lie flat through the whole stride, and in the frames a leg held too
+        // far from the walk lets go, its foot dips back toward the capture.
+        assert!(solved.report.max_residual < 0.003, "{:?}", solved.report);
+        assert!(lowest(&out) > 0.115, "after: {}", lowest(&out));
         // Bones keep their length: local translations are untouched below the hips.
         for j in 1..clip.joints.len() {
             for f in [0, 20, 40] { assert_eq!(out.local(j, f).translation, clip.local(j, f).translation); }
@@ -819,7 +890,7 @@ mod tests {
         assert!(file_of(key).unwrap().exists());
         clear(key);
         assert!(!file_of(key).unwrap().exists());
-        assert!(Arc::ptr_eq(&output(&clip, Some(&floor), &settings), &clip));
+        assert!(Arc::ptr_eq(&output(&clip, Some(&floor), &settings, &Limits::default()), &clip));
     }
 }
 
@@ -864,6 +935,168 @@ mod real {
 
 #[cfg(test)]
 mod shipped {
+    /// Solve the template and put the result with the examples:
+    ///
+    ///     cargo test solve_the_template -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn solve_the_template() {
+        let dir = std::env::temp_dir().join("xms_ragdoll_solve");
+        std::env::set_var("XMS_CACHE_DIR", &dir);
+        let mut g = crate::node_graph::NodeGraphState::default();
+        let mut subnets = crate::ice::SubnetStore::default();
+        let t = crate::templates::TEMPLATES.iter().find(|t| t.name.starts_with("Body Collide")).unwrap();
+        (t.build)(&mut g, &mut subnets);
+        let id = g.nodes.iter().find(|n| matches!(n.node_type, crate::types::NodeType::Ragdoll { .. })).unwrap().id;
+        let (clip, car) = g.ragdoll_inputs(id);
+        let clip = clip.unwrap();
+        let key = super::start(clip.clone(), car, super::Settings::default());
+        let job = super::job(key).unwrap();
+        loop {
+            if !matches!(&*job.state.lock().unwrap(), super::State::Running) { break; }
+            std::thread::sleep(std::time::Duration::from_secs(2));
+        }
+        let solved = super::solved(key).expect("solved");
+        println!("{}", job.notes.lock().unwrap());
+        println!("{} frames in {:.0} s: {:?}", solved.frames, solved.seconds, solved.report);
+        let to = crate::examples::dir().unwrap().join(crate::examples::RAGDOLL_SOLVED);
+        for e in std::fs::read_dir(&to).unwrap().flatten() { if e.path().extension().map(|x| x == "rag").unwrap_or(false) { std::fs::remove_file(e.path()).unwrap(); } }
+        std::fs::copy(super::file_of(key).unwrap(), to.join(format!("{key:016x}.rag"))).unwrap();
+    }
+
+    /// How deep the limbs are in the car, after the solve and after the
+    /// human pass, every 4th frame.
+    fn depths(clip: &crate::core::anim::AnimData, car: &std::sync::Arc<crate::types::MeshData>, a: &crate::core::anim::AnimData, b: &crate::core::anim::AnimData) {
+        let settings = super::Settings::default();
+        let rig = super::build_rig(clip, &settings).unwrap();
+        let solver = super::Solver::new(rig.defs.clone(), settings.params(30.0), &rig.bind, Some(super::tree(car)));
+        for (name, role) in [("upper arms", super::Role::UpperArm), ("forearms", super::Role::LowerArm), ("hands", super::Role::Hand), ("thighs", super::Role::Thigh), ("calves", super::Role::Calf), ("feet", super::Role::Foot)] {
+            let bodies: Vec<usize> = (0..rig.defs.len()).filter(|b| rig.roles[*b].0 == role).collect();
+            let mut out = [(0usize, 0.0f32); 2];
+            let mut deep = [0usize; 2];
+            for f in (0..clip.frames).step_by(4) {
+                for (k, c) in [a, b].iter().enumerate() {
+                    let poses = super::body_poses(c, &rig.joints, f);
+                    let deepest = bodies.iter().map(|i| solver.target_depth(*i, &poses[*i], 2)).fold(0.0f32, f32::max);
+                    if deepest > 0.01 { out[k].0 += 1; }
+                    if deepest > 0.03 { deep[k] += 1; }
+                    out[k].1 = out[k].1.max(deepest);
+                }
+            }
+            println!("{name} more than 1 cm in the car: solved {} frames (more than 3 cm {}, deepest {:.1} cm), after {} frames (more than 3 cm {}, deepest {:.1} cm), of {}", out[0].0, deep[0], out[0].1 * 100.0, out[1].0, deep[1], out[1].1 * 100.0, clip.frames.div_ceil(4));
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn hinge_axes_of_the_template() {
+        std::env::set_var("XMS_CACHE_DIR", std::env::temp_dir().join("xms_ragdoll_none"));
+        let mut g = crate::node_graph::NodeGraphState::default();
+        let mut subnets = crate::ice::SubnetStore::default();
+        let t = crate::templates::TEMPLATES.iter().find(|t| t.name.starts_with("Body Collide")).unwrap();
+        (t.build)(&mut g, &mut subnets);
+        let id = g.nodes.iter().find(|n| matches!(n.node_type, crate::types::NodeType::Ragdoll { .. })).unwrap().id;
+        let clip = g.ragdoll_inputs(id).0.unwrap();
+        let rig = super::build_rig(&clip, &super::Settings::default()).unwrap();
+        let rot = |m: &bevy::math::Mat4| m.to_scale_rotation_translation().1;
+        for (b, d) in rig.defs.iter().enumerate() {
+            let Some(h) = d.hinge else { continue };
+            let (j, p) = (rig.joints[b], rig.joints[d.parent.unwrap()]);
+            let c = rig.joints[(0..rig.defs.len()).find(|c| rig.defs[*c].parent == Some(b)).unwrap()];
+            // Geometric: plane normal of the two bones, in the child's frame, weighted by bend.
+            let mut sum = bevy::math::Vec3::ZERO;
+            for f in (0..clip.frames).step_by(20) {
+                let w = clip.world_pose(f);
+                let (s, e, wr) = (w[p].w_axis.truncate(), w[j].w_axis.truncate(), w[c].w_axis.truncate());
+                let n = (e - s).normalize().cross((wr - e).normalize());
+                if n.length() > 0.34 { sum += rot(&w[j]).inverse() * n; }
+            }
+            let geo = sum.normalize();
+            println!("{}: PCA axis {:?}, plane axis {:?}, apart {:.0} deg, range {:.0}..{:.0}", d.name, h.axis, geo, h.axis.angle_between(geo).to_degrees().min(180.0 - h.axis.angle_between(geo).to_degrees()), h.min.to_degrees(), h.max.to_degrees());
+        }
+    }
+
+    /// The human pass on the shipped solve of the template, measured:
+    ///
+    ///     cargo test human_pass_on_the_template -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn human_pass_on_the_template() {
+        use crate::core::human::{Human, Slot};
+        std::env::set_var("XMS_CACHE_DIR", std::env::temp_dir().join("xms_ragdoll_none"));
+        let mut g = crate::node_graph::NodeGraphState::default();
+        let mut subnets = crate::ice::SubnetStore::default();
+        let t = crate::templates::TEMPLATES.iter().find(|t| t.name.starts_with("Body Collide")).unwrap();
+        (t.build)(&mut g, &mut subnets);
+        let id = g.nodes.iter().find(|n| matches!(n.node_type, crate::types::NodeType::Ragdoll { .. })).unwrap().id;
+        let (clip, car) = g.ragdoll_inputs(id);
+        let clip = clip.unwrap();
+        let solved = super::solved(super::key(&clip, car.as_ref(), &super::Settings::default())).unwrap();
+        let h = Human::of(&clip);
+        println!("{}: {} of 20 parts", h.convention, h.found());
+        println!("solve: {:?}", solved.report);
+        if let Ok(p) = std::env::var("XMS_OLD_RAG") {
+            let old = super::read_solved(std::path::Path::new(&p)).unwrap();
+            println!("earlier solve: {:?}", old.report);
+            let before = super::apply(&clip, &old);
+            if std::env::var("XMS_DEPTHS").is_ok() { println!("earlier solve, and the human pass on it:"); let bvh = super::tree(car.as_ref().unwrap()); let crosses = |a: bevy::math::Vec3, b: bevy::math::Vec3| bvh.segment(a, b).is_some(); let (o, r) = crate::core::human_ik::humanize(&clip, &before, &h, &Default::default(), Some(&crosses)); println!("{r:?}"); depths(&clip, car.as_ref().unwrap(), &before, &o); println!("this solve:"); }
+        }
+        let moved = super::apply(&clip, &solved);
+        let t0 = std::time::Instant::now();
+        let bvh = super::tree(car.as_ref().unwrap());
+        let crosses = |a: bevy::math::Vec3, b: bevy::math::Vec3| bvh.segment(a, b).is_some();
+        let mut limits = crate::core::human_ik::Limits::default();
+        if let Ok(v) = std::env::var("XMS_SWIVEL") { limits.swivel = v.parse().unwrap(); }
+        let (out, r) = crate::core::human_ik::humanize(&clip, &moved, &h, &limits, Some(&crosses));
+        println!("human pass {:.2} s over {} frames: {r:?}", t0.elapsed().as_secs_f32(), clip.frames);
+        // Hand against forearm, and forearm against capture, in degrees.
+        let rot = |m: &bevy::math::Mat4| m.to_scale_rotation_translation().1;
+        for (hand, fore) in [(Slot::LeftHand, Slot::LeftLowerArm), (Slot::RightHand, Slot::RightLowerArm), (Slot::LeftFoot, Slot::LeftCalf), (Slot::RightFoot, Slot::RightCalf)] {
+            let (e, m) = (h.get(hand).unwrap(), h.get(fore).unwrap());
+            let rest = clip.skin.as_ref().map(|s| s.bind.clone()).unwrap();
+            let neutral = rot(&rest[m]).inverse() * rot(&rest[e]);
+            let mut worst = [(0.0f32, 0usize); 3];
+            for f in 0..clip.frames {
+                for (k, c) in [&*clip, &moved, &out].iter().enumerate() {
+                    let w = c.world_pose(f);
+                    let a = (neutral.inverse() * rot(&w[m]).inverse() * rot(&w[e])).angle_between(bevy::math::Quat::IDENTITY).to_degrees();
+                    if a > worst[k].0 { worst[k] = (a, f); }
+                }
+            }
+            println!("{hand:?} from neutral, most: capture {:.0} (frame {}), solved {:.0} (frame {}), after {:.0} (frame {})", worst[0].0, worst[0].1, worst[1].0, worst[1].1, worst[2].0, worst[2].1);
+        }
+        for s in [Slot::LeftUpperArm, Slot::RightUpperArm, Slot::LeftLowerArm, Slot::RightLowerArm, Slot::LeftThigh, Slot::RightThigh, Slot::LeftCalf, Slot::RightCalf] {
+            let j = h.get(s).unwrap();
+            let mut worst = [(0.0f32, 0usize); 2];
+            for f in 0..clip.frames {
+                let wc = clip.world_pose(f);
+                for (k, c) in [&moved, &out].iter().enumerate() {
+                    let w = c.world_pose(f);
+                    let a = rot(&wc[j]).angle_between(rot(&w[j])).to_degrees();
+                    if a > worst[k].0 { worst[k] = (a, f); }
+                }
+            }
+            println!("{s:?} from capture, most: solved {:.0} (frame {}), after {:.0} (frame {})", worst[0].0, worst[0].1, worst[1].0, worst[1].1);
+        }
+        // Elbows and knees: how far the pass moves them, how many frames it
+        // touches, and the largest jump from one frame to the next.
+        for s in [Slot::LeftLowerArm, Slot::RightLowerArm, Slot::LeftCalf, Slot::RightCalf] {
+            let j = h.get(s).unwrap();
+            let (mut most, mut touched, mut jump_s, mut jump_o, mut jump_at) = (0.0f32, 0usize, 0.0f32, 0.0f32, 0usize);
+            let (mut prev_s, mut prev_o): (Option<bevy::math::Vec3>, Option<bevy::math::Vec3>) = (None, None);
+            for f in 0..clip.frames {
+                let (a, b) = (moved.world_pose(f)[j].w_axis.truncate(), out.world_pose(f)[j].w_axis.truncate());
+                let d = (a - b).length();
+                most = most.max(d);
+                if d > 0.005 { touched += 1; }
+                if let (Some(ps), Some(po)) = (prev_s, prev_o) { jump_s = jump_s.max((a - ps).length()); if (b - po).length() > jump_o { jump_o = (b - po).length(); jump_at = f; } }
+                prev_s = Some(a); prev_o = Some(b);
+            }
+            println!("{s:?}: moved up to {:.1} cm, more than 5 mm in {touched} frames; largest step between frames {:.1} cm solved, {:.1} cm after (frame {jump_at})", most * 100.0, jump_s * 100.0, jump_o * 100.0);
+        }
+        if std::env::var("XMS_DEPTHS").is_ok() { depths(&clip, car.as_ref().unwrap(), &moved, &out); }
+    }
+
     /// The template opens solved, from the result that ships with the examples.
     #[test]
     fn the_template_opens_solved_when_its_files_are_there() {
@@ -881,3 +1114,4 @@ mod shipped {
         assert!(!std::sync::Arc::ptr_eq(&g.eval_anim(id).unwrap(), &clip));
     }
 }
+

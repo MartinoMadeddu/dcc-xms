@@ -658,11 +658,12 @@ pub fn catalog() -> Vec<(&'static str, &'static str, Vec<(NodeType, &'static str
         ]),
         ("🏃", "Mocap", vec![
             (NodeType::SplitSkeleton { picks: vec![SplitPick::Character(0), SplitPick::Character(1)] }, "One output per character in the take"),
+            (NodeType::Characterize { picks: vec![] }, "Say which joint is which part of a human, for Body Collide and Retarget"),
             (NodeType::Retarget, "The motion of one skeleton on another"),
             (NodeType::AutoTPose { set_hip_height: false, hip_height: 90.0 }, "A neutral pose, one frame"),
             (NodeType::FixPose { edits: vec![] }, "Correct joints by hand, on every frame"),
             (NodeType::ProxySkin { thickness: 1.0 }, "A body of spheres and cylinders, bound to the skeleton"),
-            (NodeType::Ragdoll { settings: Default::default(), view: Default::default() }, "Keep the character out of the set and out of itself"),
+            (NodeType::Ragdoll { settings: Default::default(), view: Default::default(), limits: Default::default() }, "Keep the character out of the set and out of itself, within what a human body can do"),
         ]),
     ]
 }

@@ -550,14 +550,17 @@ fn retarget(g: &mut NodeGraphState, _: &mut SubnetStore) -> String {
 fn body_collide(g: &mut NodeGraphState, _: &mut SubnetStore) -> String {
     crate::graph_io::clear(g);
     let take  = g.add_node("Take".into(), NodeType::LoadFbx { path: examples::path(examples::RAGDOLL_TAKE), take: 0 }, p(40.0, 20.0));
+    // Characterize before Car: side by side above Body Collide, in the order of its inputs.
+    let who   = g.add_node("Characterize".into(), NodeType::Characterize { picks: vec![] }, p(40.0, 85.0));
     let car   = g.add_node("Car".into(), NodeType::LoadFbxMesh { path: examples::path(examples::RAGDOLL_SET) }, p(300.0, 20.0));
-    let body  = g.add_node("BodyCollide".into(), NodeType::Ragdoll { settings: Default::default(), view: Default::default() }, p(170.0, 130.0));
-    g.add_connection(take, 0, body, 0);
+    let body  = g.add_node("BodyCollide".into(), NodeType::Ragdoll { settings: Default::default(), view: Default::default(), limits: Default::default() }, p(170.0, 150.0));
+    g.add_connection(take, 0, who, 0);
+    g.add_connection(who, 0, body, 0);
     g.add_connection(car, 0, body, 1);
-    view(g, body, p(170.0, 240.0));
+    view(g, body, p(170.0, 260.0));
     g.selected_node  = Some(body);
     g.selected_nodes = vec![body];
-    format!("Body Collide: the actor walks through the car at frame 1341 and is seated by 1473. Scrub to frame 3000: hips on the seat, feet in the footwell. Bypass the node to see the capture. Display: Hulls shows the shapes that collide.{}", missing_examples())
+    format!("Body Collide: the actor walks through the car at frame 1341 and is seated by 1473. Scrub to frame 3000: hips on the seat, feet in the footwell. Bypass the node to see the capture. Display: Hulls shows the shapes that collide. Characterize shows which joint is which part.{}", missing_examples())
 }
 
 fn mocap_example(g: &mut NodeGraphState, _: &mut SubnetStore) -> String {

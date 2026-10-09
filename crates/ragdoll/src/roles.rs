@@ -38,7 +38,7 @@ impl Role {
             Role::Clavicle => t(0.55, 0.55, 14.0,  6.0, false, false, 0.35),
             Role::UpperArm => t(0.40, 0.40, 70.0, 50.0, false, false, 0.2),
             Role::LowerArm => t(0.35, 0.35, 10.0, 70.0, true,  false, 0.16),
-            Role::Hand     => t(0.40, 0.80, 60.0, 40.0, false, false, 0.35),
+            Role::Hand     => t(0.40, 0.80, 45.0, 30.0, false, false, 0.35),
             Role::Thigh    => t(0.45, 0.45, 50.0, 35.0, false, false, 0.2),
             Role::Calf     => t(0.40, 0.40,  8.0, 25.0, true,  false, 0.14),
             Role::Foot     => t(0.45, 0.85, 55.0, 30.0, false, false, 0.3),
@@ -48,7 +48,8 @@ impl Role {
     }
 
     /// How much harder the part is to turn than its shape makes it. The
-    /// ends of the limbs and the head keep their turn when they are pushed.
+    /// ends of the limbs and the head keep their turn when they are pushed:
+    /// the limb moves, the hand does not spin, a lifted foot stays level.
     pub fn turn_resist(self) -> f32 { if matches!(self, Role::Hand | Role::Foot | Role::Toe | Role::Head) { 25.0 } else { 1.0 } }
 
     /// Part of the trunk: these never collide with each other.

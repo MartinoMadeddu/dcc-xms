@@ -45,6 +45,25 @@ pub struct Hinge {
     pub max:       f32,
 }
 
+/// What a wrist or an ankle allows, counted from where the skin was bound:
+/// the swing of the bone below inside an ellipse, wide for flexion and
+/// narrow from side to side. Where the capture goes past it, the capture
+/// is the limit for that frame.
+#[derive(Clone, Copy, Debug)]
+pub struct Range {
+    /// Rotation of the bone in its parent's frame where the skin was bound.
+    pub neutral:   Quat,
+    /// Long axis of the bone, and the axis it flexes about, in its own frame.
+    pub along:     Vec3,
+    pub flex_axis: Vec3,
+    /// Most swing about the flexion axis, and from side to side, radians.
+    pub flex:      f32,
+    pub side:      f32,
+    /// Most twist about the long axis either way, radians: turning a hand
+    /// over, rolling a foot onto its edge.
+    pub twist:     f32,
+}
+
 #[derive(Clone)]
 pub struct BodyDef {
     pub name:       String,
@@ -69,6 +88,8 @@ pub struct BodyDef {
     /// Direction of the bone in its own frame: the axis twist is measured about.
     pub twist_axis: Vec3,
     pub hinge:      Option<Hinge>,
+    /// The range of a wrist or an ankle, whatever the capture.
+    pub range:      Option<Range>,
     /// The character cannot step around something that blocks this body.
     pub core:       bool,
     /// Depth this body may rest in a surface, metres: a seat gives.
@@ -689,14 +710,23 @@ impl Solver {
             let (swing, twist) = swing_twist(rest, def.twist_axis);
             let twist = Quat::from_axis_angle(def.twist_axis, twist_angle(twist, def.twist_axis).clamp(-def.twist, def.twist));
             let swing = clamp_angle(swing, def.swing);
-            let want = (swing * twist * flex).normalize();
+            let mut want = (swing * twist * flex).normalize();
+            let mut ranged = false;
+            if let Some(r) = &def.range {
+                let w = within_range(r, rel_t, want);
+                ranged = w.angle_between(want) > 1e-5;
+                want = w;
+            }
             if want.angle_between(dev) < 1e-5 { continue; }
             // Turn child and parent toward each other, by their inertia.
             let pq = self.bodies[pi].q;
             let fix = (pq * (rel_t * want) * rel.inverse() * pq.inverse()).normalize();
             let (axis, angle) = axis_angle(fix);
             if angle.abs() < 1e-6 { continue; }
-            let wp = axis.dot(self.bodies[pi].inv_inertia_world(axis));
+            // A wrist or an ankle at the end of its range turns the hand or
+            // the foot back, not the forearm or the calf: what pushed the
+            // hand there moves the limb through the contact instead.
+            let wp = if ranged { 0.0 } else { axis.dot(self.bodies[pi].inv_inertia_world(axis)) };
             let wc = axis.dot(self.bodies[i].inv_inertia_world(axis));
             let total = (wp + wc).max(1e-12);
             // Part of the way in each pass: a joint at its limit and a
@@ -711,6 +741,37 @@ impl Solver {
 const LIMIT_SHARE: f32 = 0.5;
 /// How many times faster the trunk comes back to its capture than a limb.
 const CORE_HOLD: f32 = 3.0;
+
+/// `want` (a change from the capture `rel_t`) cut back so the joint stays
+/// within its range, or within the capture where that is further out.
+pub fn within_range(r: &Range, rel_t: Quat, want: Quat) -> Quat {
+    let side_axis = r.along.cross(r.flex_axis);
+    let norm = |v: Vec3| ((v.dot(r.flex_axis) / r.flex.max(1e-3)).powi(2) + (v.dot(side_axis) / r.side.max(1e-3)).powi(2)).sqrt();
+    let (sw_t, tw_t) = swing_twist((r.neutral.inverse() * rel_t).normalize(), r.along);
+    let room = norm(rotvec(sw_t)).max(1.0);
+    let most_twist = r.twist.max(twist_angle(tw_t, r.along).abs());
+    let d = (r.neutral.inverse() * rel_t * want).normalize();
+    let (sw, tw) = swing_twist(d, r.along);
+    let v = rotvec(sw);
+    let k = norm(v);
+    let t = twist_angle(tw, r.along);
+    if k <= room && t.abs() <= most_twist { return want; }
+    let sw = if k > room { from_rotvec(v * (room / k)) } else { sw };
+    let tw = Quat::from_axis_angle(r.along, t.clamp(-most_twist, most_twist));
+    (rel_t.inverse() * r.neutral * sw * tw).normalize()
+}
+
+pub fn rotvec(q: Quat) -> Vec3 {
+    let q = if q.w < 0.0 { -q } else { q };
+    let v = Vec3::new(q.x, q.y, q.z);
+    let s = v.length();
+    if s < 1e-9 { Vec3::ZERO } else { v / s * 2.0 * s.atan2(q.w) }
+}
+
+pub fn from_rotvec(v: Vec3) -> Quat {
+    let a = v.length();
+    if a < 1e-9 { Quat::IDENTITY } else { Quat::from_axis_angle(v / a, a) }
+}
 
 /// Split a rotation into a swing and a twist about `axis`: q = swing * twist.
 pub fn swing_twist(q: Quat, axis: Vec3) -> (Quat, Quat) {
@@ -739,4 +800,35 @@ fn axis_angle(q: Quat) -> (Vec3, f32) {
 fn clamp_angle(q: Quat, max: f32) -> Quat {
     let (axis, angle) = axis_angle(q);
     if angle <= max { q } else { Quat::from_axis_angle(axis, max) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn wrist() -> Range {
+        Range { neutral: Quat::IDENTITY, along: Vec3::NEG_Y, flex_axis: Vec3::X, flex: 75f32.to_radians(), side: 25f32.to_radians(), twist: 90f32.to_radians() }
+    }
+
+    #[test]
+    fn a_wrist_bends_forward_freely_and_sideways_a_little() {
+        let r = wrist();
+        // From neutral: 60 degrees of flexion is within range, 60 to the side is not.
+        let flex = Quat::from_rotation_x(60f32.to_radians());
+        assert!(within_range(&r, Quat::IDENTITY, flex).angle_between(flex) < 1e-5);
+        let side = Quat::from_rotation_z(60f32.to_radians());
+        let got = within_range(&r, Quat::IDENTITY, side);
+        assert!((got.angle_between(Quat::IDENTITY).to_degrees() - 25.0).abs() < 0.5, "{}", got.angle_between(Quat::IDENTITY).to_degrees());
+    }
+
+    #[test]
+    fn the_capture_is_never_cut_back_only_what_goes_past_it() {
+        let r = wrist();
+        // The capture itself 40 degrees to the side: kept, and no further.
+        let cap = Quat::from_rotation_z(40f32.to_radians());
+        assert!(within_range(&r, cap, Quat::IDENTITY).angle_between(Quat::IDENTITY) < 1e-5);
+        let more = Quat::from_rotation_z(20f32.to_radians());
+        let got = cap * within_range(&r, cap, more);
+        assert!((got.angle_between(Quat::IDENTITY).to_degrees() - 40.0).abs() < 0.5);
+    }
 }

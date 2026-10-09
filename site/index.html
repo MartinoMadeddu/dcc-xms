@@ -479,9 +479,9 @@
       <div>
         <div class="copy">
           <p>A clip holds a skeleton, per-frame transforms, a rational frame rate and timecode, drop-frame included. The timeline has no range of its own: it takes range, rate and timecode from whichever node is selected.</p>
-          <p>Retarget puts the motion of one skeleton on another. Joints are matched by name, ignoring prefixes and namespaces, and bones are aligned in the rest pose, so the two may rest differently.</p>
+          <p>Retarget puts the motion of one skeleton on another. Joints are matched by the part of the body they are, so a Mixamo take drives an Unreal skeleton, and bones are aligned in the rest pose, so the two may rest differently. Unreal, MetaHuman, Mixamo, HumanIK, Biped, Rigify, Unity, VRM, VRoid, Character Creator, Daz, SMPL, Xsens, OptiTrack and more are read from their joint names, twist joints in line or beside the limb; a Characterize node sets the rest by hand.</p>
           <p>Nodes that choose joints by name take comma-separated regular expressions, with a picker listing the joints coming in and a live match count. <code>thumb, index, middle</code> works. So does <code>^Left.*(Arm|Hand)$</code>.</p>
-          <p>Body Collide keeps a captured character out of a set and out of itself. The actor sat on a box; the character sits in the car, on the seat, feet on the floor. 12,227 frames against 1.7 million triangles solve in under five minutes on two cores.</p>
+          <p>Body Collide keeps a captured character out of a set and out of itself. The actor sat on a box; the character sits in the car, on the seat, feet on the floor. 12,227 frames against 1.7 million triangles solve in about five minutes on two cores, then go through a human IK pass: elbows and knees bend about their hinge, the right way round, wrists and ankles stay within their range.</p>
           <p>Write FBX sends a clip back out with the skeleton it came in with, whatever was done to it on the way: the same joints, the same Root, the same axes and unit as the source. The engine sees an animation of the skeleton it already has. Motion only, or with the mesh, for one file or every file of the folder, in the background.</p>
         </div>
         <div class="box">
@@ -497,7 +497,8 @@
             <tr><td>Prune Joints · Floor</td><td>Drop fingers, sit on the ground</td></tr>
             <tr><td>Proxy Skin · Write FBX</td><td>A body to look at, a file to ship</td></tr>
             <tr><td>Transform</td><td>Move a clip, its skin with it, once</td></tr>
-            <tr><td>Body Collide</td><td>Out of the set and out of itself</td></tr>
+            <tr><td>Characterize</td><td>Which joint is which part of a human</td></tr>
+            <tr><td>Body Collide</td><td>Out of the set and out of itself, within a human range</td></tr>
           </table></div>
         </div>
       </div>
@@ -575,7 +576,7 @@
           <tr><td>Primitives</td><td>Pick Primitives · Prune Primitives · Unpack</td></tr>
           <tr><td>UV</td><td>UV Unwrap · UV Transform · UV Edit</td></tr>
           <tr><td>Animation</td><td>Rename Joints · Trim · Retime · Set Timecode · Time Warp · Blend · Loop · Mirror · Smooth · In Place · Floor · Prune Joints</td></tr>
-          <tr><td>Mocap</td><td>Split Characters · Retarget · Auto T-Pose · Fix Pose · Proxy Skin · Body Collide</td></tr>
+          <tr><td>Mocap</td><td>Split Characters · Characterize · Retarget · Auto T-Pose · Fix Pose · Proxy Skin · Body Collide</td></tr>
         </table></div>
       </div>
     </div>

@@ -65,10 +65,13 @@ Load a folder of FBX takes, split the characters, fix the pose, skin a proxy and
 - **Real frame rates and timecode:** rational rates, drop-frame, and a timeline that takes its range from whichever node is selected
 - **Clip nodes:** rename joints, trim, retime, set timecode
 - **Clip tools:** mirror, smooth, in place, blend, loop, retarget, time warp, prune joints, floor
+- **Any human skeleton:** Unreal, MetaHuman, Mixamo, HumanIK, Biped, Rigify, Unity, VRM, VRoid, Character Creator, Daz, SMPL, Xsens, OptiTrack, Rokoko, ARKit, Kinect, CMU and more are read from their joint names, with their twist joints in line or beside the limb. A Characterize node shows what was read and sets the rest by hand. Retarget matches joints by the part of the body they are, so a Mixamo take drives an Unreal skeleton
 - **One Transform for everything:** the node that moves a mesh or a USD asset moves a clip too, by its top joints, so a skinned mesh moves once, with its skeleton
 - **Name patterns, not typing:** nodes that work on joints by name take comma-separated regular expressions, with a picker listing the joints coming in and a live match count
 - **Batch nodes:** split characters, auto T-pose, fix pose, proxy skin, write FBX
 - **Write FBX, the skeleton it came in with:** after any process, a clip goes back out with the source file's joint names, hierarchy, Root and LimbNode kinds, axes and unit, so an engine sees an animation of the skeleton it already has. Motion only, or with the mesh, skin and bind pose. One file or the whole folder, in the background
+
+![Characterize: the skeleton read as Unreal 5 / MetaHuman, every part found, twist joints beside the limbs](docs/xms_characterize.png)
 
 ![A two-character motion capture take, loaded from FBX](docs/xms_mocap.png)
 
@@ -80,7 +83,9 @@ Load a folder of FBX takes, split the characters, fix the pose, skin a proxy and
 
 The actor sat on a box. The character sits in a car, with its hips in the cushion and its feet under the floor. Wire the take and the set into a Body Collide node and press Solve: the character is kept out of the set and out of itself, joints give way as far as each may, and no bone changes length. Where the capture walks the character through a door that was not there on the day, it follows the capture through and is caught again on the other side.
 
-A take of 12,227 frames against a car of 1.7 million triangles solves in under five minutes on two cores, a chunk of frames at a time. The "Body Collide: into the car" template ships with that take, the car and the solved result, so it opens solved. Display on the node shows the character's skin, its rigid pieces, or the hulls that collide. See [docs/body-collide.md](docs/body-collide.md).
+The result then goes through a human IK pass: elbows and knees bend about their hinge the way round the capture bends them, never past what a human joint does, pointing near where the capture points them; wrists and ankles stay within their range; twist joints take their share. On the template's take no elbow or knee is left bent the wrong way (8 frames before the pass) and no wrist or ankle past its range; wrists and ankles stay within 2.4 cm of where the solve put them.
+
+A take of 12,227 frames against a car of 1.7 million triangles solves in about five minutes on two cores, a chunk of frames at a time. The "Body Collide: into the car" template ships with that take, the car and the solved result, so it opens solved. Display on the node shows the character's skin, its rigid pieces, or the hulls that collide. See [docs/body-collide.md](docs/body-collide.md).
 
 ![Body Collide: the take in the car, showing the hulls that collide](docs/xms_body_collide.png)
 

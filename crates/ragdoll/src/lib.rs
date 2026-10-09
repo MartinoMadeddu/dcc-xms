@@ -25,5 +25,5 @@ pub mod bake;
 pub use bvh::Bvh;
 pub use hull::Hull;
 pub use roles::{Role, Side};
-pub use solver::{BodyDef, Hinge, Params, Pose, Solver, FrameStats};
+pub use solver::{BodyDef, Hinge, Params, Pose, Range, Solver, FrameStats};
 pub use bake::{bake, BakeInput, BakeReport, FrameOut};

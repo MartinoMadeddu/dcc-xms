@@ -223,6 +223,7 @@ pub fn read_clip(path: &str) -> Result<AnimData, String> {
         source_dir: p.parent().map(|s| s.to_string_lossy().to_string()).unwrap_or_default(),
         subject: String::new(),
         skin,
+        human: None,
     })
 }
 

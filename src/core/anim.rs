@@ -241,6 +241,9 @@ pub struct AnimData {
     /// Axes and unit of the file the clip came from. Written files use them
     /// again, so a clip goes back out with the skeleton it came in with.
     pub space:       Option<Arc<FileSpace>>,
+    /// What is what in the skeleton, set by hand on a Characterize node.
+    /// Slots not set here are read from the joint names.
+    pub human:       Option<Arc<super::human::Picks>>,
 }
 
 /// The axes, unit and joint kinds of a source file.
@@ -743,6 +746,7 @@ pub fn create_test_clip(seconds: f32, rate: FrameRate) -> AnimData {
         subject:     String::new(),
         skin:        None,
         space:       None,
+        human:       None,
     }
 }
 

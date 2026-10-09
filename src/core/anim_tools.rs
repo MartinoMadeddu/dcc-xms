@@ -327,8 +327,14 @@ impl AnimData {
     pub fn retargeted(&self, target: &AnimData) -> (AnimData, usize) {
         let (sp, tp) = (self.name_prefix(), target.name_prefix());
         let source_keys: Vec<String> = self.joints.iter().map(|j| key(short_name(&j.name, &sp))).collect();
-        let map: Vec<Option<usize>> = target.joints.iter().map(|j| {
+        // By part first: two conventions can give one name to different
+        // parts (a "LeftShoulder" is a collar bone in HumanIK and an upper
+        // arm in some BVH files). Then by name, for what has no part.
+        let (hs, ht) = (super::human::Human::of(self), super::human::Human::of(target));
+        let by_part = if hs.usable() && ht.usable() { hs.pairs(&ht, target.joints.len()) } else { vec![None; target.joints.len()] };
+        let map: Vec<Option<usize>> = target.joints.iter().enumerate().map(|(t, j)| {
             if !j.is_bone { return None; }
+            if let Some(s) = by_part[t] { return Some(s); }
             let k = key(short_name(&j.name, &tp));
             source_keys.iter().position(|s| *s == k && !k.is_empty())
         }).collect();
@@ -410,6 +416,7 @@ impl AnimData {
             subject:     target.subject.clone(),
             skin:        target.skin.clone(),
             space:       target.space.clone(),
+            human:       target.human.clone(),
         }, matched)
     }
 

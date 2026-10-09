@@ -253,6 +253,25 @@ mod tests {
         assert_eq!(h.nodes.iter().filter(|n| n.id == fresh).count(), 1);
     }
 
+    /// What a Characterize node sets is saved with the graph and reaches
+    /// the nodes after it.
+    #[test]
+    fn characterize_picks_are_saved_and_reach_the_clip() {
+        use crate::core::human::{Human, Slot};
+        let mut g = NodeGraphState::default();
+        let take = g.add_node("Take".into(), NodeType::TestClip { seconds: 1.0, fps_num: 30, fps_den: 1 }, egui::pos2(0.0, 0.0));
+        let who = g.add_node("Characterize".into(), NodeType::Characterize { picks: vec![(Slot::LeftHand, "Take01:LeftForeArm".into())] }, egui::pos2(0.0, 80.0));
+        g.add_connection(take, 0, who, 0);
+        let json = to_json(&g);
+        let mut back = NodeGraphState::default();
+        from_json(&mut back, &json).unwrap();
+        let clip = back.eval_anim(who).unwrap();
+        let h = Human::of(&clip);
+        assert_eq!(h.get(Slot::LeftHand).map(|j| clip.joints[j].name.as_str()), Some("Take01:LeftForeArm"));
+        assert_eq!(h.get(Slot::RightHand).map(|j| clip.joints[j].name.as_str()), Some("Take01:RightHand"));
+        assert_eq!(h.picked, vec![Slot::LeftHand]);
+    }
+
     #[test]
     fn bad_json_leaves_graph_alone() {
         let mut g = NodeGraphState::default();

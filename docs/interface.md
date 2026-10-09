@@ -82,7 +82,7 @@ Seven categories, each a submenu, each item a node. A node has one name, the sam
 | Primitives | Pick Primitives, Prune Primitives, Unpack |
 | UV | UV Unwrap, UV Transform, UV Edit |
 | Animation | Rename Joints, Trim, Retime, Set Timecode, Time Warp, Blend, Loop, Mirror, Smooth, In Place, Floor, Prune Joints |
-| Mocap | Split Characters, Retarget, Auto T-Pose, Fix Pose, Proxy Skin, Body Collide |
+| Mocap | Split Characters, Characterize, Retarget, Auto T-Pose, Fix Pose, Proxy Skin, Body Collide |
 
 Transform moves anything: a mesh, packed primitives (the picked ones, or each of them), or a clip. A clip moves by its top joints, so a skinned mesh follows its skeleton once and is not moved a second time.
 

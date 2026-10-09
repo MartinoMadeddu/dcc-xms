@@ -9,7 +9,7 @@ fn capsule_body(name: &str, parent: Option<usize>, len: f32, radius: f32, core: 
     let hull = Hull::capsule(Vec3::X * radius, Vec3::X * (len - radius), radius, 2);
     BodyDef {
         name: name.into(), parent, mass: hull.volume * 1000.0, hull,
-        follow: 0.4, follow_turn: 0.4, trunk: false, turn_resist: 1.0, swing: 1.2, twist: 0.8, twist_axis: Vec3::X, hinge: None, core, sink: 0.0,
+        follow: 0.4, follow_turn: 0.4, trunk: false, turn_resist: 1.0, swing: 1.2, twist: 0.8, twist_axis: Vec3::X, hinge: None, range: None, core, sink: 0.0,
     }
 }
 

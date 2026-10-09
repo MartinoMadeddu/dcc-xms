@@ -497,9 +497,13 @@ pub fn draw_properties(
             });
         }
         NodeType::Retarget => {
-            group(ui, "Retarget", Some("The motion of the first input on the skeleton of the second. Joints are matched by name, ignoring namespaces and the prefix each skeleton shares. The skeletons may rest in different poses: bones are lined up at rest first"), |f| {
+            group(ui, "Retarget", Some("The motion of the first input on the skeleton of the second. Joints are matched by the part of the body they are (from a Characterize node, or read from the names), the rest by name, ignoring namespaces and the prefix each skeleton shares. The skeletons may rest in different poses: bones are lined up at rest first"), |f| {
                 match (&anim.input, &anim.output) {
-                    (Some(i), Some(o)) => { f.value("Motion", format!("{} joints", i.joints.len())); f.value("Result", format!("{} joints", o.joints.len())); }
+                    (Some(i), Some(o)) => {
+                        let (hi, ho) = (crate::core::human::Human::of(i), crate::core::human::Human::of(o));
+                        f.value("Motion", format!("{} joints, {}", i.joints.len(), hi.convention));
+                        f.value("Result", format!("{} joints, {}", o.joints.len(), ho.convention));
+                    }
                     _ => f.status(Status::Info, "Connect a clip to both inputs"),
                 }
             });
@@ -545,7 +549,8 @@ pub fn draw_properties(
                 f.value("Mesh", format!("{} vertices, {} faces", skin.positions.len(), skin.faces.len()));
             }
         }),
-        NodeType::Ragdoll { settings, view } => body_collide(ui, settings, view, &collide_in),
+        NodeType::Characterize { picks } => characterize(ui, picks, &anim.input),
+        NodeType::Ragdoll { settings, view, limits } => body_collide(ui, settings, view, limits, &collide_in),
 
         // ── Modelling ────────────────────────────────────────────────────────
         NodeType::EditPoly { ops, pending, edit, auto_collapse } => edit_poly(ui, ops, pending, edit, auto_collapse, io),
@@ -553,18 +558,98 @@ pub fn draw_properties(
     if resync { graph.sync_sockets(sel_id); }
 }
 
+// ── Characterize ──────────────────────────────────────────────────────────────
+
+fn characterize(ui: &mut egui::Ui, picks: &mut crate::core::human::Picks, input: &Option<Arc<AnimData>>) {
+    use crate::core::human::{Human, Slot};
+    let Some(clip) = input else {
+        group(ui, "Skeleton", None, |f| f.status(Status::Info, "Connect a clip"));
+        return;
+    };
+    let h = Human::detect(&clip.joints, picks);
+    let mut clear = false;
+    group_with(ui, "Skeleton", Some("Each part is read from the joint names and the hierarchy. Pick a joint to set a part by hand; Auto goes back to the names. The spine is what lies between the hips and the chest, the neck what lies between the chest and the head"), |ui| {
+        if !picks.is_empty() && ui.small_button("Auto all").on_hover_text("Forget every pick").clicked() { clear = true; }
+    }, |f| {
+        f.value("Convention", h.convention);
+        f.value("Found", format!("{} of 20 parts{}", h.found(), if picks.is_empty() { String::new() } else { format!(", {} set by hand", h.picked.len()) }));
+        if h.usable() { f.status(Status::Ok, "Body Collide and Retarget can use it"); }
+        else { f.status(Status::Bad, "Hips and at least one arm or leg are needed"); }
+    });
+    if clear { picks.clear(); }
+    let bones: Vec<&str> = clip.joints.iter().filter(|j| j.is_bone).map(|j| j.name.as_str()).collect();
+    let name = |j: Option<usize>| j.map(|j| clip.joints[j].name.clone());
+    let chain = |v: &[usize]| match v {
+        [] => "None".to_string(),
+        [a] => clip.joints[*a].name.clone(),
+        [a, .., b] => format!("{} to {} ({})", clip.joints[*a].name, clip.joints[*b].name, v.len()),
+    };
+    let twists = |v: &[crate::core::human::Twist]| if v.is_empty() { "None".to_string() } else {
+        v.iter().map(|t| format!("{} ({})", clip.joints[t.joint].name, if t.in_line { "in line" } else { "beside" })).collect::<Vec<_>>().join(", ")
+    };
+    let mut set: Option<(Slot, Option<String>)> = None;
+    let mut slot_row = |f: &mut Rows, s: Slot| {
+        let picked = picks.iter().rev().find(|p| p.0 == s).map(|p| p.1.clone());
+        let shown = match (&picked, name(h.get(s))) {
+            (Some(p), _) if p.is_empty() => "None".to_string(),
+            (_, Some(n)) => n,
+            (_, None) => "None".to_string(),
+        };
+        let id = f.ui.id().with(("slot", s));
+        f.row(s.label(), None, |ui| {
+            let text = egui::RichText::new(&shown).color(if picked.is_some() { ink::VALUE() } else { ink::DIM() });
+            egui::ComboBox::from_id_source(id).width(ui.available_width() - 8.0).selected_text(text).height(320.0).show_ui(ui, |ui| {
+                if ui.selectable_label(picked.is_none(), "Auto, from the names").clicked() { set = Some((s, None)); }
+                if ui.selectable_label(picked.as_deref() == Some(""), "None").clicked() { set = Some((s, Some(String::new()))); }
+                ui.separator();
+                for b in &bones {
+                    if ui.selectable_label(picked.as_deref() == Some(*b), *b).clicked() { set = Some((s, Some(b.to_string()))); }
+                }
+            });
+        });
+    };
+    group(ui, "Trunk", None, |f| {
+        slot_row(f, Slot::Hips);
+        f.value("Spine", chain(&h.spine));
+        slot_row(f, Slot::Chest);
+        slot_row(f, Slot::Neck);
+        f.value("Neck chain", chain(&h.neck));
+        slot_row(f, Slot::Head);
+    });
+    for (k, title) in ["Left arm", "Right arm", "Left leg", "Right leg"].iter().enumerate() {
+        let limb = &h.limbs[k];
+        let side = if limb.left { crate::core::human::Side::Left } else { crate::core::human::Side::Right };
+        use crate::core::human::Part;
+        let parts: &[Part] = if limb.arm { &[Part::Clavicle, Part::UpperArm, Part::LowerArm, Part::Hand] } else { &[Part::Thigh, Part::Calf, Part::Foot, Part::Toe] };
+        group(ui, title, Some("Twist joints are found by name: in line, between two main joints, or beside the limb"), |f| {
+            for p in parts { slot_row(f, Slot::of(*p, side).unwrap()); }
+            f.value(if limb.arm { "Arm twist" } else { "Thigh twist" }, twists(&limb.upper_twist));
+            f.value(if limb.arm { "Forearm twist" } else { "Calf twist" }, twists(&limb.mid_twist));
+        });
+    }
+    if let Some((s, v)) = set {
+        picks.retain(|p| p.0 != s);
+        if let Some(v) = v { picks.push((s, v)); }
+    }
+}
+
 // ── Body Collide ──────────────────────────────────────────────────────────────
 
 fn body_collide(
-    ui: &mut egui::Ui, settings: &mut crate::ragdoll::Settings, view: &mut BodyView,
+    ui: &mut egui::Ui, settings: &mut crate::ragdoll::Settings, view: &mut BodyView, limits: &mut crate::core::human_ik::Limits,
     inputs: &(Option<Arc<AnimData>>, Option<Arc<crate::types::MeshData>>),
 ) {
     let (clip, collider) = inputs;
     group(ui, "Inputs", Some("The character follows the capture and is kept out of the collider and out of itself. Joints give way, each as far as that joint may. No bone changes length"), |f| {
         match clip {
             None => f.status(Status::Info, "Connect a clip with a human skeleton to the first input"),
-            Some(c) => f.value("Clip", format!("{} frames, {}", c.frames, match &c.skin {
-                Some(s) => format!("skin of {} vertices", s.positions.len()), None => "no skin: capsules stand in".into() })),
+            Some(c) => {
+                f.value("Clip", format!("{} frames, {}", c.frames, match &c.skin {
+                    Some(s) => format!("skin of {} vertices", s.positions.len()), None => "no skin: capsules stand in".into() }));
+                let h = crate::core::human::Human::of(c);
+                f.value("Skeleton", format!("{}, {} of 20 parts", h.convention, h.found()));
+                if !h.usable() { f.status(Status::Bad, "Hips and limbs not found: put a Characterize node before this one"); }
+            }
         }
         match collider {
             Some(m) => f.value("Collider", format!("{} triangles", m.indices.len() / 3)),
@@ -601,6 +686,22 @@ fn body_collide(
     group(ui, "Pass through", Some("Where the capture takes the trunk through a surface, as when an actor walks through a door that was not there on the day, the character follows the capture with collisions off, and is caught again after"), |f| {
         f.slider_u32("Fade out", Some("Frames"), &mut settings.fade_out, 1..=60, "");
         f.slider_u32("Fade in", Some("Frames"), &mut settings.fade_in, 1..=60, "");
+    });
+    group(ui, "Human limits", Some("The solved clip goes through a human IK pass. Elbows and knees bend about their hinge, the way the capture bends them, never past 150 degrees, pointing near where the capture points them. Wrists and ankles stay within their range: flexion either way, much less from side to side. Twist joints, in line or beside the limb, take their share. Changing these does not solve again"), |f| {
+        f.toggle("On", None, &mut limits.on);
+        f.enabled(limits.on, |f| {
+            f.slider("Swivel", Some("Furthest an elbow or a knee may point away from where it points in the capture"), &mut limits.swivel, 0.0..=90.0, "°");
+            f.slider("Wrist and ankle", Some("Furthest a hand or a foot may turn away from its capture"), &mut limits.give, 0.0..=90.0, "°");
+        });
+        if let (Some(c), true) = (clip, limits.on) {
+            let key = crate::ragdoll::key(c, collider.as_ref(), settings);
+            if let Some((k, r)) = *crate::ragdoll::last_report().lock().unwrap() {
+                if k == key {
+                    f.value("Elbows, knees", format!("bent the wrong way in {} of {} frames, {} after", r.flips_before, r.frames, r.flips_after));
+                    f.value("Wrists, ankles", format!("past their range in {} frames, {} after", r.ends_before, r.ends_after));
+                }
+            }
+        }
     });
     group(ui, "Solve", None, |f| {
         let Some(c) = clip else { f.status(Status::Info, "Nothing to solve"); return };

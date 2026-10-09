@@ -171,6 +171,7 @@ pub fn evaluate_node_type(
         NodeType::BlendClips { blend, align } =>
             anim_op2(node_type, inputs, |a, b| a.blended(b, *blend, *align)),
         NodeType::Retarget => anim_op2(node_type, inputs, |a, b| a.retargeted(b).0),
+        NodeType::Characterize { picks } => anim_op(node_type, inputs, |a| crate::core::human::with_picks(a, picks)),
 
         // ── Ragdoll ──────────────────────────────────────────────────────────
         NodeType::LoadFbxMesh { path } => {
@@ -181,13 +182,13 @@ pub fn evaluate_node_type(
         }
         NodeType::Calamari { hulls, detail } =>
             anim_op(node_type, inputs, |a| crate::ragdoll::calamari(a, *hulls, *detail)),
-        NodeType::Ragdoll { settings, .. } => {
+        NodeType::Ragdoll { settings, limits, .. } => {
             // The clip, and the collider when one is wired. Nothing is solved
             // here: the node puts out the result of a solve when there is
             // one for exactly these inputs and settings.
             let clip = inputs.iter().find_map(|r| r.as_anim())?;
             let collider = inputs.iter().find(|r| r.as_anim().is_none()).map(|r| r.shared_mesh());
-            Some(EvalResult::Anim(crate::ragdoll::output(clip, collider.as_ref(), settings)))
+            Some(EvalResult::Anim(crate::ragdoll::output(clip, collider.as_ref(), settings, limits)))
         }
 
         // ── UV ───────────────────────────────────────────────────────────────

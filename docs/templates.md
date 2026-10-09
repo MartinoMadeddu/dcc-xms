@@ -49,7 +49,7 @@ The Templates menu in the node graph header holds ready-made graphs. Picking one
 | T-pose and export | Auto T-Pose, Fix Pose lowering the arms, Proxy Skin and Write FBX |
 | Mocap tools | A character of the example take through the clip tool nodes |
 | Retarget | A character of the example take driving the test skeleton, which rests in another pose |
-| Body Collide: into the car | A captured actor walks through a car and sits in it, kept out of the seat, the floor and himself. Opens solved. See [Body Collide](body-collide.md) |
+| Body Collide: into the car | A captured actor walks through a car and sits in it, kept out of the seat, the floor and himself, within what a human body can do. A Characterize node shows which joint is which part. Opens solved. See [Body Collide](body-collide.md) |
 | Mocap split (example takes) | The mocap split graph on the example folder: one take of two characters |
 | Mocap split | The same graph with no folder set |
 

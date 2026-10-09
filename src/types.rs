@@ -128,6 +128,10 @@ pub enum NodeType {
     LoopClip     { blend: u32 },
     /// Motion of the first input on the skeleton of the second.
     Retarget,
+    /// Says which joint is which part of a human, where the names do not.
+    /// Slots not picked are read from the names. Body Collide and Retarget
+    /// go by what the clip carries.
+    Characterize { picks: crate::core::human::Picks },
     TimeWarp     { speed: f32, reverse: bool },
     /// Remove joints whose name contains one of the comma-separated words.
     PruneJoints  { words: String },
@@ -144,7 +148,9 @@ pub enum NodeType {
     /// itself. Solving is started from the properties panel. Saved under its
     /// first name, so older graphs open. `view` is what the viewport draws
     /// of the character, not what the node puts out.
-    Ragdoll      { settings: crate::ragdoll::Settings, #[serde(default)] view: BodyView },
+    Ragdoll      { settings: crate::ragdoll::Settings, #[serde(default)] view: BodyView,
+                   /// The human pass on the result: not part of the solve.
+                   #[serde(default)] limits: crate::core::human_ik::Limits },
 
     // ── UV ───────────────────────────────────────────────────────────────────
     /// Make texture coordinates. `angle` (degrees) limits how far a chart's
@@ -221,7 +227,7 @@ impl NodeType {
             | NodeType::FixPose { .. } | NodeType::ProxySkin { .. } | NodeType::WriteFbx { .. }
             | NodeType::MirrorClip | NodeType::SmoothClip { .. } | NodeType::InPlace { .. }
             | NodeType::TransformClip { .. } | NodeType::BlendClips { .. } | NodeType::LoopClip { .. }
-            | NodeType::Retarget | NodeType::TimeWarp { .. } | NodeType::PruneJoints { .. }
+            | NodeType::Retarget | NodeType::Characterize { .. } | NodeType::TimeWarp { .. } | NodeType::PruneJoints { .. }
             | NodeType::FloorClip { .. } | NodeType::Calamari { .. } | NodeType::Ragdoll { .. })
     }
 }
@@ -261,6 +267,7 @@ pub fn node_type_icon(t: &NodeType) -> &'static str {
         NodeType::BlendClips { .. }    => "🔀",
         NodeType::LoopClip { .. }      => "🔁",
         NodeType::Retarget             => "👥",
+        NodeType::Characterize { .. }  => "👤",
         NodeType::TimeWarp { .. }      => "⏩",
         NodeType::PruneJoints { .. }   => "🌿",
         NodeType::FloorClip { .. }     => "⬇",
@@ -308,6 +315,7 @@ pub fn node_type_label(t: &NodeType) -> &'static str {
         NodeType::BlendClips { .. }    => "Blend",
         NodeType::LoopClip { .. }      => "Loop",
         NodeType::Retarget             => "Retarget",
+        NodeType::Characterize { .. }  => "Characterize",
         NodeType::TimeWarp { .. }      => "Time Warp",
         NodeType::PruneJoints { .. }   => "Prune Joints",
         NodeType::FloorClip { .. }     => "Floor",

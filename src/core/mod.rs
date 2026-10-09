@@ -7,6 +7,8 @@ pub mod anim;
 pub mod poly;
 pub mod poly_ops;
 pub mod anim_tools;
+pub mod human;
+pub mod human_ik;
 pub mod pattern;
 pub mod uv;
 pub mod manip;
