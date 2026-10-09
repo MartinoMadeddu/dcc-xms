@@ -26,6 +26,8 @@ pub struct UsdMesh {
     pub mesh:     Arc<MeshData>,
     /// Path of the bound material, when there is one.
     pub material: Option<String>,
+    /// In place, or copies of a mesh shared between instances.
+    pub place:    crate::types::Placement,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -125,7 +127,8 @@ impl UsdScene {
         }).collect()
     }
 
-    pub fn triangles(&self) -> usize { self.meshes.iter().map(|m| m.mesh.indices.len() / 3).sum() }
+    /// Triangles drawn, every instanced copy counted.
+    pub fn triangles(&self) -> usize { self.meshes.iter().map(|m| m.mesh.indices.len() / 3 * m.place.copies()).sum() }
 }
 
 // ── Reading values ───────────────────────────────────────────────────────────
@@ -405,7 +408,7 @@ fn read_scene(data: Layer) -> UsdScene {
                 "Mesh" => {
                     if let Some(mesh) = read_mesh(&mut r, &prim, &props, &world) {
                         let material = r.target(&prim, "material:binding", "targetPaths");
-                        scene.meshes.push(UsdMesh { path: prim.clone(), mesh: Arc::new(mesh), material });
+                        scene.meshes.push(UsdMesh { path: prim.clone(), mesh: Arc::new(mesh), material, place: Default::default() });
                     }
                 }
                 "Camera" => {
@@ -536,7 +539,7 @@ fn load_root_layer(layer: &Path, ext: &str) -> Result<UsdScene, String> {
             // The older text reader copes with some files this one refuses.
             let meshes = crate::usd_loader::load_usd_meshes(layer).map_err(|_| e.clone())?;
             let mut scene = UsdScene { up_axis: "Y".into(), ..Default::default() };
-            scene.meshes = meshes.into_iter().map(|(path, mesh)| UsdMesh { path, mesh: Arc::new(mesh), material: None }).collect();
+            scene.meshes = meshes.into_iter().map(|(path, mesh)| UsdMesh { path, mesh: Arc::new(mesh), material: None, place: Default::default() }).collect();
             scene.notes.push(format!("Read with the fallback text reader, meshes only ({e})"));
             scene
         }
@@ -546,7 +549,7 @@ fn load_root_layer(layer: &Path, ext: &str) -> Result<UsdScene, String> {
         // Nothing found: let the older text reader try.
         if let Ok(meshes) = crate::usd_loader::load_usd_meshes(layer) {
             if !meshes.is_empty() {
-                scene.meshes = meshes.into_iter().map(|(path, mesh)| UsdMesh { path, mesh: Arc::new(mesh), material: None }).collect();
+                scene.meshes = meshes.into_iter().map(|(path, mesh)| UsdMesh { path, mesh: Arc::new(mesh), material: None, place: Default::default() }).collect();
                 scene.notes.push("Read with the fallback text reader, meshes only".into());
             }
         }
@@ -719,6 +722,58 @@ def Xform "world" {
             let scene = load(std::path::Path::new(&path)).unwrap();
             assert_eq!(scene.meshes.len(), meshes, "{file}: {:?}", scene.notes);
         }
+    }
+
+    #[test]
+    fn instances_share_their_prototype_meshes() {
+        use crate::types::Placement;
+        let path = write("instances.usda", &format!(r#"#usda 1.0
+def Xform "asset" {{
+    def Mesh "box" {{
+{QUAD}    }}
+}}
+def Xform "a" (
+    instanceable = true
+    references = </asset>
+)
+{{
+    double3 xformOp:translate = (10, 0, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}}
+def Xform "b" (
+    instanceable = true
+    references = </asset>
+)
+{{
+    double3 xformOp:translate = (20, 0, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}}
+def PointInstancer "trees" {{
+    rel prototypes = [</trees/protos/box>]
+    int[] protoIndices = [0, 0, 0]
+    point3f[] positions = [(0, 0, 0), (0, 5, 0), (0, 10, 0)]
+    def Scope "protos" {{
+        def Mesh "box" {{
+{QUAD}        }}
+    }}
+}}
+"#));
+        let scene = load(&path).unwrap();
+        let find = |p: &str| scene.meshes.iter().find(|m| m.path == p).unwrap_or_else(|| panic!("no {p}: {:?} {:?}", scene.meshes.iter().map(|m| &m.path).collect::<Vec<_>>(), scene.notes));
+        // Two native instances: one shared mesh, each placed.
+        let (a, b) = (find("/a/box"), find("/b/box"));
+        assert!(Arc::ptr_eq(&a.mesh, &b.mesh));
+        let x = |m: &UsdMesh| match &m.place { Placement::One(t) => t.w_axis.x, _ => panic!("not placed") };
+        assert_eq!((x(a), x(b)), (10.0, 20.0));
+        // The point instancer: one primitive holding three copies.
+        let trees = find("/trees/protos/box");
+        let ys: Vec<f32> = trees.place.matrices().iter().map(|m| m.w_axis.y).collect();
+        assert_eq!(ys, vec![0.0, 5.0, 10.0]);
+        // The asset itself, two instances and three points, two triangles each.
+        assert_eq!(scene.triangles(), 2 * 6);
+        // A copy made into a mesh lands where it is placed.
+        let placed = crate::node_graph::nodes::place_mesh(&b.mesh, &b.place.matrices()[0]);
+        assert!((bounds(&placed).0 - Vec3::new(20.0, 0.0, 0.0)).length() < 1e-4);
     }
 
     #[test]

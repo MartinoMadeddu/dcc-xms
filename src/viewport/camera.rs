@@ -185,9 +185,18 @@ pub fn focus_camera(
     }
     if target.is_none() {
         let mut points: Vec<Vec3> = vec![];
-        if let Some(mesh) = graph.evaluate_for_viewport(&eval) {
-            points.extend(mesh.vertices.iter().map(|v| Vec3::from_array(*v)));
-            points.extend(mesh.points.iter().map(|v| Vec3::from_array(*v)));
+        match graph.evaluate_for_viewport_packed(&eval) {
+            // Packed primitives by their boxes: instanced copies are not
+            // made into one mesh just to be measured.
+            Some(crate::types::EvalResult::Named(prims)) => {
+                for (lo, hi) in prims.iter().filter_map(crate::viewport::bounds::world_bounds) { points.extend([lo, hi]); }
+            }
+            Some(other) => {
+                let mesh = other.shared_mesh();
+                points.extend(mesh.vertices.iter().map(|v| Vec3::from_array(*v)));
+                points.extend(mesh.points.iter().map(|v| Vec3::from_array(*v)));
+            }
+            None => {}
         }
         for clip in graph.display_clips() {
             points.extend(clip.world_pose(clip.index_at(playback.time)).iter().map(|m| m.w_axis.truncate()));

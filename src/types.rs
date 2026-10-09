@@ -584,6 +584,58 @@ pub struct NamedMesh {
     /// The hierarchy of the stage it came from, shared with every other
     /// primitive of that stage. The scene explorer lists the stage from it.
     pub stage:    Option<std::sync::Arc<crate::usd_scene::StageTree>>,
+    /// Where `mesh` is drawn: as it is, or as copies of a shared mesh.
+    pub place:    Placement,
+}
+
+/// Where a packed primitive's mesh is drawn.
+///
+/// Instanced primitives share one mesh in its own space and differ only in
+/// where they are placed: a native USD instance is one copy, a point
+/// instancer's prototype is many. Moving them moves the placements, not the
+/// points; a node that changes the mesh itself works on the placed copies.
+#[derive(Clone, Debug, Default)]
+pub enum Placement {
+    /// The mesh is already where it is drawn.
+    #[default]
+    InPlace,
+    /// One copy of a shared mesh.
+    One(bevy::math::Mat4),
+    /// Many copies of a shared mesh.
+    Many(std::sync::Arc<[bevy::math::Mat4]>),
+}
+
+impl Placement {
+    pub fn is_placed(&self) -> bool { !matches!(self, Placement::InPlace) }
+
+    /// How many times the mesh is drawn.
+    pub fn copies(&self) -> usize {
+        match self { Placement::Many(m) => m.len(), _ => 1 }
+    }
+
+    /// The placements, empty when the mesh is in place.
+    pub fn matrices(&self) -> &[bevy::math::Mat4] {
+        match self { Placement::InPlace => &[], Placement::One(m) => std::slice::from_ref(m), Placement::Many(m) => &m[..] }
+    }
+
+    /// Every copy moved by `m` afterwards.
+    pub fn moved(&self, m: bevy::math::Mat4) -> Placement {
+        match self {
+            Placement::InPlace => Placement::InPlace,
+            Placement::One(x) => Placement::One(m * *x),
+            Placement::Many(xs) => Placement::Many(xs.iter().map(|x| m * *x).collect()),
+        }
+    }
+
+    /// The same placement, without comparing every matrix of a large set.
+    pub fn same(&self, other: &Placement) -> bool {
+        match (self, other) {
+            (Placement::InPlace, Placement::InPlace) => true,
+            (Placement::One(a), Placement::One(b)) => a == b,
+            (Placement::Many(a), Placement::Many(b)) => std::sync::Arc::ptr_eq(a, b),
+            _ => false,
+        }
+    }
 }
 
 /// How a surface looks in the viewport.
@@ -603,8 +655,30 @@ pub struct Look {
 
 impl NamedMesh {
     pub fn new(path: String, mesh: MeshData) -> Self {
-        Self { path, mesh: std::sync::Arc::new(mesh), picked: false, material: None, look: None, stage: None }
+        Self { path, mesh: std::sync::Arc::new(mesh), picked: false, material: None, look: None, stage: None, place: Placement::InPlace }
     }
+
+    /// The mesh where it is drawn: as it is when in place, else every copy
+    /// placed and merged. Borrowed when nothing has to be made.
+    pub fn world(&self) -> std::borrow::Cow<'_, MeshData> {
+        use crate::node_graph::nodes::{merge_all, place_mesh};
+        match &self.place {
+            Placement::InPlace => std::borrow::Cow::Borrowed(&*self.mesh),
+            Placement::One(m) => std::borrow::Cow::Owned(place_mesh(&self.mesh, m)),
+            Placement::Many(ms) => {
+                let copies: Vec<MeshData> = ms.iter().map(|m| place_mesh(&self.mesh, m)).collect();
+                let parts: Vec<&MeshData> = copies.iter().collect();
+                std::borrow::Cow::Owned(merge_all(&parts))
+            }
+        }
+    }
+}
+
+/// The world meshes of some packed primitives, merged into one.
+fn merge_world(prims: &[&NamedMesh]) -> MeshData {
+    let worlds: Vec<std::borrow::Cow<'_, MeshData>> = prims.iter().map(|p| p.world()).collect();
+    let parts: Vec<&MeshData> = worlds.iter().map(|w| &**w).collect();
+    crate::node_graph::nodes::merge_all(&parts)
 }
 
 #[derive(Clone, Debug)]
@@ -619,10 +693,7 @@ impl EvalResult {
     pub fn into_mesh(self) -> MeshData {
         match self {
             EvalResult::Single(m) => m,
-            EvalResult::Named(prims) => {
-                let all: Vec<&MeshData> = prims.iter().map(|p| &*p.mesh).collect();
-                crate::node_graph::nodes::merge_all(&all)
-            }
+            EvalResult::Named(prims) => merge_world(&prims.iter().collect::<Vec<_>>()),
             EvalResult::Anim(_) => MeshData::default(),
         }
     }
@@ -641,19 +712,20 @@ impl EvalResult {
     /// each time the graph is evaluated.
     pub fn shared_mesh(&self) -> std::sync::Arc<MeshData> {
         use std::sync::{Arc, Mutex};
-        type Kept = (Vec<Arc<MeshData>>, Arc<MeshData>);
+        type Kept = (Vec<(Arc<MeshData>, Placement)>, Arc<MeshData>);
         static MERGED: Mutex<Vec<Kept>> = Mutex::new(Vec::new());
         match self {
-            EvalResult::Named(prims) if prims.len() == 1 => prims[0].mesh.clone(),
+            EvalResult::Named(prims) if prims.len() == 1 && !prims[0].place.is_placed() => prims[0].mesh.clone(),
             EvalResult::Named(prims) => {
                 let mut kept = MERGED.lock().unwrap();
-                if let Some((_, m)) = kept.iter().find(|(parts, _)| parts.len() == prims.len() && parts.iter().zip(prims).all(|(a, b)| Arc::ptr_eq(a, &b.mesh))) {
+                let same = |parts: &Vec<(Arc<MeshData>, Placement)>| parts.len() == prims.len()
+                    && parts.iter().zip(prims).all(|((m, pl), b)| Arc::ptr_eq(m, &b.mesh) && pl.same(&b.place));
+                if let Some((_, m)) = kept.iter().find(|(parts, _)| same(parts)) {
                     return m.clone();
                 }
-                let all: Vec<&MeshData> = prims.iter().map(|p| &*p.mesh).collect();
-                let merged = Arc::new(crate::node_graph::nodes::merge_all(&all));
+                let merged = Arc::new(merge_world(&prims.iter().collect::<Vec<_>>()));
                 if kept.len() >= 2 { kept.remove(0); }
-                kept.push((prims.iter().map(|p| p.mesh.clone()).collect(), merged.clone()));
+                kept.push((prims.iter().map(|p| (p.mesh.clone(), p.place.clone())).collect(), merged.clone()));
                 merged
             }
             other => Arc::new(other.as_mesh()),
@@ -670,8 +742,7 @@ impl EvalResult {
     pub fn work_mesh(&self) -> MeshData {
         match self {
             EvalResult::Named(prims) if prims.iter().any(|p| p.picked) => {
-                let picked: Vec<&MeshData> = prims.iter().filter(|p| p.picked).map(|p| &*p.mesh).collect();
-                crate::node_graph::nodes::merge_all(&picked)
+                merge_world(&prims.iter().filter(|p| p.picked).collect::<Vec<_>>())
             }
             other => other.as_mesh(),
         }
@@ -690,7 +761,7 @@ impl EvalResult {
                 for p in prims {
                     if !p.picked { out.push(p.clone()); continue; }
                     if let Some(mesh) = result.take() {
-                        out.push(NamedMesh { path: p.path.clone(), mesh: std::sync::Arc::new(mesh), picked: true, material: p.material.clone(), look: p.look.clone(), stage: p.stage.clone() });
+                        out.push(NamedMesh { path: p.path.clone(), mesh: std::sync::Arc::new(mesh), picked: true, material: p.material.clone(), look: p.look.clone(), stage: p.stage.clone(), place: Placement::InPlace });
                     }
                 }
                 EvalResult::Named(out)
@@ -847,6 +918,13 @@ pub struct SceneObject {
     /// Full USD prim path for leaf mesh objects (e.g. "/root/Chair/Geom/pCylinder1").
     /// None for group/xform nodes and for procedural Single meshes.
     pub prim_path:    Option<String>,
+    /// What the row's expansion is remembered by: unique, so two rows of the
+    /// same name do not open together. A prim of a composed stage uses its
+    /// path, shared with the viewport, which draws by it.
+    pub key:          String,
+    /// The prim path of a row of a composed stage, whatever its type. These
+    /// rows decide what the viewport draws as geometry or as a box.
+    pub stage_path:   Option<String>,
 }
 
 #[derive(Resource, Default)]
@@ -857,6 +935,17 @@ pub struct SceneHierarchy {
     /// Used by the Primitive Inspector to show only that prim's data.
     pub selected_prim_path: Option<String>,
     next_id:                usize,
+    /// Rows opened or closed, by key. A row not in here takes its default:
+    /// prims of a composed stage start closed, everything else open.
+    expanded:               std::collections::HashMap<String, bool>,
+    /// Prims of a composed stage drawn as geometry, with everything below
+    /// them, however far the explorer is opened.
+    geometry:               std::collections::HashSet<String>,
+    /// Every composed stage drawn as geometry: no boxes at all.
+    pub show_all_geometry:  bool,
+    /// Counts changes to what the viewport should draw (expansion, geometry
+    /// toggles). The viewport redraws when it moves.
+    pub display_revision:   u64,
 }
 
 impl SceneHierarchy {
@@ -864,6 +953,44 @@ impl SceneHierarchy {
         let id = SceneObjectId(self.next_id);
         self.next_id += 1;
         id
+    }
+
+    /// Whether a prim of a composed stage is opened in the explorer.
+    pub fn is_expanded(&self, path: &str) -> bool {
+        self.expanded.get(path).copied().unwrap_or(false)
+    }
+
+    /// Whether a prim of a composed stage is drawn as geometry.
+    pub fn shows_geometry(&self, path: &str) -> bool {
+        self.geometry.contains(path)
+    }
+
+    /// Open or close a prim of a composed stage by its path.
+    pub fn set_expanded(&mut self, path: &str, open: bool) {
+        self.expanded.insert(path.to_string(), open);
+        for o in self.objects.iter_mut().filter(|o| o.key == path) { o.expanded = open; }
+        self.display_revision += 1;
+    }
+
+    /// Open or close a row.
+    pub fn toggle_expanded(&mut self, id: SceneObjectId) {
+        let Some(obj) = self.objects.iter_mut().find(|o| o.id == id) else { return };
+        obj.expanded = !obj.expanded;
+        self.expanded.insert(obj.key.clone(), obj.expanded);
+        if obj.stage_path.is_some() { self.display_revision += 1; }
+    }
+
+    /// Draw a prim of a composed stage as geometry, or as a box again.
+    pub fn toggle_geometry(&mut self, path: &str) {
+        if !self.geometry.remove(path) { self.geometry.insert(path.to_string()); }
+        self.display_revision += 1;
+    }
+
+    pub fn set_show_all_geometry(&mut self, on: bool) {
+        if self.show_all_geometry != on {
+            self.show_all_geometry = on;
+            self.display_revision += 1;
+        }
     }
 
     /// One composed stage, as its hierarchy. A mesh is listed while its
@@ -876,7 +1003,6 @@ impl SceneHierarchy {
         tree:       &crate::usd_scene::StageTree,
         present:    &std::collections::HashSet<&str>,
         node_id:    NodeId,
-        expansions: &std::collections::HashMap<String, bool>,
         listed:     &mut std::collections::HashSet<String>,
     ) {
         let nodes = &tree.nodes;
@@ -902,31 +1028,31 @@ impl SceneHierarchy {
             let mesh = is_mesh(i);
             if mesh { listed.insert(n.path.clone()); }
             let id = self.next_id();
+            let expanded = self.is_expanded(&n.path);
             self.objects.push(SceneObject {
                 id,
                 name:         n.name.clone(),
                 icon:         stage_icon(n, has_children),
                 depth:        n.depth,
                 has_children,
-                expanded:     *expansions.get(&n.name).unwrap_or(&true),
+                expanded,
                 node_id,
                 prim_path:    mesh.then(|| n.path.clone()),
+                key:          n.path.clone(),
+                stage_path:   Some(n.path.clone()),
             });
         }
     }
 
     /// Rebuild from the evaluated node graph results.
-    /// Expansion state is preserved by stable path key so toggling survives
-    /// graph changes. Children are ALWAYS emitted — the UI handles hiding them.
-pub fn rebuild(&mut self, entries: Vec<(NodeId, String, EvalResult)>) {
-        let expansions: std::collections::HashMap<String, bool> = self
-            .objects.iter()
-            .map(|o| (o.name.clone(), o.expanded))
-            .collect();
-
+    /// Expansion is kept by each row's key, so it survives graph changes.
+    /// Children are ALWAYS emitted — the UI handles hiding them.
+    pub fn rebuild(&mut self, entries: Vec<(NodeId, String, EvalResult)>) {
         self.objects.clear();
 
         for (node_id, node_name, result) in entries {
+            let node_key = format!("node:{}", node_id.0);
+            let node_open = *self.expanded.get(&node_key).unwrap_or(&true);
             match result {
                 EvalResult::Single(_) => {
                     let id = self.next_id();
@@ -939,12 +1065,13 @@ pub fn rebuild(&mut self, entries: Vec<(NodeId, String, EvalResult)>) {
                         expanded:     true,
                         node_id,
                         prim_path:    None,
+                        key:          node_key,
+                        stage_path:   None,
                     });
                 }
 
                 EvalResult::Anim(anim) => {
                     // Skeleton: one row per joint, indented by hierarchy depth.
-                    let expanded = *expansions.get(&node_name).unwrap_or(&true);
                     let id = self.next_id();
                     self.objects.push(SceneObject {
                         id,
@@ -952,9 +1079,11 @@ pub fn rebuild(&mut self, entries: Vec<(NodeId, String, EvalResult)>) {
                         icon:         "🎬",
                         depth:        0,
                         has_children: !anim.joints.is_empty(),
-                        expanded,
+                        expanded:     node_open,
                         node_id,
                         prim_path:    None,
+                        key:          node_key,
+                        stage_path:   None,
                     });
                     let depths = anim.joint_depths();
                     let mut is_parent = vec![false; anim.joints.len()];
@@ -969,7 +1098,8 @@ pub fn rebuild(&mut self, entries: Vec<(NodeId, String, EvalResult)>) {
                     }
                     while let Some(i) = todo.pop() {
                         let name = anim.joints[i].name.clone();
-                        let exp  = *expansions.get(&name).unwrap_or(&true);
+                        let key  = format!("joint:{}:{name}", node_id.0);
+                        let exp  = *self.expanded.get(&key).unwrap_or(&true);
                         let id   = self.next_id();
                         self.objects.push(SceneObject {
                             id,
@@ -980,13 +1110,14 @@ pub fn rebuild(&mut self, entries: Vec<(NodeId, String, EvalResult)>) {
                             expanded:     exp,
                             node_id,
                             prim_path:    None,
+                            key,
+                            stage_path:   None,
                         });
                         todo.extend(kids[i].iter().copied());
                     }
                 }
 
                 EvalResult::Named(prims) => {
-                    let expanded = *expansions.get(&node_name).unwrap_or(&true);
                     let group_id = self.next_id();
                     self.objects.push(SceneObject {
                         id:           group_id,
@@ -994,9 +1125,11 @@ pub fn rebuild(&mut self, entries: Vec<(NodeId, String, EvalResult)>) {
                         icon:         "📂",
                         depth:        0,
                         has_children: !prims.is_empty(),
-                        expanded,
+                        expanded:     node_open,
                         node_id,
                         prim_path:    None,
+                        key:          node_key,
+                        stage_path:   None,
                     });
 
                     // Primitives from a composed stage are listed in the stage's
@@ -1011,7 +1144,7 @@ pub fn rebuild(&mut self, entries: Vec<(NodeId, String, EvalResult)>) {
                     }
                     let mut listed: std::collections::HashSet<String> = std::collections::HashSet::new();
                     for tree in stages {
-                        self.push_stage(tree, &present, node_id, &expansions, &mut listed);
+                        self.push_stage(tree, &present, node_id, &mut listed);
                     }
 
                     // Everything else by the segments of its path.
@@ -1028,7 +1161,8 @@ pub fn rebuild(&mut self, entries: Vec<(NodeId, String, EvalResult)>) {
                         for seg_depth in 1..segs.len().saturating_sub(1) {
                             let parent_key = segs[..=seg_depth].join("/");
                             if seen_parents.insert(parent_key.clone()) {
-                                let exp = *expansions.get(segs[seg_depth]).unwrap_or(&true);
+                                let key = format!("seg:{}:{parent_key}", node_id.0);
+                                let exp = *self.expanded.get(&key).unwrap_or(&true);
                                 let id = self.next_id();
                                 self.objects.push(SceneObject {
                                     id,
@@ -1039,6 +1173,8 @@ pub fn rebuild(&mut self, entries: Vec<(NodeId, String, EvalResult)>) {
                                     expanded:     exp,
                                     node_id,
                                     prim_path:    None,
+                                    key,
+                                    stage_path:   None,
                                 });
                             }
                         }
@@ -1056,6 +1192,8 @@ pub fn rebuild(&mut self, entries: Vec<(NodeId, String, EvalResult)>) {
                             expanded:     true,
                             node_id,
                             prim_path:    Some(prim.path.clone()),
+                            key:          format!("seg:{}:{}", node_id.0, prim.path),
+                            stage_path:   None,
                         });
                     }
                 }

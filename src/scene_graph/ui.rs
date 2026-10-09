@@ -33,17 +33,42 @@ pub fn draw_scene_explorer(
         .fill(xsi::PANEL_BG())
         .inner_margin(6.0)
         .show(ui, |ui| {
-            ui.colored_label(xsi::HEADER(),
-                egui::RichText::new("Scene Explorer").strong().size(14.0));
+            ui.horizontal(|ui| {
+                ui.colored_label(xsi::HEADER(),
+                    egui::RichText::new("Scene Explorer").strong().size(14.0));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let mut all = hierarchy.show_all_geometry;
+                    if ui.checkbox(&mut all, egui::RichText::new("Show all geometry").color(xsi::NAME()))
+                        .on_hover_text("Draw every composed stage as geometry. Off, a closed prim is drawn as the box around what is below it, and opening it shows what is inside")
+                        .changed()
+                    {
+                        hierarchy.set_show_all_geometry(all);
+                    }
+                });
+            });
             ui.separator();
 
             egui::ScrollArea::vertical()
                 .id_source("scene_explorer_scroll")
                 .show(ui, |ui| {
                     let mut toggle_id = None;
+                    let mut geometry_toggle: Option<String> = None;
                     let mut select_id: Option<(SceneObjectId, NodeId, Option<String>)> = None;
 
                     let n = hierarchy.objects.len();
+                    // Whether each row is the last of its siblings, in one pass
+                    // from the end: the next row at its depth or shallower is
+                    // shallower.
+                    let mut last_of_siblings = vec![true; n];
+                    {
+                        let mut next_at: Vec<usize> = vec![];   // depths of rows seen below, nearest last
+                        for i in (0..n).rev() {
+                            let d = hierarchy.objects[i].depth;
+                            while next_at.last().is_some_and(|&x| x > d) { next_at.pop(); }
+                            last_of_siblings[i] = next_at.last() != Some(&d);
+                            next_at.push(d);
+                        }
+                    }
                     let mut last_at_depth: Vec<bool> = vec![false; 16];
                     let mut collapsed_at_depth: Option<usize> = None;
 
@@ -61,11 +86,7 @@ pub fn draw_scene_explorer(
                         }
 
                         // Is this the last item at its depth among its siblings?
-                        let is_last = hierarchy.objects[idx + 1..]
-                            .iter()
-                            .find(|o| o.depth <= depth)
-                            .map(|o| o.depth < depth)
-                            .unwrap_or(true);
+                        let is_last = last_of_siblings[idx];
                         if depth < 16 { last_at_depth[depth] = is_last; }
 
                         let is_sel = hierarchy.selected.map(|s| s == obj.id).unwrap_or(false);
@@ -98,8 +119,30 @@ pub fn draw_scene_explorer(
                             }
                         }
 
+                        // Prims of a composed stage: drawn as a box or as geometry.
+                        let geo_rect = egui::Rect::from_center_size(
+                            egui::pos2(row_rect.max.x - 10.0, mid_y), egui::vec2(12.0, 12.0));
+                        let geometry_on = obj.stage_path.as_deref().map(|p| hierarchy.shows_geometry(p));
+                        if let (Some(path), Some(on)) = (&obj.stage_path, geometry_on) {
+                            let tip = if on { "Drawn as geometry. Click to draw it as a box when closed" }
+                                      else  { "Drawn as a box when closed. Click to draw it as geometry" };
+                            if ui.allocate_rect(geo_rect, egui::Sense::click())
+                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                .on_hover_text(tip)
+                                .clicked()
+                            {
+                                geometry_toggle = Some(path.clone());
+                            }
+                        }
+
                         // Now safe to take the painter
                         let painter = ui.painter();
+                        if let Some(on) = geometry_on {
+                            let col = if hierarchy.show_all_geometry { xsi::DIVIDER() } else { xsi::TYPE_LABEL() };
+                            let r = egui::Rect::from_center_size(geo_rect.center(), egui::vec2(8.0, 8.0));
+                            if on || hierarchy.show_all_geometry { painter.rect_filled(r, 1.0, col); }
+                            else { painter.rect_stroke(r, 1.0, egui::Stroke::new(1.0_f32, col)); }
+                        }
 
                         // Selection background
                         if is_sel {
@@ -165,11 +208,13 @@ pub fn draw_scene_explorer(
                     }
 
                     if let Some(id) = toggle_id {
-                        if let Some(obj) = hierarchy.objects.iter_mut().find(|o| o.id == id) {
-                            obj.expanded = !obj.expanded;
-                        }
+                        hierarchy.toggle_expanded(id);
                     }
-                    if let Some((scene_id, node_id, prim_path)) = select_id {
+                    if let Some(path) = &geometry_toggle {
+                        hierarchy.toggle_geometry(path);
+                    }
+                    // A click on the geometry square is not a click on the row.
+                    if let (Some((scene_id, node_id, prim_path)), None) = (select_id, geometry_toggle) {
                         hierarchy.selected           = Some(scene_id);
                         hierarchy.selected_prim_path = prim_path;
                         graph.selected_node          = Some(node_id);

@@ -1,5 +1,5 @@
 use bevy::prelude::{EulerRot, Quat, Vec3};
-use crate::types::{EvalResult, MeshData, NamedMesh, NodeType, RetimeMode, SubnetId};
+use crate::types::{EvalResult, MeshData, NamedMesh, NodeType, Placement, RetimeMode, SubnetId};
 use crate::core::anim::{self, AnimData, FrameRate};
 use std::sync::Arc;
 use crate::usd_loader::load_usd_meshes;
@@ -31,6 +31,7 @@ pub fn evaluate_node_type(
                         path: m.path.clone(), mesh: m.mesh.clone(), picked: false, material: m.material.clone(),
                         look: m.material.as_ref().and_then(|p| looks.get(p).cloned()),
                         stage: Some(scene.tree.clone()),
+                        place: m.place.clone(),
                     }).collect()))
                 }
                 Err(_) => None,
@@ -61,9 +62,11 @@ pub fn evaluate_node_type(
                 anim::memo(&format!("{node_type:?}"), Some(clip), || Some(clip.moved(x))).map(EvalResult::Anim)
             }
             // Packed primitives with none picked: each one moves and stays
-            // a primitive of its own.
-            EvalResult::Named(prims) if !prims.iter().any(|p| p.picked) => Some(EvalResult::Named(prims.iter().map(|p| NamedMesh {
-                mesh: Arc::new(transform(&p.mesh, *translation, *rotation, *scale)), ..p.clone()
+            // a primitive of its own. Instanced ones move their placements:
+            // the shared mesh is not copied.
+            EvalResult::Named(prims) if !prims.iter().any(|p| p.picked) => Some(EvalResult::Named(prims.iter().map(|p| match &p.place {
+                Placement::InPlace => NamedMesh { mesh: Arc::new(transform(&p.mesh, *translation, *rotation, *scale)), ..p.clone() },
+                placed => NamedMesh { place: placed.moved(transform_matrix(*translation, *rotation, *scale)), ..p.clone() },
             }).collect())),
             other => Some(other.map_mesh(|m| transform(&m, *translation, *rotation, *scale))),
         }),
@@ -178,7 +181,7 @@ pub fn evaluate_node_type(
         NodeType::LoadFbxMesh { path } => {
             let meshes = crate::fbx_loader::load_meshes_cached(path).ok()?;
             Some(EvalResult::Named(meshes.iter().map(|(name, mesh)| NamedMesh {
-                path: format!("/{name}"), mesh: mesh.clone(), picked: false, material: None, look: None, stage: None,
+                path: format!("/{name}"), mesh: mesh.clone(), picked: false, material: None, look: None, stage: None, place: Placement::InPlace,
             }).collect()))
         }
         NodeType::Calamari { hulls, detail } =>
@@ -355,6 +358,27 @@ pub fn transform(mesh: &MeshData, t: Vec3, r: Vec3, s: Vec3) -> MeshData {
     m
 }
 
+/// A mesh moved by a matrix: an instanced copy made into a mesh of its own.
+/// A mirroring matrix turns the faces round, so they keep facing out.
+pub fn place_mesh(mesh: &MeshData, m: &bevy::math::Mat4) -> MeshData {
+    let mut out = MeshData {
+        vertices:   mesh.vertices.iter().map(|v| m.transform_point3(Vec3::from_array(*v)).to_array()).collect(),
+        indices:    mesh.indices.clone(),
+        points:     mesh.points.iter().map(|p| m.transform_point3(Vec3::from_array(*p)).to_array()).collect(),
+        polys:      mesh.polys.clone(),
+        face_count: mesh.face_count,
+        uvs:        mesh.uvs.clone(),
+        ..Default::default()
+    };
+    if m.determinant() < 0.0 {
+        for tri in out.indices.chunks_exact_mut(3) { tri.swap(1, 2); }
+        if out.uvs.len() == out.indices.len() { for tri in out.uvs.chunks_exact_mut(3) { tri.swap(1, 2); } }
+        for poly in out.polys.iter_mut() { poly.reverse(); }
+    }
+    if !mesh.normals.is_empty() { out.compute_normals(); }
+    out
+}
+
 /// Any number of meshes as one, in a single pass.
 pub fn merge_all(parts: &[&MeshData]) -> MeshData {
     match parts {
@@ -510,6 +534,41 @@ mod packed_tests {
     }
     fn prims(r: &EvalResult) -> &[NamedMesh] { match r { EvalResult::Named(p) => p, _ => panic!("not packed") } }
     fn max_y(m: &MeshData) -> f32 { m.vertices.iter().map(|v| v[1]).fold(f32::MIN, f32::max) }
+
+    #[test]
+    fn transform_moves_instances_without_copying_their_mesh() {
+        use bevy::math::Mat4;
+        let shared = Arc::new(create_cube(1.0));
+        let copy = |x: f32| NamedMesh {
+            mesh: shared.clone(),
+            place: Placement::One(Mat4::from_translation(Vec3::new(x, 0.0, 0.0))),
+            ..NamedMesh::new(format!("/inst_{x}"), MeshData::default())
+        };
+        let input = EvalResult::Named(vec![copy(0.0), copy(10.0)]);
+        let out = run(NodeType::Transform { translation: Vec3::Y * 2.0, rotation: Vec3::ZERO, scale: Vec3::ONE }, &input);
+        // The placements moved, the mesh is still the shared one.
+        assert!(prims(&out).iter().all(|p| Arc::ptr_eq(&p.mesh, &shared)));
+        // And the result is what moving the merged copies gives.
+        let expected = transform(&input.as_mesh(), Vec3::Y * 2.0, Vec3::ZERO, Vec3::ONE);
+        let got = out.as_mesh();
+        assert_eq!(got.vertices.len(), expected.vertices.len());
+        assert!(got.vertices.iter().zip(&expected.vertices).all(|(a, b)| (Vec3::from_array(*a) - Vec3::from_array(*b)).length() < 1e-5));
+    }
+
+    #[test]
+    fn a_mirrored_copy_keeps_its_faces_facing_out() {
+        let cube = create_cube(1.0);
+        let mirrored = place_mesh(&cube, &bevy::math::Mat4::from_scale(Vec3::new(-1.0, 1.0, 1.0)));
+        // Mirroring and turning the faces round gives the same normals, mirrored.
+        let n = |m: &MeshData, t: usize| {
+            let p = |k: usize| Vec3::from_array(m.vertices[m.indices[t * 3 + k] as usize]);
+            (p(1) - p(0)).cross(p(2) - p(0)).normalize()
+        };
+        for t in 0..cube.indices.len() / 3 {
+            let (a, b) = (n(&cube, t), n(&mirrored, t));
+            assert!((Vec3::new(-a.x, a.y, a.z) - b).length() < 1e-5);
+        }
+    }
 
     #[test]
     fn pick_marks_by_path_pattern_and_shares_the_meshes() {

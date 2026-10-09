@@ -67,6 +67,15 @@ fn main() {
             ..default()
         }))
         .add_plugins(EguiPlugin)
+        // Draw a new frame when something happens (input, a change, a job
+        // in the background), not all the time: an idle window costs
+        // nothing, and a heavy viewport no longer slows the panels down
+        // while nothing moves. `keep_awake` asks for frames while something
+        // runs on its own; the short wait is a safety net for the rest.
+        .insert_resource(bevy::winit::WinitSettings {
+            focused_mode:   bevy::winit::UpdateMode::reactive(std::time::Duration::from_millis(250)),
+            unfocused_mode: bevy::winit::UpdateMode::reactive_low_power(std::time::Duration::from_secs(1)),
+        })
         .init_resource::<NodeGraphState>()
         .init_resource::<CameraOrbitState>()
         .init_resource::<OperatorStack>()
@@ -98,7 +107,8 @@ fn main() {
             quit_system.after(history_system),
             update_operator_stack.after(track_revision),
             update_scene_hierarchy.after(track_revision),
-            update_generated_meshes.after(track_revision),
+            update_generated_meshes.after(track_revision).after(update_scene_hierarchy),
+            keep_awake,
             apply_viewport_rect.after(dcc_ui),
             camera_controller,
             focus_camera,
@@ -1063,6 +1073,24 @@ fn update_scene_hierarchy(
     hierarchy.rebuild(entries);
 }
 
+/// Frames while something moves without input: playback, the splash and
+/// the first frames, textures decoding, a batch writing.
+fn keep_awake(
+    playback:   Res<Playback>,
+    batch:      Res<BatchState>,
+    splash:     Query<(), With<SplashPart>>,
+    mut redraw: EventWriter<bevy::window::RequestRedraw>,
+    mut frames: Local<u32>,
+) {
+    *frames = frames.saturating_add(1);
+    let busy = *frames < 120
+        || playback.playing
+        || !splash.is_empty()
+        || viewport::textures::pending() > 0
+        || batch.0.lock().map(|p| p.running).unwrap_or(false);
+    if busy { redraw.send(bevy::window::RequestRedraw); }
+}
+
 fn update_generated_meshes(
     graph:        Res<NodeGraphState>,
     subnets:      Res<SubnetStore>,
@@ -1073,20 +1101,23 @@ fn update_generated_meshes(
     query:        Query<Entity, (With<GeneratedMesh>, Without<types::PosedMesh>)>,
     posed:        Query<Entity, With<types::PosedMesh>>,
     revision:     Res<node_graph::GraphRevision>,
-    mut shown:    Local<Option<(f64, u64)>>,
+    mut shown:    Local<Option<(f64, u64, u64)>>,
     mut images:   ResMut<Assets<Image>>,
     mut textures: Local<std::collections::HashMap<std::path::PathBuf, Handle<Image>>>,
     clear:        Res<ClearColor>,
+    hierarchy:    Res<SceneHierarchy>,
 ) {
     use viewport::display::DisplayMode;
     let mode = viewport::display::mode();
     // Cook again when the graph changed, the playhead moved, the theme
     // switched or a texture finished loading; not when the camera moves.
-    let now = (playback.time, theme::revision() ^ viewport::textures::generation().rotate_left(32));
+    // Opening or closing prims in the scene explorer changes what is drawn
+    // as boxes, without cooking the graph again.
+    let now = (playback.time, theme::revision() ^ viewport::textures::generation().rotate_left(32), hierarchy.display_revision);
     if !revision.is_changed() && *shown == Some(now) { return; }
     // When only the playhead moved, only what follows it is made again. A
     // heavy model standing next to a character is left alone.
-    let only_time = !revision.is_changed() && shown.map(|s| s.1) == Some(now.1);
+    let only_time = !revision.is_changed() && shown.map(|s| (s.1, s.2)) == Some((now.1, now.2));
     *shown = Some(now);
     for e in posed.iter() { commands.entity(e).despawn(); }
 
@@ -1149,8 +1180,34 @@ fn update_generated_meshes(
             GeneratedMesh,
         ));
     }
-    // Packed primitives with materials: one mesh per material, textured.
     let packed = if stage.is_none() { graph.evaluate_for_viewport_packed(&eval_subnet) } else { None };
+    let mut texture = |path: &Option<std::path::PathBuf>| -> Option<(Handle<Image>, bool)> {
+        let path = path.as_ref()?;
+        let decoded = viewport::textures::request(path)?;
+        let handle = textures.entry(path.clone()).or_insert_with(|| images.add(texture_image(&decoded))).clone();
+        Some((handle, decoded.has_alpha))
+    };
+    // Composed stages: a prim closed in the scene explorer is drawn as the
+    // box around what is below it; only what is opened is drawn as geometry.
+    let packed = match packed {
+        Some(types::EvalResult::Named(prims)) if prims.iter().any(|p| p.stage.is_some()) => {
+            let (shown, boxes) = viewport::bounds::split(prims, &hierarchy);
+            draw_boxes(&boxes, &mut commands, &mut meshes, &mut mats);
+            Some(types::EvalResult::Named(shown))
+        }
+        other => other,
+    };
+    // Instanced packed primitives: each shared mesh is made once and drawn at
+    // every placement. The others are drawn as before.
+    let packed = match packed {
+        Some(types::EvalResult::Named(prims)) if prims.iter().any(|p| p.place.is_placed()) => {
+            let (placed, in_place): (Vec<types::NamedMesh>, Vec<types::NamedMesh>) = prims.into_iter().partition(|p| p.place.is_placed());
+            draw_instanced(&placed, mode, clear.0, &mut commands, &mut meshes, &mut mats, &mut texture);
+            Some(types::EvalResult::Named(in_place))
+        }
+        other => other,
+    };
+    // Packed primitives with materials: one mesh per material, textured.
     if let Some(types::EvalResult::Named(prims)) = &packed {
         if mode == DisplayMode::Textured && prims.iter().any(|p| p.look.is_some()) {
             let mut groups: Vec<(Option<std::sync::Arc<types::Look>>, Vec<&MeshData>)> = vec![];
@@ -1160,36 +1217,10 @@ fn update_generated_meshes(
                     None => groups.push((p.look.clone(), vec![&p.mesh])),
                 }
             }
-            let mut texture = |path: &Option<std::path::PathBuf>| -> Option<(Handle<Image>, bool)> {
-                let path = path.as_ref()?;
-                let decoded = viewport::textures::request(path)?;
-                let handle = textures.entry(path.clone()).or_insert_with(|| images.add(texture_image(&decoded))).clone();
-                Some((handle, decoded.has_alpha))
-            };
             for (look, parts) in groups {
                 let md = node_graph::nodes::merge_all(&parts);
                 if md.vertices.is_empty() { continue; }
-                let material = match &look {
-                    Some(look) => {
-                        let color_map = texture(&look.color_map);
-                        let emissive_map = texture(&look.emissive_map);
-                        let see_through = look.opacity < 0.999;
-                        let cut = look.cutout && color_map.as_ref().map(|c| c.1).unwrap_or(false);
-                        StandardMaterial {
-                            base_color: Color::srgba(look.color[0], look.color[1], look.color[2], look.opacity),
-                            base_color_texture: color_map.map(|c| c.0),
-                            emissive: if emissive_map.is_some() { LinearRgba::WHITE } else { LinearRgba::BLACK },
-                            emissive_texture: emissive_map.map(|c| c.0),
-                            perceptual_roughness: look.roughness.clamp(0.089, 1.0),
-                            metallic: look.metallic.clamp(0.0, 1.0),
-                            alpha_mode: if see_through { AlphaMode::Blend } else if cut { AlphaMode::Mask(0.5) } else { AlphaMode::Opaque },
-                            double_sided: true,
-                            cull_mode: None,
-                            ..default()
-                        }
-                    }
-                    None => StandardMaterial { base_color: Color::srgb(0.6, 0.6, 0.6), metallic: 0.1, perceptual_roughness: 0.5, ..default() },
-                };
+                let material = look_material(look.as_deref(), &mut texture);
                 commands.spawn((PbrBundle { mesh: meshes.add(mesh_data_to_bevy_textured(&md)), material: mats.add(material), ..default() }, GeneratedMesh));
             }
             return;
@@ -1334,6 +1365,140 @@ fn apply_viewport_rect(
         physical_size:     UVec2::new(width, height),
         ..default()
     });
+}
+
+/// Bounding boxes, all in one line mesh.
+fn draw_boxes(
+    boxes:    &[viewport::bounds::Bounds],
+    commands: &mut Commands,
+    meshes:   &mut Assets<Mesh>,
+    mats:     &mut Assets<StandardMaterial>,
+) {
+    if boxes.is_empty() { return; }
+    let (points, lines) = viewport::bounds::box_lines(boxes);
+    let mut mesh = Mesh::new(
+        bevy::render::mesh::PrimitiveTopology::LineList,
+        bevy::render::render_asset::RenderAssetUsages::default(),
+    );
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, points);
+    mesh.insert_indices(bevy::render::mesh::Indices::U32(lines));
+    let ink = theme::c(200, 200, 200);
+    commands.spawn((
+        PbrBundle {
+            mesh: meshes.add(mesh),
+            material: mats.add(StandardMaterial { base_color: Color::srgb_u8(ink.r(), ink.g(), ink.b()), unlit: true, ..default() }),
+            ..default()
+        },
+        GeneratedMesh,
+        bevy::pbr::NotShadowCaster,
+        bevy::pbr::NotShadowReceiver,
+    ));
+}
+
+/// How a surface looks in the viewport: its material, or plain grey.
+fn look_material(
+    look:    Option<&types::Look>,
+    texture: &mut dyn FnMut(&Option<std::path::PathBuf>) -> Option<(Handle<Image>, bool)>,
+) -> StandardMaterial {
+    let Some(look) = look else {
+        return StandardMaterial { base_color: Color::srgb(0.6, 0.6, 0.6), metallic: 0.1, perceptual_roughness: 0.5, ..default() };
+    };
+    let color_map = texture(&look.color_map);
+    let emissive_map = texture(&look.emissive_map);
+    let see_through = look.opacity < 0.999;
+    let cut = look.cutout && color_map.as_ref().map(|c| c.1).unwrap_or(false);
+    StandardMaterial {
+        base_color: Color::srgba(look.color[0], look.color[1], look.color[2], look.opacity),
+        base_color_texture: color_map.map(|c| c.0),
+        emissive: if emissive_map.is_some() { LinearRgba::WHITE } else { LinearRgba::BLACK },
+        emissive_texture: emissive_map.map(|c| c.0),
+        perceptual_roughness: look.roughness.clamp(0.089, 1.0),
+        metallic: look.metallic.clamp(0.0, 1.0),
+        alpha_mode: if see_through { AlphaMode::Blend } else if cut { AlphaMode::Mask(0.5) } else { AlphaMode::Opaque },
+        double_sided: true,
+        cull_mode: None,
+        ..default()
+    }
+}
+
+/// Instanced packed primitives. Each shared mesh becomes one mesh asset and
+/// each look one material, then every placement is an entity using them, so
+/// the renderer draws the copies of a mesh together.
+fn draw_instanced(
+    prims:      &[types::NamedMesh],
+    mode:       viewport::display::DisplayMode,
+    background: Color,
+    commands:   &mut Commands,
+    meshes:     &mut Assets<Mesh>,
+    mats:       &mut Assets<StandardMaterial>,
+    texture:    &mut dyn FnMut(&Option<std::path::PathBuf>) -> Option<(Handle<Image>, bool)>,
+) {
+    use viewport::display::DisplayMode;
+    let lines = matches!(mode, DisplayMode::HiddenLine | DisplayMode::Wireframe);
+    let ink = theme::c(225, 225, 225);
+    let wire_material = lines.then(|| mats.add(StandardMaterial {
+        base_color: Color::srgb_u8(ink.r(), ink.g(), ink.b()), unlit: true, depth_bias: 8.0, ..default()
+    }));
+    let surface_material = match mode {
+        DisplayMode::Wireframe => None,
+        // Hidden line removal: the surface in the colour of the background.
+        DisplayMode::HiddenLine => Some(mats.add(StandardMaterial {
+            base_color: background, unlit: true, double_sided: true, cull_mode: None, ..default()
+        })),
+        _ => None,
+    };
+    let textured = mode == DisplayMode::Textured;
+    let mut made: Vec<(*const MeshData, Handle<Mesh>, Option<Handle<Mesh>>)> = vec![];
+    let mut looks: Vec<(*const types::Look, Handle<StandardMaterial>)> = vec![];
+    let mut grey: Option<Handle<StandardMaterial>> = None;
+    for p in prims {
+        if p.mesh.vertices.is_empty() { continue; }
+        let key = std::sync::Arc::as_ptr(&p.mesh);
+        let (surface, wire) = match made.iter().find(|m| m.0 == key) {
+            Some(m) => (m.1.clone(), m.2.clone()),
+            None => {
+                let surface = meshes.add(if textured { mesh_data_to_bevy_textured(&p.mesh) } else { mesh_data_to_bevy(&p.mesh) });
+                let wire = lines.then(|| {
+                    let mut w = Mesh::new(
+                        bevy::render::mesh::PrimitiveTopology::LineList,
+                        bevy::render::render_asset::RenderAssetUsages::default(),
+                    );
+                    w.insert_attribute(Mesh::ATTRIBUTE_POSITION, p.mesh.vertices.clone());
+                    w.insert_indices(bevy::render::mesh::Indices::U32(viewport::display::wire_edges(&p.mesh)));
+                    meshes.add(w)
+                });
+                made.push((key, surface.clone(), wire.clone()));
+                (surface, wire)
+            }
+        };
+        let material = match (&surface_material, mode) {
+            (Some(m), _) => Some(m.clone()),
+            (None, DisplayMode::Wireframe) => None,
+            (None, DisplayMode::Textured) if p.look.is_some() => {
+                let look = p.look.as_ref().unwrap();
+                let lk = std::sync::Arc::as_ptr(look);
+                Some(match looks.iter().find(|l| l.0 == lk) {
+                    Some(l) => l.1.clone(),
+                    None => {
+                        let h = mats.add(look_material(Some(look), texture));
+                        looks.push((lk, h.clone()));
+                        h
+                    }
+                })
+            }
+            (None, _) => Some(grey.get_or_insert_with(|| mats.add(look_material(None, texture))).clone()),
+        };
+        for m in p.place.matrices() {
+            let transform = Transform::from_matrix(*m);
+            if let Some(material) = &material {
+                let mut e = commands.spawn((PbrBundle { mesh: surface.clone(), material: material.clone(), transform, ..default() }, GeneratedMesh));
+                if lines { e.insert((bevy::pbr::NotShadowCaster, bevy::pbr::NotShadowReceiver)); }
+            }
+            if let (Some(w), Some(wm)) = (&wire, &wire_material) {
+                commands.spawn((PbrBundle { mesh: w.clone(), material: wm.clone(), transform, ..default() }, GeneratedMesh, bevy::pbr::NotShadowCaster));
+            }
+        }
+    }
 }
 
 fn mesh_data_to_bevy(d: &MeshData) -> Mesh {
