@@ -177,7 +177,7 @@ mod tests {
     use crate::usd_scene::StageNode;
 
     fn node(path: &str, depth: usize, ty: &str) -> StageNode {
-        StageNode { path: path.into(), name: path.rsplit('/').next().unwrap().into(), type_name: ty.into(), depth, hidden: false }
+        StageNode { path: path.into(), name: path.rsplit('/').next().unwrap().into(), type_name: ty.into(), depth, ..Default::default() }
     }
     fn cube_at(path: &str, x: f32, tree: &Arc<StageTree>) -> NamedMesh {
         let mesh = crate::node_graph::nodes::transform(&crate::node_graph::nodes::create_cube(1.0), Vec3::new(x, 0.0, 0.0), Vec3::ZERO, Vec3::ONE);
@@ -192,7 +192,7 @@ mod tests {
             node("/world/grp", 2, "Xform"),
             node("/world/grp/b", 3, "Mesh"),
             node("/world/grp/c", 3, "Mesh"),
-        ]});
+        ], ..Default::default() });
         let prims = || vec![cube_at("/world/a", 0.0, &tree), cube_at("/world/grp/b", 10.0, &tree), cube_at("/world/grp/c", 20.0, &tree)];
         let mut h = SceneHierarchy::default();
 

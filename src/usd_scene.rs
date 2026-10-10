@@ -2,8 +2,9 @@
 //!
 //! Stages are read composed, through `xms-usd` (see `usd_stage`): sublayers,
 //! references, payloads, inherits, specializes and variants are resolved, and
-//! native instances are expanded. The result is a `UsdScene`: meshes in world
-//! space (Y-up metres) with their UVs and material bindings, plus cameras,
+//! instancing is kept. The result is a `UsdScene`: meshes, curves and points
+//! as geometry in their own space with every primvar, each placed by its
+//! world transform (Y-up metres) and with its material binding, plus cameras,
 //! materials with their textures, skeletons, lights, time range and the stage
 //! hierarchy for the scene explorer.
 //!
@@ -26,6 +27,9 @@ pub struct UsdMesh {
     pub mesh:     Arc<MeshData>,
     /// Path of the bound material, when there is one.
     pub material: Option<String>,
+    /// The geometry in its own space, with every primvar: what `mesh` is a
+    /// view of. `None` from the root-layer reader.
+    pub geo:      Option<Arc<crate::core::geo::Geo>>,
     /// In place, or copies of a mesh shared between instances.
     pub place:    crate::types::Placement,
     /// Its USD purpose (render, proxy, guide, or none).
@@ -68,8 +72,17 @@ pub struct StageNode {
     pub type_name: String,
     /// 1 for a root prim.
     pub depth:     usize,
-    /// Invisible, or guide / proxy purpose: listed, not drawn.
+    /// Invisible: listed, not drawn.
     pub hidden:    bool,
+    /// Its own transform, relative to its parent (as authored, f64).
+    pub local:     bevy::math::DMat4,
+    /// It ignores its parents' transforms (`!resetXformStack!`).
+    pub reset_xform: bool,
+    /// Inside a native instance: read from the prototype, and read-only in
+    /// USD (instance proxies cannot carry opinions).
+    pub proxy:     bool,
+    /// A point instancer's prototype: drawn through the instancer.
+    pub prototype: bool,
 }
 
 /// The stage hierarchy, depth first (parents before their children).
@@ -77,6 +90,14 @@ pub struct StageNode {
 #[derive(Clone, Default)]
 pub struct StageTree {
     pub nodes: Vec<StageNode>,
+    /// The stage's up-axis and unit correction, included in every primitive's
+    /// placement: what writing takes off again to get back to the file's space.
+    pub root:  bevy::math::Mat4,
+    /// The file the stage was read from, and its up axis and unit: what an
+    /// override layer sublayers and repeats.
+    pub source:          std::path::PathBuf,
+    pub up_axis:         String,
+    pub meters_per_unit: Option<f64>,
 }
 
 impl std::fmt::Debug for StageTree {
@@ -410,7 +431,7 @@ fn read_scene(data: Layer) -> UsdScene {
                 "Mesh" => {
                     if let Some(mesh) = read_mesh(&mut r, &prim, &props, &world) {
                         let material = r.target(&prim, "material:binding", "targetPaths");
-                        scene.meshes.push(UsdMesh { path: prim.clone(), mesh: Arc::new(mesh), material, place: Default::default(), purpose: Default::default() });
+                        scene.meshes.push(UsdMesh { path: prim.clone(), mesh: Arc::new(mesh), material, geo: None, place: Default::default(), purpose: Default::default() });
                     }
                 }
                 "Camera" => {
@@ -529,6 +550,9 @@ pub fn load(path: &Path) -> Result<UsdScene, String> {
         }
     };
     scene.base_dir = base_dir;
+    // The file as given (a .usdz, not the folder it was unpacked into):
+    // what an override layer sublayers.
+    std::sync::Arc::make_mut(&mut scene.tree).source = path.to_path_buf();
     Ok(scene)
 }
 
@@ -541,7 +565,7 @@ fn load_root_layer(layer: &Path, ext: &str) -> Result<UsdScene, String> {
             // The older text reader copes with some files this one refuses.
             let meshes = crate::usd_loader::load_usd_meshes(layer).map_err(|_| e.clone())?;
             let mut scene = UsdScene { up_axis: "Y".into(), ..Default::default() };
-            scene.meshes = meshes.into_iter().map(|(path, mesh)| UsdMesh { path, mesh: Arc::new(mesh), material: None, place: Default::default(), purpose: Default::default() }).collect();
+            scene.meshes = meshes.into_iter().map(|(path, mesh)| UsdMesh { path, mesh: Arc::new(mesh), material: None, geo: None, place: Default::default(), purpose: Default::default() }).collect();
             scene.notes.push(format!("Read with the fallback text reader, meshes only ({e})"));
             scene
         }
@@ -551,7 +575,7 @@ fn load_root_layer(layer: &Path, ext: &str) -> Result<UsdScene, String> {
         // Nothing found: let the older text reader try.
         if let Ok(meshes) = crate::usd_loader::load_usd_meshes(layer) {
             if !meshes.is_empty() {
-                scene.meshes = meshes.into_iter().map(|(path, mesh)| UsdMesh { path, mesh: Arc::new(mesh), material: None, place: Default::default(), purpose: Default::default() }).collect();
+                scene.meshes = meshes.into_iter().map(|(path, mesh)| UsdMesh { path, mesh: Arc::new(mesh), material: None, geo: None, place: Default::default(), purpose: Default::default() }).collect();
                 scene.notes.push("Read with the fallback text reader, meshes only".into());
             }
         }
@@ -588,6 +612,13 @@ mod tests {
         let path = dir.join(name);
         std::fs::write(&path, text).unwrap();
         path
+    }
+    /// A primitive as it is drawn: its geometry where its first copy is placed.
+    fn world(m: &UsdMesh) -> MeshData {
+        match m.place.matrices().first() {
+            Some(at) => crate::node_graph::nodes::place_mesh(&m.mesh, at),
+            None => (*m.mesh).clone(),
+        }
     }
     fn bounds(m: &MeshData) -> (Vec3, Vec3) {
         let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
@@ -635,11 +666,11 @@ def Xform "car" {{
         assert_eq!(scene.meshes.len(), 2, "{:?}", scene.notes);
         let tyre = scene.meshes.iter().find(|m| m.path.ends_with("tyre")).unwrap();
         // Scaled by two, turned a quarter about Z, then moved by (10, 2, 0).
-        let (lo, hi) = bounds(&tyre.mesh);
+        let (lo, hi) = bounds(&world(tyre));
         assert!((lo - Vec3::new(8.0, 2.0, 0.0)).length() < 1e-4 && (hi - Vec3::new(10.0, 4.0, 0.0)).length() < 1e-4, "{lo} {hi}");
         // The reset stack ignores the parents.
         let loose = scene.meshes.iter().find(|m| m.path.ends_with("loose")).unwrap();
-        assert!((bounds(&loose.mesh).0 - Vec3::new(0.0, 0.0, 3.0)).length() < 1e-4);
+        assert!((bounds(&world(loose)).0 - Vec3::new(0.0, 0.0, 3.0)).length() < 1e-4);
     }
 
     #[test]
@@ -657,7 +688,7 @@ def Mesh "m" {{
 "#));
         let scene = load(&path).unwrap();
         assert_eq!((scene.up_axis.as_str(), scene.meters_per_unit), ("Z", Some(0.01)));
-        let (_, hi) = bounds(&scene.meshes[0].mesh);
+        let (_, hi) = bounds(&world(&scene.meshes[0]));
         // 200 units up Z is two metres up Y.
         assert!((hi - Vec3::new(1.0, 2.0, 0.0)).length() < 1e-4, "{hi}");
     }
@@ -836,16 +867,66 @@ def Xform "groom" {
 "#);
         let scene = load(&path).unwrap();
         let find = |p: &str| scene.meshes.iter().find(|m| m.path == p).unwrap_or_else(|| panic!("no {p}: {:?}", scene.notes));
-        let hair = &find("/groom/hair").mesh;
+        let hair = &world(find("/groom/hair"));
         assert_eq!(hair.curve_counts, vec![4, 4]);
         assert_eq!((hair.curve_basis, hair.curve_wrap), (CurveBasis::CatmullRom, CurveWrap::Nonperiodic));
         // In world space, like meshes.
         assert_eq!(hair.curve_points[1], [0.0, 11.0, 0.0]);
-        let dust = &find("/groom/dust").mesh;
+        let dust = &world(find("/groom/dust"));
         assert_eq!(dust.points, vec![[5.0, 10.0, 0.0], [6.0, 10.0, 0.0]]);
         assert_eq!(dust.widths, vec![0.5, 0.25]);
         // Listed in the hierarchy as geometry, like meshes.
         assert!(scene.tree.nodes.iter().any(|n| n.path == "/groom/hair" && n.type_name == "BasisCurves"));
+    }
+
+    #[test]
+    fn geometry_stays_local_with_every_primvar() {
+        use crate::core::geo::{Context, Role, ST};
+        let path = write("primvars.usda", r#"#usda 1.0
+(
+    upAxis = "Z"
+)
+def Xform "set" {
+    double3 xformOp:translate = (0, 0, 5)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+    def Mesh "card" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        uniform token orientation = "leftHanded"
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "faceVarying"
+        )
+        int[] primvars:st:indices = [0, 1, 2, 3]
+        color3f[] primvars:displayColor = [(1, 0, 0)] (
+            interpolation = "constant"
+        )
+        float[] primvars:heat = [0.5] (
+            interpolation = "uniform"
+        )
+    }
+}
+"#);
+        let scene = load(&path).unwrap();
+        let card = &scene.meshes[0];
+        let geo = card.geo.as_ref().expect("loaded as geometry");
+        // Points as authored: the transform and the Z-up correction are in the placement.
+        assert_eq!(geo.points()[2], [1.0, 1.0, 0.0]);
+        let (lo, _) = bounds(&world(card));
+        // Z up: authored +Y becomes -Z, authored Z (the set's 5) becomes Y.
+        assert!((lo - Vec3::new(0.0, 5.0, -1.0)).length() < 1e-4, "{lo}");
+        assert_ne!(scene.tree.root, bevy::math::Mat4::IDENTITY);
+        // Every primvar, in its context, with its indices and role.
+        let st = geo.attr(Context::Corner, ST).expect("st per corner");
+        assert_eq!((st.indices.as_ref().map(|i| i.len()), st.role), (Some(4), Role::TexCoord));
+        assert_eq!(geo.attr(Context::Object, "displayColor").map(|a| a.role), Some(Role::Color));
+        assert_eq!(geo.attr(Context::Primitive, "heat").and_then(|a| a.column.floats()), Some(&[0.5][..]));
+        assert!(matches!(geo.topology, crate::core::geo::Topology::Mesh { left_handed: true, .. }));
+        // The MeshData view still has its UVs per triangle corner.
+        assert_eq!(card.mesh.uvs.len(), 6);
     }
 
     #[test]
@@ -897,7 +978,7 @@ def Xform "car" {
         assert_eq!(scene.meshes.len(), 1, "{:?}", scene.notes);
         assert_eq!(scene.meshes[0].path, "/car/front/tyre");
         // The selected variant, "big", moved up by 5.
-        assert!((bounds(&scene.meshes[0].mesh).0.y - 5.0).abs() < 1e-4);
+        assert!((bounds(&world(&scene.meshes[0])).0.y - 5.0).abs() < 1e-4);
         // The stage hierarchy holds the referenced prims.
         assert!(scene.tree.nodes.iter().any(|n| n.path == "/car/front/tyre" && n.depth == 3));
     }

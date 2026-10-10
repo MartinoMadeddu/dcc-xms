@@ -10,7 +10,7 @@ The Templates menu in the node graph header holds ready-made graphs. Picking one
 |---|---|
 | Primitives | Cube, sphere and grid, each moved with a Transform and joined with Merge |
 | Scatter and copy | Scatter Points on a grid, a small cube copied onto each point with Copy To Points |
-| ICE subnet | The same scatter and copy built inside a subnet. Double-click the subnet node to open it |
+| ICE subnet | The same scatter and copy built inside a subnet. Double-click the subnet node, or select it and press ↓, to open it |
 | USD import | Two USD files loaded with Load USD, one moved onto the other, merged |
 
 ## Modelling

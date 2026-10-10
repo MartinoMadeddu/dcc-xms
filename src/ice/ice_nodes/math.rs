@@ -1,7 +1,6 @@
 //! Math operations on attributes
 
-use crate::core::Attribute;
-use crate::ice::ops::{ExecutionContext, IceNode};
+use crate::ice::ops::{Attribute, ExecutionContext, IceNode};
 use bevy::prelude::*;
 
 // ============================================================================

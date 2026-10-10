@@ -188,7 +188,7 @@ mod tests {
             rotation: bevy::math::Vec3::ZERO, scale: bevy::math::Vec3::ONE,
         }, egui::pos2(0.0, 0.0));
         g.add_connection(cube, 0, xf, 0);
-        let pass = |_: crate::types::SubnetId, m: &crate::types::MeshData, _: Option<&crate::types::MeshData>| m.clone();
+        let pass = |_: crate::types::SubnetId, m: &crate::core::geo::Geo, _: Option<&crate::core::geo::Geo>| m.clone();
         let max_x = |g: &NodeGraphState| g.eval_node(xf, &mut Default::default(), &pass).unwrap().into_mesh()
             .vertices.iter().map(|p| p[0]).fold(f32::MIN, f32::max);
         assert!((max_x(&g) - 6.0).abs() < 1e-5);

@@ -627,6 +627,7 @@ pub fn catalog() -> Vec<(&'static str, &'static str, Vec<(NodeType, &'static str
         ]),
         ("📂", "File", vec![
             (NodeType::LoadUsd { path: String::new() }, "A USD file, as packed primitives"),
+            (NodeType::WriteUsd { path: String::new() }, "What the network changed in its USD stages, as an override layer"),
             (NodeType::LoadFbx { path: String::new(), take: 0 }, "A skeleton and one take from an FBX file, with its skinned mesh"),
             (NodeType::LoadFbxDir { dir: String::new(), index: 0, take: 0 }, "One FBX of a folder at a time; Write FBX can run over all of them"),
             (NodeType::LoadFbxMesh { path: String::new() }, "Every mesh of an FBX file, as packed primitives: a set to collide with"),

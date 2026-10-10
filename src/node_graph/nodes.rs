@@ -12,7 +12,7 @@ use std::path::Path;
 pub fn evaluate_node_type(
     node_type:   &NodeType,
     inputs:      &[EvalResult],
-    eval_subnet: &impl Fn(SubnetId, &MeshData, Option<&MeshData>) -> MeshData,
+    eval_subnet: &impl Fn(SubnetId, &crate::core::geo::Geo, Option<&crate::core::geo::Geo>) -> crate::core::geo::Geo,
     output:      usize,
 ) -> Option<EvalResult> {
     match node_type {
@@ -31,6 +31,11 @@ pub fn evaluate_node_type(
                         path: m.path.clone(), mesh: m.mesh.clone(), picked: false, material: m.material.clone(),
                         look: m.material.as_ref().and_then(|p| looks.get(p).cloned()),
                         stage: Some(scene.tree.clone()),
+                        geo: m.geo.clone(),
+                        // As loaded: what its edits are measured against.
+                        source: m.geo.clone().map(|geo| Arc::new(crate::types::Source {
+                            geo, place: m.place.clone(), material: m.material.clone(), purpose: m.purpose,
+                        })),
                         place: m.place.clone(),
                         purpose: m.purpose,
                     }).collect()))
@@ -66,8 +71,15 @@ pub fn evaluate_node_type(
             // a primitive of its own. Instanced ones move their placements:
             // the shared mesh is not copied.
             EvalResult::Named(prims) if !prims.iter().any(|p| p.picked) => Some(EvalResult::Named(prims.iter().map(|p| match &p.place {
-                Placement::InPlace => NamedMesh { mesh: Arc::new(transform(&p.mesh, *translation, *rotation, *scale)), ..p.clone() },
+                Placement::InPlace => NamedMesh { mesh: Arc::new(transform(&p.mesh, *translation, *rotation, *scale)), geo: None, ..p.clone() },
                 placed => NamedMesh { place: placed.moved(transform_matrix(*translation, *rotation, *scale)), ..p.clone() },
+            }).collect())),
+            // Some picked: those move, each on its own. Placed ones move
+            // their placement; the others their points.
+            EvalResult::Named(prims) => Some(EvalResult::Named(prims.iter().map(|p| match (&p.place, p.picked) {
+                (_, false) => p.clone(),
+                (Placement::InPlace, true) => NamedMesh { mesh: Arc::new(transform(&p.mesh, *translation, *rotation, *scale)), geo: None, ..p.clone() },
+                (placed, true) => NamedMesh { place: placed.moved(transform_matrix(*translation, *rotation, *scale)), ..p.clone() },
             }).collect())),
             other => Some(other.map_mesh(|m| transform(&m, *translation, *rotation, *scale))),
         }),
@@ -91,13 +103,28 @@ pub fn evaluate_node_type(
             } else { None },
 
         NodeType::Subnet { id, .. } => {
-            // First input is the main geometry, second (if exists) is template
-            let main_geo = inputs.first().map(|r| r.as_mesh());
-            let template_geo = inputs.get(1).map(|r| r.as_mesh());
-            
-            main_geo.map(|geo| {
-                EvalResult::Single(eval_subnet(*id, &geo, template_geo.as_ref()))
-            })
+            // First input is the main geometry, second (if any) the template,
+            // as one geometry where it is drawn.
+            let template = inputs.get(1).map(|r| crate::core::geo::Geo::from_mesh(&r.as_mesh()));
+            match inputs.first()? {
+                // Packed primitives: the tree runs on each one (the picked
+                // ones, when some are), in its own space, as ICE does on an
+                // object. Each keeps its path, placement and material, and
+                // whatever the tree does not write stays shared.
+                EvalResult::Named(prims) => {
+                    let any_picked = prims.iter().any(|p| p.picked);
+                    Some(EvalResult::Named(prims.iter().map(|p| {
+                        if any_picked && !p.picked { return p.clone(); }
+                        let geo = p.geo.clone().unwrap_or_else(|| Arc::new(crate::core::geo::Geo::from_mesh(&p.mesh)));
+                        let out = eval_subnet(*id, &geo, template.as_ref());
+                        NamedMesh { mesh: Arc::new(out.to_mesh()), geo: Some(Arc::new(out)), ..p.clone() }
+                    }).collect()))
+                }
+                other => {
+                    let geo = crate::core::geo::Geo::from_mesh(&other.as_mesh());
+                    Some(EvalResult::Single(eval_subnet(*id, &geo, template.as_ref()).to_mesh()))
+                }
+            }
         }
 
         NodeType::Output => inputs.first().cloned(),
@@ -159,6 +186,8 @@ pub fn evaluate_node_type(
             anim_op(node_type, inputs, |a| a.with_proxy_skin(*thickness)),
 
         NodeType::WriteFbx { .. } => inputs.first().cloned(),
+        // Writes when asked, from the properties panel: passes its input on.
+        NodeType::WriteUsd { .. } => inputs.first().cloned(),
 
         // ── Mocap tools ──────────────────────────────────────────────────────
         NodeType::MirrorClip => anim_op(node_type, inputs, |a| a.mirrored()),
@@ -182,7 +211,7 @@ pub fn evaluate_node_type(
         NodeType::LoadFbxMesh { path } => {
             let meshes = crate::fbx_loader::load_meshes_cached(path).ok()?;
             Some(EvalResult::Named(meshes.iter().map(|(name, mesh)| NamedMesh {
-                path: format!("/{name}"), mesh: mesh.clone(), picked: false, material: None, look: None, stage: None, place: Placement::InPlace, purpose: Default::default(),
+                path: format!("/{name}"), mesh: mesh.clone(), picked: false, material: None, look: None, stage: None, geo: None, source: None, place: Placement::InPlace, purpose: Default::default(),
             }).collect()))
         }
         NodeType::Calamari { hulls, detail } =>
@@ -555,7 +584,7 @@ mod packed_tests {
     use super::*;
     use crate::types::{NodeType, SubnetId};
 
-    fn pass(_: SubnetId, m: &MeshData, _: Option<&MeshData>) -> MeshData { m.clone() }
+    fn pass(_: SubnetId, m: &crate::core::geo::Geo, _: Option<&crate::core::geo::Geo>) -> crate::core::geo::Geo { m.clone() }
     fn run(node: NodeType, input: &EvalResult) -> EvalResult {
         evaluate_node_type(&node, std::slice::from_ref(input), &pass, 0).unwrap()
     }
@@ -622,16 +651,47 @@ mod packed_tests {
         let picked = run(NodeType::PickPrims { pattern: "wheel".into() }, &input);
         let lift = NodeType::Transform { translation: bevy::math::Vec3::new(0.0, 10.0, 0.0), rotation: bevy::math::Vec3::ZERO, scale: bevy::math::Vec3::ONE };
         let out = run(lift.clone(), &picked);
-        // Two wheels come out as one picked primitive, in the first one's place.
+        // The two wheels move, each staying a primitive of its own.
         let p = prims(&out);
-        assert_eq!(p.iter().map(|x| x.path.as_str()).collect::<Vec<_>>(), vec!["/car/body", "/car/wheel_L"]);
+        assert_eq!(p.iter().map(|x| x.path.as_str()).collect::<Vec<_>>(), vec!["/car/body", "/car/wheel_L", "/car/wheel_R"]);
         assert!(std::sync::Arc::ptr_eq(&p[0].mesh, &prims(&input)[0].mesh), "the body is passed through as it is");
-        assert!(max_y(&p[0].mesh) < 1.0 && max_y(&p[1].mesh) > 10.0 && p[1].picked);
-        assert_eq!(p[1].mesh.vertices.len(), 2 * create_cube(1.0).vertices.len());
+        assert!(max_y(&p[0].mesh) < 1.0 && max_y(&p[1].mesh) > 10.0 && max_y(&p[2].mesh) > 10.0 && p[1].picked && p[2].picked);
         // Without a pick Transform moves every primitive and keeps them apart.
         let all = run(lift, &input);
         assert_eq!(prims(&all).len(), prims(&input).len());
         assert!(prims(&all).iter().all(|p| p.mesh.vertices.iter().all(|v| v[1] > 9.0)));
+    }
+
+    #[test]
+    fn a_placed_primitive_is_edited_in_its_own_space() {
+        use crate::core::geo::{Context, Geo, POINTS, ST};
+        use bevy::math::Mat4;
+        // A quad with UVs, placed ten units up, as a prim of a composed stage is.
+        let mut geo = Geo::from_polygons(vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 1.0, 0.0], [0.0, 1.0, 0.0]], vec![4], vec![0, 1, 2, 3]);
+        geo.set(Context::Corner, ST, crate::core::geo::Attr::new(
+            crate::core::geo::Column::Vec2(Arc::new(vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]])), crate::core::geo::Role::TexCoord));
+        let geo = Arc::new(geo);
+        let at = Mat4::from_translation(Vec3::new(0.0, 10.0, 0.0));
+        let prim = NamedMesh {
+            mesh: Arc::new(geo.to_mesh()), geo: Some(geo.clone()), place: Placement::One(at), picked: true,
+            ..NamedMesh::new("/set/card".into(), MeshData::default())
+        };
+        let input = EvalResult::Named(vec![prim]);
+
+        // UVs only: still placed, points still the very same column.
+        let out = run(NodeType::UvTransform { offset: [0.5, 0.0], rotate: 0.0, scale: [1.0, 1.0] }, &input);
+        let p = &prims(&out)[0];
+        assert!(matches!(p.place, Placement::One(m) if m == at));
+        let g = p.geo.as_ref().expect("geometry kept");
+        assert!(g.attr(Context::Point, POINTS).unwrap().same(geo.attr(Context::Point, POINTS).unwrap()));
+        assert!(!g.attr(Context::Corner, ST).unwrap().same(geo.attr(Context::Corner, ST).unwrap()));
+        assert!(p.mesh.vertices.iter().all(|v| v[1] <= 1.0), "the view stays in its own space");
+
+        // A picked Transform moves the placement: the geometry stays shared.
+        let moved = run(NodeType::Transform { translation: Vec3::X, rotation: Vec3::ZERO, scale: Vec3::ONE }, &input);
+        let p = &prims(&moved)[0];
+        assert!(Arc::ptr_eq(p.geo.as_ref().unwrap(), &geo));
+        assert!(matches!(p.place, Placement::One(m) if (m.w_axis.x - 1.0).abs() < 1e-6 && (m.w_axis.y - 10.0).abs() < 1e-6));
     }
 
     #[test]

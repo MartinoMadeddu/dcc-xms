@@ -77,7 +77,7 @@ Seven categories, each a submenu, each item a node. A node has one name, the sam
 | Category | Nodes |
 |---|---|
 | Create | Cube, Sphere, Grid, Test Clip |
-| File | Load USD, Load FBX, Load FBX Folder, Load FBX Mesh, Write FBX |
+| File | Load USD, Write USD, Load FBX, Load FBX Folder, Load FBX Mesh, Write FBX |
 | Modify | Transform, Edit Poly, Merge, Scatter Points, Copy to Points, ICE |
 | Primitives | Pick Primitives, Prune Primitives, Unpack |
 | UV | UV Unwrap, UV Transform, UV Edit |
@@ -87,6 +87,22 @@ Seven categories, each a submenu, each item a node. A node has one name, the sam
 Transform moves anything: a mesh, packed primitives (the picked ones, or each of them), or a clip. A clip moves by its top joints, so a skinned mesh follows its skeleton once and is not moved a second time.
 
 ![The add menu, Animation open](xms_add_menu.png)
+
+### ICE trees
+
+An ICE node holds a tree of its own. Double-click it, or select it and press ↓, to open it; ↑ or the path at the top goes back up to the scene network. Inside, the tree is drawn after Softimage ICE: nodes coloured by kind, each with its name over its type, a row per port, ports and wires coloured by the type of data they carry.
+
+| | |
+|---|---|
+| Add | Right-click the canvas |
+| Wire | Drag from an output to an input |
+| Delete | Delete or Backspace on the selected node, or right-click its title. The tree's input and output stay |
+| Collapse | The box at the right of a node's title |
+| Pan | Shift or middle mouse button, and drag |
+| Zoom | Mouse wheel, towards the pointer |
+| Frame | F or A |
+
+A tree runs on each packed primitive coming in, in the primitive's own space, as an ICE tree runs on an object in Softimage.
 
 ## Properties
 
@@ -161,6 +177,10 @@ The Theme menu in the top bar has three schemes. The choice is kept.
 
 Changes show at once and are saved as you edit, in `theme.json` in the config folder. "Start from" loads a preset, "Reset" undoes the edits to the current one. Colours that carry meaning (axes, wires, warnings) are the same in every scheme. The 3D viewport background does not follow the scheme.
 
+## Scene Explorer
+
+The scene explorer lists what each node in view gives: a mesh, the joints of a clip, or a USD stage as its hierarchy. For a stage, opening and closing prims also decides what the viewport draws as geometry and what as boxes, and the guide, proxy and render toggles in the header choose which purposes are drawn. See [USD](usd.md#the-scene-explorer-and-the-viewport). Only the rows in view are laid out, so a stage of tens of thousands of prims scrolls as easily as a cube.
+
 ## Operator Stack
 
 One row per node, from Output down to the sources. A chain of single inputs stays in one column however long it is. Only a node with several inputs, such as a Merge, steps its branches in. The triangle at the left of a row folds what is under it: it shows at branch points, on folded rows, and under the cursor. The type of the node is at the right when there is room. A bypassed node is struck through.
@@ -196,3 +216,5 @@ The mesh is cooked and the table built only when the graph changes or another no
 The viewport meshes, the scene explorer, the operator stack and the primitive inspector are rebuilt when the content of the graph changes: a node added or removed, a parameter edited, a wire changed, the view flag or the selection moved. Moving nodes about, panning the graph and moving the camera do not cook anything. Animated meshes are also rebuilt when the playhead moves.
 
 While an ICE subnet is open, every click and key press counts as a change.
+
+The window draws a new frame when something happens (input, a change in the graph, playback, a texture arriving), not all the time, so an idle window costs almost nothing and a heavy viewport does not slow the panes down while nothing moves.

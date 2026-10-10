@@ -1,8 +1,27 @@
 //! Geometry generation nodes
 
-use crate::core::Topology;
+use std::sync::Arc;
+
+use crate::core::geo::{Geo, Topology};
 use crate::ice::ops::{ExecutionContext, IceNode};
 use bevy::prelude::*;
+
+/// A geometry's polygons as triangles (each polygon as a fan), by their corners.
+fn triangles(geo: &Geo) -> Vec<[Vec3; 3]> {
+    let Topology::Mesh { counts, indices, .. } = &geo.topology else { return vec![] };
+    let p = geo.points();
+    let at = |c: usize| Vec3::from_array(p[indices[c] as usize]);
+    let mut out = Vec::with_capacity(indices.len());
+    let mut first = 0usize;
+    for &n in counts.iter() {
+        let n = n as usize;
+        for k in 1..n.saturating_sub(1) {
+            out.push([at(first), at(first + k), at(first + k + 1)]);
+        }
+        first += n;
+    }
+    out
+}
 
 // ============================================================================
 // SCATTER POINTS
@@ -23,41 +42,19 @@ impl ScatterPoints {
 
 impl IceNode for ScatterPoints {
     fn execute(&self, ctx: &mut ExecutionContext) -> Result<(), String> {
-        // Get input geometry points and topology
-        let points = &ctx.geometry.points;
-        
-        let triangles: Vec<(Vec3, Vec3, Vec3)> = match &ctx.geometry.topology {
-            Topology::PolyMesh { face_counts, face_indices } => {
-                let mut tris = Vec::new();
-                let mut idx = 0;
-                for &count in face_counts {
-                    if count == 3 && idx + 2 < face_indices.len() {
-                        let a = face_indices[idx];
-                        let b = face_indices[idx + 1];
-                        let c = face_indices[idx + 2];
-                        if a < points.len() && b < points.len() && c < points.len() {
-                            tris.push((points[a], points[b], points[c]));
-                        }
-                    }
-                    idx += count;
-                }
-                tris
-            }
-            _ => return Err("ScatterPoints requires PolyMesh topology".into()),
-        };
-
-        if triangles.is_empty() {
+        if !matches!(ctx.geometry.topology, Topology::Mesh { .. }) {
+            return Err("ScatterPoints requires polygons".into());
+        }
+        let tris = triangles(&ctx.geometry);
+        if tris.is_empty() {
             return Err("No valid triangles found for scattering".into());
         }
 
         // Scatter points on triangles
         let mut rng = LcgRng::new(self.seed);
         let mut scattered = Vec::with_capacity(self.count as usize);
-
         for _ in 0..self.count {
-            let tri_idx = (rng.next_u32() as usize) % triangles.len();
-            let (a, b, c) = triangles[tri_idx];
-            
+            let [a, b, c] = tris[(rng.next_u32() as usize) % tris.len()];
             let mut r1 = rng.next_f32();
             let mut r2 = rng.next_f32();
             if r1 + r2 > 1.0 {
@@ -65,15 +62,11 @@ impl IceNode for ScatterPoints {
                 r2 = 1.0 - r2;
             }
             let r3 = 1.0 - r1 - r2;
-            
-            scattered.push(a * r3 + b * r1 + c * r2);
+            scattered.push((a * r3 + b * r1 + c * r2).to_array());
         }
 
-        // Update geometry: new points, point cloud topology
-        ctx.geometry.points = scattered;
-        ctx.geometry.topology = Topology::Points;
-        ctx.geometry.clear_attributes(); // Scattered points have no attributes yet
-        
+        // A point cloud of its own: the surface's attributes do not carry over.
+        ctx.geometry = Geo::from_points(scattered);
         Ok(())
     }
 
@@ -87,7 +80,7 @@ impl IceNode for ScatterPoints {
 // ============================================================================
 
 /// Copy template geometry to each point in the current geometry
-/// 
+///
 /// Requires:
 /// - Current geometry with points (P attribute)
 /// - Template geometry in external context (passed via subnet's template input)
@@ -99,74 +92,46 @@ impl CopyToPoints {
         Self
     }
 }
+
 impl IceNode for CopyToPoints {
     fn execute(&self, ctx: &mut ExecutionContext) -> Result<(), String> {
-        // Get current points (where to copy to)
-        let current_points = ctx.geometry.points.clone();
-        
-        if current_points.is_empty() {
+        let targets = ctx.geometry.points().to_vec();
+        if targets.is_empty() {
             return Err("CopyToPoints: No points to copy to".into());
         }
-
-        // Get template geometry from external context and clone what we need
-        let template = ctx.get_external_geometry("template")
-            .ok_or_else(|| {
-                "CopyToPoints: No template geometry available. \
-                 Connect a geometry to the ICE subnet node's template input.".to_string()
-            })?;
-
-        if template.points.is_empty() {
+        let template = ctx.get_external_geometry("template").ok_or_else(|| {
+            "CopyToPoints: No template geometry available. \
+             Connect a geometry to the ICE subnet node's template input.".to_string()
+        })?;
+        let tp = template.points();
+        if tp.is_empty() {
             return Err("CopyToPoints: Template has no points".into());
         }
 
-        // ✅ Clone template data upfront to avoid borrow issues
-        let template_points = template.points.clone();
-        let template_topology = template.topology.clone();
-
-        // Copy template to each point
-        let mut out_points = Vec::new();
-        let mut out_indices = Vec::new();
-
-        for target_pos in &current_points {
-            let offset = out_points.len();
-            
-            // Copy template points, offset by target position
-            for template_pt in &template_points {
-                out_points.push(*template_pt + *target_pos);
-            }
-
-            // Copy template topology, offset indices
-            match &template_topology {
-                Topology::PolyMesh { face_indices, .. } => {
-                    out_indices.extend(
-                        face_indices.iter().map(|&idx| idx + offset)
-                    );
-                }
-                _ => {}
-            }
+        // One copy of the template per point, moved to it.
+        let mut points = Vec::with_capacity(tp.len() * targets.len());
+        for t in &targets {
+            points.extend(tp.iter().map(|p| [p[0] + t[0], p[1] + t[1], p[2] + t[2]]));
         }
-
-        // Update context geometry
-        ctx.geometry.points = out_points;
-        
-        // Update topology
-        match &template_topology {
-            Topology::PolyMesh { face_counts, .. } => {
-                // Replicate face counts for each instance
-                let mut new_face_counts = Vec::new();
-                for _ in 0..current_points.len() {
-                    new_face_counts.extend(face_counts);
+        let topology = match &template.topology {
+            Topology::Mesh { counts, indices, left_handed, subdiv } => {
+                let n = tp.len() as u32;
+                let (mut all_counts, mut all_indices) = (Vec::with_capacity(counts.len() * targets.len()), Vec::with_capacity(indices.len() * targets.len()));
+                for copy in 0..targets.len() as u32 {
+                    all_counts.extend_from_slice(counts);
+                    all_indices.extend(indices.iter().map(|&i| i + copy * n));
                 }
-                ctx.geometry.topology = Topology::PolyMesh {
-                    face_counts: new_face_counts,
-                    face_indices: out_indices,
-                };
+                Topology::Mesh { counts: Arc::new(all_counts), indices: Arc::new(all_indices), left_handed: *left_handed, subdiv: *subdiv }
             }
-            _ => {
-                ctx.geometry.topology = Topology::Points;
+            Topology::Curves { counts, basis, wrap } => {
+                let all: Vec<u32> = (0..targets.len()).flat_map(|_| counts.iter().copied()).collect();
+                Topology::curves(all, *basis, *wrap)
             }
-        }
-
+            Topology::Points => Topology::Points,
+        };
+        let mut out = Geo::from_points(points);
+        out.topology = topology;
+        ctx.geometry = out;
         Ok(())
     }
 
@@ -178,40 +143,20 @@ impl IceNode for CopyToPoints {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::Geometry;
 
     #[test]
     fn test_copy_to_points() {
-        // Create target points (where to copy to)
-        let target_points = vec![
-            Vec3::new(0.0, 0.0, 0.0),
-            Vec3::new(10.0, 0.0, 0.0),
-            Vec3::new(0.0, 10.0, 0.0),
-        ];
-        let target_geo = Geometry::from_points(target_points);
-        
-        // Create template (a simple triangle to copy)
-        let template_points = vec![
-            Vec3::new(0.0, 0.0, 0.0),
-            Vec3::new(1.0, 0.0, 0.0),
-            Vec3::new(0.0, 1.0, 0.0),
-        ];
-        let template_indices = vec![0, 1, 2];
-        let template_geo = Geometry::from_triangles(template_points, template_indices);
-        
-        // Setup execution context
-        let mut ctx = ExecutionContext::from_geometry(target_geo);
-        ctx.add_external_geometry("template", template_geo);
-        
-        // Execute CopyToPoints
-        let copy = CopyToPoints::new();
-        copy.execute(&mut ctx).unwrap();
-        
-        // Should have 3 copies × 3 points = 9 points total
+        // Where to copy to, and a triangle to copy.
+        let targets = Geo::from_points(vec![[0.0, 0.0, 0.0], [10.0, 0.0, 0.0], [0.0, 10.0, 0.0]]);
+        let template = Geo::from_polygons(vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], vec![3], vec![0, 1, 2]);
+        let mut ctx = ExecutionContext::from_geometry(targets);
+        ctx.add_external_geometry("template", template);
+        CopyToPoints::new().execute(&mut ctx).unwrap();
+        // 3 copies × 3 points, 3 triangles, every index valid.
         assert_eq!(ctx.geometry.point_count(), 9);
-        
-        // Should have 3 triangles
-        assert_eq!(ctx.geometry.primitive_count(), 3);
+        assert_eq!(ctx.geometry.topology.primitive_count(), 3);
+        assert!(ctx.geometry.validate().is_ok());
+        assert_eq!(ctx.geometry.points()[4], [11.0, 0.0, 0.0]);
     }
 }
 
@@ -238,28 +183,15 @@ impl LcgRng {
 #[cfg(test)]
 mod scatter_tests {
     use super::*;
-    use crate::core::Geometry;
 
     #[test]
     fn test_scatter_points() {
-        // Create a simple triangle
-        let points = vec![
-            Vec3::new(0.0, 0.0, 0.0),
-            Vec3::new(1.0, 0.0, 0.0),
-            Vec3::new(0.0, 1.0, 0.0),
-        ];
-        let indices = vec![0, 1, 2];
-        let geo = Geometry::from_triangles(points, indices);
-        
+        // A quad: both of its triangles are scattered on, not only true triangles.
+        let geo = Geo::from_polygons(vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 1.0, 0.0], [0.0, 1.0, 0.0]], vec![4], vec![0, 1, 2, 3]);
         let mut ctx = ExecutionContext::from_geometry(geo);
-        
-        let scatter = ScatterPoints::new(100, 42);
-        scatter.execute(&mut ctx).unwrap();
-        
-        // Should have 100 scattered points
+        ScatterPoints::new(100, 42).execute(&mut ctx).unwrap();
         assert_eq!(ctx.geometry.point_count(), 100);
-        
-        // Should be point cloud topology
-        assert!(ctx.geometry.topology.is_points());
+        assert!(matches!(ctx.geometry.topology, Topology::Points));
+        assert!(ctx.geometry.points().iter().all(|p| (0.0..=1.0).contains(&p[0]) && (0.0..=1.0).contains(&p[1])));
     }
 }

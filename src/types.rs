@@ -62,6 +62,8 @@ pub enum NodeType {
     CreateSphere { radius: f32, segments: u32 },
     CreateGrid   { rows: u32, cols: u32, size: f32 },
     LoadUsd      { path: String },
+    /// Write what the network changed in its stages as a USD override layer.
+    WriteUsd     { path: String },
     /// Mark packed primitives whose path matches a pattern as picked.
     PickPrims    { pattern: String },
     /// Remove packed primitives whose path matches a pattern, or keep only those.
@@ -238,6 +240,7 @@ pub fn node_type_icon(t: &NodeType) -> &'static str {
         NodeType::CreateSphere { .. }  => "⚪",
         NodeType::CreateGrid { .. }    => "⊞",
         NodeType::LoadUsd { .. }       => "📂",
+        NodeType::WriteUsd { .. }      => "📤",
         NodeType::PickPrims { .. }     => "👆",
         NodeType::PrunePrims { .. }    => "🚫",
         NodeType::UnpackPrims          => "📦",
@@ -286,6 +289,7 @@ pub fn node_type_label(t: &NodeType) -> &'static str {
         NodeType::CreateSphere { .. }  => "Sphere",
         NodeType::CreateGrid { .. }    => "Grid",
         NodeType::LoadUsd { .. }       => "Load USD",
+        NodeType::WriteUsd { .. }      => "Write USD",
         NodeType::PickPrims { .. }     => "Pick Primitives",
         NodeType::PrunePrims { .. }    => "Prune Primitives",
         NodeType::UnpackPrims          => "Unpack",
@@ -613,9 +617,26 @@ pub struct NamedMesh {
     /// The hierarchy of the stage it came from, shared with every other
     /// primitive of that stage. The scene explorer lists the stage from it.
     pub stage:    Option<std::sync::Arc<crate::usd_scene::StageTree>>,
+    /// The geometry `mesh` is a view of, in its own space with every
+    /// attribute. `None` once a node rebuilds the mesh outside it (merging
+    /// several primitives into one, for instance).
+    pub geo:      Option<std::sync::Arc<crate::core::geo::Geo>>,
+    /// The primitive as it was loaded, shared by everything made from it:
+    /// what its edits are measured against (see `crate::edits`). `None` for
+    /// primitives that did not come from a composed stage.
+    pub source:   Option<std::sync::Arc<Source>>,
     /// Where `mesh` is drawn: as it is, or as copies of a shared mesh.
     pub place:    Placement,
     /// Its USD purpose, which the scene explorer's purpose toggles filter by.
+    pub purpose:  Purpose,
+}
+
+/// A packed primitive as it was loaded from its stage.
+#[derive(Clone, Debug)]
+pub struct Source {
+    pub geo:      std::sync::Arc<crate::core::geo::Geo>,
+    pub place:    Placement,
+    pub material: Option<String>,
     pub purpose:  Purpose,
 }
 
@@ -644,7 +665,7 @@ pub enum PurposeKind { Render, Proxy, Guide }
 /// where they are placed: a native USD instance is one copy, a point
 /// instancer's prototype is many. Moving them moves the placements, not the
 /// points; a node that changes the mesh itself works on the placed copies.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub enum Placement {
     /// The mesh is already where it is drawn.
     #[default]
@@ -705,7 +726,7 @@ pub struct Look {
 
 impl NamedMesh {
     pub fn new(path: String, mesh: MeshData) -> Self {
-        Self { path, mesh: std::sync::Arc::new(mesh), picked: false, material: None, look: None, stage: None, place: Placement::InPlace, purpose: Purpose::Default }
+        Self { path, mesh: std::sync::Arc::new(mesh), picked: false, material: None, look: None, stage: None, geo: None, source: None, place: Placement::InPlace, purpose: Purpose::Default }
     }
 
     /// The mesh where it is drawn: as it is when in place, else every copy
@@ -721,6 +742,31 @@ impl NamedMesh {
                 std::borrow::Cow::Owned(merge_all(&parts))
             }
         }
+    }
+}
+
+/// One picked primitive, placed once, through a mesh operation: the
+/// operation sees it where it is drawn (as the modelling tools do), and the
+/// result goes back into its own space and geometry. Points the operation
+/// left alone keep their exact values, so an operation on UVs alone leaves
+/// the points shared with the source.
+fn edit_in_place(p: &NamedMesh, op: impl FnOnce(MeshData) -> MeshData) -> NamedMesh {
+    use crate::node_graph::nodes::place_mesh;
+    let Placement::One(at) = p.place else { return p.clone() };
+    let world = p.world().into_owned();
+    let edited = op(world.clone());
+    let mut local = place_mesh(&edited, &at.inverse());
+    if local.vertices.len() == p.mesh.vertices.len() {
+        for (i, v) in local.vertices.iter_mut().enumerate() {
+            if edited.vertices[i] == world.vertices[i] { *v = p.mesh.vertices[i]; }
+        }
+    }
+    match &p.geo {
+        Some(geo) => {
+            let geo = std::sync::Arc::new(geo.with_mesh_edits(&p.mesh, &local));
+            NamedMesh { mesh: std::sync::Arc::new(geo.to_mesh()), geo: Some(geo), ..p.clone() }
+        }
+        None => NamedMesh { mesh: std::sync::Arc::new(local), ..p.clone() },
     }
 }
 
@@ -799,11 +845,27 @@ impl EvalResult {
     }
 
     /// Run a mesh operation. On packed primitives with some picked, only
-    /// those go through it: they come out as one primitive, still picked,
-    /// in the place of the first of them, and the rest pass through as they
-    /// are. Otherwise everything is merged and goes through.
+    /// those go through it, and the rest pass through as they are.
+    ///
+    /// One picked primitive placed once (every prim of a composed stage) is
+    /// edited where it is drawn and stays itself: the result goes back into
+    /// its own space under the same placement, and into its geometry, where
+    /// only the columns the operation changed are replaced. Several picked
+    /// come out merged as one primitive, still picked, in the place of the
+    /// first of them. With none picked, everything is merged and goes through.
     pub fn map_mesh(&self, op: impl FnOnce(MeshData) -> MeshData) -> EvalResult {
         match self {
+            EvalResult::Named(prims) if prims.iter().filter(|p| p.picked).count() == 1
+                && prims.iter().any(|p| p.picked && matches!(p.place, Placement::One(_))) =>
+            {
+                let mut op = Some(op);
+                EvalResult::Named(prims.iter().map(|p| {
+                    if p.picked {
+                        if let Some(f) = op.take() { return edit_in_place(p, f); }
+                    }
+                    p.clone()
+                }).collect())
+            }
             EvalResult::Named(prims) if prims.iter().any(|p| p.picked) => {
                 let result = op(self.work_mesh());
                 let mut out: Vec<NamedMesh> = Vec::with_capacity(prims.len());
@@ -811,7 +873,7 @@ impl EvalResult {
                 for p in prims {
                     if !p.picked { out.push(p.clone()); continue; }
                     if let Some(mesh) = result.take() {
-                        out.push(NamedMesh { path: p.path.clone(), mesh: std::sync::Arc::new(mesh), picked: true, material: p.material.clone(), look: p.look.clone(), stage: p.stage.clone(), place: Placement::InPlace, purpose: p.purpose });
+                        out.push(NamedMesh { path: p.path.clone(), mesh: std::sync::Arc::new(mesh), picked: true, material: p.material.clone(), look: p.look.clone(), stage: p.stage.clone(), geo: None, source: p.source.clone(), place: Placement::InPlace, purpose: p.purpose });
                     }
                 }
                 EvalResult::Named(out)

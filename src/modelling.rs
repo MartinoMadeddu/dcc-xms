@@ -55,7 +55,7 @@ impl Stage {
 pub fn input_mesh(
     graph:       &NodeGraphState,
     id:          NodeId,
-    eval_subnet: &impl Fn(SubnetId, &MeshData, Option<&MeshData>) -> MeshData,
+    eval_subnet: &impl Fn(SubnetId, &crate::core::geo::Geo, Option<&crate::core::geo::Geo>) -> crate::core::geo::Geo,
 ) -> Option<PolyMesh> {
     let node = graph.nodes.iter().find(|n| n.id == id)?;
     let (src, out) = node.inputs.first()?.connected_output?;
@@ -68,7 +68,7 @@ pub fn input_mesh(
 /// Stage of the selected node, if it is an Edit Poly node with a mesh.
 pub fn stage(
     graph:       &NodeGraphState,
-    eval_subnet: &impl Fn(SubnetId, &MeshData, Option<&MeshData>) -> MeshData,
+    eval_subnet: &impl Fn(SubnetId, &crate::core::geo::Geo, Option<&crate::core::geo::Geo>) -> crate::core::geo::Geo,
 ) -> Option<Stage> {
     let id   = graph.selected_node?;
     let node = graph.nodes.iter().find(|n| n.id == id)?;
@@ -106,7 +106,7 @@ pub fn highlight_mesh(stage: &Stage) -> Option<MeshData> {
     Some(MeshData::from_polys(verts, polys))
 }
 
-fn subnet_eval(subnets: &SubnetStore) -> impl Fn(SubnetId, &MeshData, Option<&MeshData>) -> MeshData + '_ {
+fn subnet_eval(subnets: &SubnetStore) -> impl Fn(SubnetId, &crate::core::geo::Geo, Option<&crate::core::geo::Geo>) -> crate::core::geo::Geo + '_ {
     move |sid, mesh, template| subnets.get(sid).map(|sg| sg.evaluate(mesh, template)).unwrap_or_else(|| mesh.clone())
 }
 

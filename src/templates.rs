@@ -580,7 +580,7 @@ fn mocap_blank(g: &mut NodeGraphState, _: &mut SubnetStore) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{MeshData, SubnetId};
+    use crate::types::SubnetId;
 
     #[test]
     fn every_template_is_laid_out_in_clear_rows() {
@@ -635,7 +635,7 @@ mod tests {
             assert!(!message.is_empty() && !message.contains("not found"), "{}: {message}", t.name);
             assert_eq!(g.nodes.iter().filter(|n| matches!(n.node_type, NodeType::Output)).count(), 1);
 
-            let eval = |sid: SubnetId, mesh: &MeshData, template: Option<&MeshData>| -> MeshData {
+            let eval = |sid: SubnetId, mesh: &crate::core::geo::Geo, template: Option<&crate::core::geo::Geo>| -> crate::core::geo::Geo {
                 store.get(sid).map(|sg| sg.evaluate(mesh, template)).unwrap_or_else(|| mesh.clone())
             };
             // Every node cooks: a clip or a mesh with vertices.
@@ -663,7 +663,7 @@ mod tests {
             let mut g = NodeGraphState::default();
             (t.build)(&mut g, &mut SubnetStore::default());
             let node = g.selected_node.unwrap();
-            let eval = |_: SubnetId, mesh: &MeshData, _: Option<&MeshData>| mesh.clone();
+            let eval = |_: SubnetId, mesh: &crate::core::geo::Geo, _: Option<&crate::core::geo::Geo>| mesh.clone();
             let mesh = g.eval_node(node, &mut std::collections::HashMap::new(), &eval).unwrap().into_mesh();
             assert_eq!(mesh.uvs.len(), mesh.indices.len(), "{name}");
             assert!(mesh.uvs.iter().all(|uv| uv[0].is_finite() && uv[1].is_finite()), "{name}");
@@ -685,7 +685,7 @@ mod tests {
             let mut g = NodeGraphState::default();
             (t.build)(&mut g, &mut SubnetStore::default());
             let ep = g.nodes.iter().find(|n| matches!(n.node_type, NodeType::EditPoly { .. })).unwrap().id;
-            let eval = |_: SubnetId, mesh: &MeshData, _: Option<&MeshData>| mesh.clone();
+            let eval = |_: SubnetId, mesh: &crate::core::geo::Geo, _: Option<&crate::core::geo::Geo>| mesh.clone();
             let mesh = g.eval_node(ep, &mut std::collections::HashMap::new(), &eval).unwrap().into_mesh();
             let poly = PolyMesh::from_mesh(&mesh);
             assert!(poly.verts.len() >= verts_at_least, "{name}: {} vertices", poly.verts.len());

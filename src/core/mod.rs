@@ -12,11 +12,6 @@ pub mod human_ik;
 pub mod pattern;
 pub mod uv;
 pub mod manip;
-pub mod attribute;
-pub mod geometry;
-pub mod topology;
-
-// Re-export main types for convenience
-pub use attribute::{Attribute, AttributeData, AttributeScope};
-pub use geometry::Geometry;
-pub use topology::Topology;
+/// The geometry model of packed primitives, the nodes and ICE: typed
+/// attribute columns per context.
+pub mod geo;

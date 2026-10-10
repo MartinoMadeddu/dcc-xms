@@ -157,7 +157,7 @@ impl NodeGraphState {
             | NodeType::CreateGrid { .. }
             | NodeType::LoadFbxMesh { .. }
             | NodeType::LoadUsd { .. }      => (vec![], vec![o("Mesh")]),
-            NodeType::PickPrims { .. } | NodeType::PrunePrims { .. } | NodeType::UnpackPrims
+            NodeType::PickPrims { .. } | NodeType::PrunePrims { .. } | NodeType::UnpackPrims | NodeType::WriteUsd { .. }
                 => (vec![i("Prims")], vec![o("Prims")]),
             NodeType::Transform { .. }      => (vec![i("Input")], vec![o("Output")]),
             NodeType::Merge                 => (vec![i("A"), i("B")], vec![o("Result")]),
@@ -359,7 +359,7 @@ impl NodeGraphState {
     /// every frame.
     pub fn eval_packed(
         &self, id: NodeId, output: usize,
-        eval_subnet: &impl Fn(SubnetId, &MeshData, Option<&MeshData>) -> MeshData,
+        eval_subnet: &impl Fn(SubnetId, &crate::core::geo::Geo, Option<&crate::core::geo::Geo>) -> crate::core::geo::Geo,
     ) -> Option<Vec<(String, bool)>> {
         type Kept = (u64, usize, usize, Option<Vec<(String, bool)>>);
         static LAST: std::sync::Mutex<Option<Kept>> = std::sync::Mutex::new(None);
@@ -418,7 +418,7 @@ impl NodeGraphState {
     /// primitives keep their materials.
     pub fn evaluate_for_viewport_packed(
         &self,
-        eval_subnet: &impl Fn(SubnetId, &MeshData, Option<&MeshData>) -> MeshData,
+        eval_subnet: &impl Fn(SubnetId, &crate::core::geo::Geo, Option<&crate::core::geo::Geo>) -> crate::core::geo::Geo,
     ) -> Option<EvalResult> {
         let id = self.get_viewport_node()?;
         let node = self.nodes.iter().find(|n| n.id == id)?;
@@ -432,7 +432,7 @@ impl NodeGraphState {
 
     pub fn evaluate_for_viewport(
         &self,
-        eval_subnet: &impl Fn(SubnetId, &MeshData, Option<&MeshData>) -> MeshData,
+        eval_subnet: &impl Fn(SubnetId, &crate::core::geo::Geo, Option<&crate::core::geo::Geo>) -> crate::core::geo::Geo,
     ) -> Option<MeshData> {
         // 👁️ Use view flag if set, otherwise use Output
         let display_node_id = self.get_viewport_node()?;
@@ -473,7 +473,7 @@ impl NodeGraphState {
 
     /// Clip on one output socket of a node.
     pub fn eval_anim_out(&self, id: NodeId, output: usize) -> Option<std::sync::Arc<crate::core::anim::AnimData>> {
-        let passthrough = |_: SubnetId, mesh: &MeshData, _: Option<&MeshData>| mesh.clone();
+        let passthrough = |_: SubnetId, mesh: &crate::core::geo::Geo, _: Option<&crate::core::geo::Geo>| mesh.clone();
         let mut cache = HashMap::new();
         match self.eval_anim_node(id, output, &mut cache, &passthrough)? {
             EvalResult::Anim(a) => Some(a),
@@ -488,7 +488,7 @@ impl NodeGraphState {
         id:          NodeId,
         output:      usize,
         cache:       &mut EvalCache,
-        eval_subnet: &impl Fn(SubnetId, &MeshData, Option<&MeshData>) -> MeshData,
+        eval_subnet: &impl Fn(SubnetId, &crate::core::geo::Geo, Option<&crate::core::geo::Geo>) -> crate::core::geo::Geo,
     ) -> Option<EvalResult> {
         let node = self.nodes.iter().find(|n| n.id == id)?;
         match &node.node_type {
@@ -515,7 +515,7 @@ impl NodeGraphState {
         &self,
         id:          NodeId,
         cache:       &mut EvalCache,
-        eval_subnet: &impl Fn(SubnetId, &MeshData, Option<&MeshData>) -> MeshData,
+        eval_subnet: &impl Fn(SubnetId, &crate::core::geo::Geo, Option<&crate::core::geo::Geo>) -> crate::core::geo::Geo,
     ) -> Option<EvalResult> {
         self.eval_node_out(id, 0, cache, eval_subnet)
     }
@@ -527,7 +527,7 @@ impl NodeGraphState {
         id:          NodeId,
         output:      usize,
         cache:       &mut EvalCache,
-        eval_subnet: &impl Fn(SubnetId, &MeshData, Option<&MeshData>) -> MeshData,
+        eval_subnet: &impl Fn(SubnetId, &crate::core::geo::Geo, Option<&crate::core::geo::Geo>) -> crate::core::geo::Geo,
     ) -> Option<EvalResult> {
         if let Some(cached) = cache.get(&(id, output)) { return cached.clone(); }
 
@@ -556,7 +556,7 @@ impl NodeGraphState {
     // appear as scene objects.
     pub fn evaluate_for_scene(
         &self,
-        eval_subnet: &impl Fn(SubnetId, &MeshData, Option<&MeshData>) -> MeshData,
+        eval_subnet: &impl Fn(SubnetId, &crate::core::geo::Geo, Option<&crate::core::geo::Geo>) -> crate::core::geo::Geo,
     ) -> Vec<(NodeId, String, EvalResult)> {
         let mut cache: EvalCache = HashMap::new();
         let mut out    = vec![];
@@ -588,7 +588,7 @@ impl NodeGraphState {
         &self,
         id:          NodeId,
         cache:       &mut EvalCache,
-        eval_subnet: &impl Fn(SubnetId, &MeshData, Option<&MeshData>) -> MeshData,
+        eval_subnet: &impl Fn(SubnetId, &crate::core::geo::Geo, Option<&crate::core::geo::Geo>) -> crate::core::geo::Geo,
         out:         &mut Vec<(NodeId, String, EvalResult)>,
         visited:     &mut std::collections::HashSet<NodeId>,
     ) {
@@ -671,14 +671,14 @@ impl NodeGraphState {
     pub fn display_collider(&self) -> Option<std::sync::Arc<MeshData>> {
         let node = self.body_collide_node()?;
         let (src, out) = node.inputs.get(1)?.connected_output?;
-        let passthrough = |_: SubnetId, mesh: &MeshData, _: Option<&MeshData>| mesh.clone();
+        let passthrough = |_: SubnetId, mesh: &crate::core::geo::Geo, _: Option<&crate::core::geo::Geo>| mesh.clone();
         self.eval_node_out(src, out, &mut HashMap::new(), &passthrough).map(|r| r.shared_mesh())
     }
 
     /// The clip and the collider that reach a Ragdoll node.
     pub fn ragdoll_inputs(&self, id: NodeId) -> (Option<std::sync::Arc<crate::core::anim::AnimData>>, Option<std::sync::Arc<MeshData>>) {
         let Some(node) = self.nodes.iter().find(|n| n.id == id) else { return (None, None) };
-        let passthrough = |_: SubnetId, mesh: &MeshData, _: Option<&MeshData>| mesh.clone();
+        let passthrough = |_: SubnetId, mesh: &crate::core::geo::Geo, _: Option<&crate::core::geo::Geo>| mesh.clone();
         let mut cache = HashMap::new();
         let input = |k: usize, cache: &mut EvalCache| node.inputs.get(k).and_then(|s| s.connected_output)
             .and_then(|(src, out)| self.eval_node_out(src, out, cache, &passthrough));

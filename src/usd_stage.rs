@@ -8,13 +8,15 @@
 //! primitives, materials, cameras, lights, and the stage hierarchy for the
 //! scene explorer.
 //!
-//! Meshes are baked into world space (Y-up metres), as the root-layer reader
-//! did, so every node downstream works unchanged. Instanced meshes are not:
-//! a native instance's mesh, and a point instancer's prototype mesh, is made
-//! once in its own space and shared by every copy, each copy placed by a
-//! matrix (`Placement`). A native instance gives one packed primitive per mesh
-//! under the instance's own path; a point instancer gives one per prototype
-//! mesh, holding all its points.
+//! Geometry stays in its own space, as a `Geo` with its topology and every
+//! primvar (normals, UVs with their indices and interpolation, displayColor,
+//! custom ones). Each packed primitive is placed by its world transform,
+//! which includes the stage's up-axis and unit correction (also kept on the
+//! stage tree as `root`, so writing can take it off again). Instanced
+//! geometry is shared: a native instance's mesh, and a point instancer's
+//! prototype mesh, is made once and placed by every copy. A native instance
+//! gives one packed primitive per mesh under the instance's own path; a
+//! point instancer gives one per prototype mesh, holding all its points.
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -23,6 +25,7 @@ use std::sync::Arc;
 use bevy::math::{DMat4, DQuat, DVec3, Mat4};
 use xms_scene as rs;
 
+use crate::core::geo::{self, Attr, Column, Context, Geo, Kind, Role, Subdiv, Topology};
 use crate::types::{MeshData, Placement, Purpose};
 use crate::usd_scene::{StageNode, StageTree, UsdCamera, UsdMaterial, UsdMesh, UsdScene, UsdSkeleton};
 
@@ -55,7 +58,10 @@ pub fn read(layer: &Path) -> Result<UsdScene, String> {
         walk.prim(child, child.as_str().to_string(), root, None, Purpose::Default, 1, false, false);
     }
     let Walk { nodes, counts, .. } = walk;
-    scene.tree = Arc::new(StageTree { nodes });
+    scene.tree = Arc::new(StageTree {
+        nodes, root: root.as_mat4(), source: layer.to_path_buf(),
+        up_axis: scene.up_axis.clone(), meters_per_unit: scene.meters_per_unit,
+    });
     scene.notes = counts.notes();
     // The translator's own notes, minus timings and empty reports.
     scene.notes.extend(translated.warnings.into_iter().filter(|w| {
@@ -68,6 +74,7 @@ pub fn read(layer: &Path) -> Result<UsdScene, String> {
 #[derive(Default)]
 struct Counts {
     nested:  usize,
+    invalid: usize,
     gprims:  usize,
     subsets: usize,
     hidden:  usize,
@@ -77,6 +84,7 @@ impl Counts {
     fn notes(&self) -> Vec<String> {
         let mut notes = vec![];
         let mut say = |n: usize, text: &str| if n > 0 { notes.push(format!("{n} {text}")) };
+        say(self.invalid, "meshes, curves or points have inconsistent topology or primvars and are left out");
         say(self.nested, "point instancers inside the prototypes of another point instancer are not expanded");
         say(self.gprims, "implicit shapes (sphere, cube, cylinder…) are not read yet");
         say(self.subsets, "meshes have face subsets (per-face materials): the mesh's own material is used");
@@ -94,7 +102,7 @@ struct Walk<'a> {
     counts:  Counts,
     /// Instanced meshes in their own space, by their path in the scene
     /// layer: made once, shared by every copy.
-    shared:  HashMap<String, Option<Arc<MeshData>>>,
+    shared:  HashMap<String, Option<(Arc<Geo>, Arc<MeshData>)>>,
     /// Inside a point instancer: prims are listed, its prototypes are drawn
     /// through the instancer instead.
     listing: usize,
@@ -118,9 +126,12 @@ impl Walk<'_> {
         let hidden = hidden || !prim.visible_at(t);
         let purpose = purpose_of(sc, src, &prim.purpose, purpose);
         let name = shown.rsplit('/').next().unwrap_or("").to_string();
-        self.nodes.push(StageNode { path: shown.clone(), name, type_name: type_name.clone(), depth, hidden });
-
         let local = mat(&prim.local_xform_at(t));
+        self.nodes.push(StageNode {
+            path: shown.clone(), name, type_name: type_name.clone(), depth, hidden, local,
+            reset_xform: prim.reset_xform_stack, proxy: under_instance, prototype: self.listing > 0,
+        });
+
         let world = if prim.reset_xform_stack { self.root * local } else { parent * local };
         let binding = prim.material_binding.as_ref().map(|p| p.as_str().to_string()).or(binding);
 
@@ -146,13 +157,22 @@ impl Walk<'_> {
                     // A point instancer's prototype: drawn through the instancer.
                 } else if hidden {
                     self.counts.hidden += 1;
-                } else if under_instance {
-                    // Shared with every other instance of the same prototype.
-                    if let Some(shared) = self.shared_geometry(src, &prim.kind) {
-                        self.scene.meshes.push(UsdMesh { path: shown.clone(), mesh: shared, material: binding.clone(), place: Placement::One(world.as_mat4()), purpose });
+                } else {
+                    // In its own space, placed by its world transform (root
+                    // correction included). Under an instance it is shared with
+                    // every other instance of the same prototype.
+                    let made = if under_instance {
+                        self.shared_geometry(src, &prim.kind)
+                    } else {
+                        geometry(&prim.kind, t).map(shared)
+                    };
+                    match made {
+                        Some((geo, mesh)) => self.scene.meshes.push(UsdMesh {
+                            path: shown.clone(), mesh, geo: Some(geo), material: binding.clone(),
+                            place: Placement::One(world.as_mat4()), purpose,
+                        }),
+                        None => self.counts.invalid += 1,
                     }
-                } else if let Some(geo) = geometry(&prim.kind, t, &world) {
-                    self.scene.meshes.push(UsdMesh { path: shown.clone(), mesh: Arc::new(geo), material: binding.clone(), place: Placement::InPlace, purpose });
                 }
             }
             rs::PrimKind::Camera(c) if !under_instance => self.scene.cameras.push(UsdCamera {
@@ -194,9 +214,9 @@ impl Walk<'_> {
 
     /// A mesh, curves or points in their own space, made once and shared by
     /// every copy.
-    fn shared_geometry(&mut self, src: &rs::Path, kind: &rs::PrimKind) -> Option<Arc<MeshData>> {
+    fn shared_geometry(&mut self, src: &rs::Path, kind: &rs::PrimKind) -> Option<(Arc<Geo>, Arc<MeshData>)> {
         let t = self.t;
-        self.shared.entry(src.as_str().to_string()).or_insert_with(|| geometry(kind, t, &DMat4::IDENTITY).map(Arc::new)).clone()
+        self.shared.entry(src.as_str().to_string()).or_insert_with(|| geometry(kind, t).map(shared)).clone()
     }
 
     /// A point instancer: one packed primitive per mesh of each prototype,
@@ -231,10 +251,10 @@ impl Walk<'_> {
             self.gather(proto, proto_shown, DMat4::IDENTITY, binding.clone(), purpose, &mut found);
             for (mesh_src, mesh_shown, inside, material, purpose) in found {
                 let Some(kind) = sc.get(&mesh_src).map(|p| &p.kind) else { continue };
-                let Some(shared) = self.shared_geometry(&mesh_src, kind) else { continue };
+                let Some((geo, shared)) = self.shared_geometry(&mesh_src, kind) else { self.counts.invalid += 1; continue };
                 if let rs::PrimKind::Mesh(m) = kind { if !m.subsets.is_empty() { self.counts.subsets += 1; } }
                 let place: Arc<[Mat4]> = at.iter().map(|p| (*p * inside).as_mat4()).collect();
-                self.scene.meshes.push(UsdMesh { path: mesh_shown, mesh: shared, material, place: Placement::Many(place), purpose });
+                self.scene.meshes.push(UsdMesh { path: mesh_shown, mesh: shared, geo: Some(geo), material, place: Placement::Many(place), purpose });
             }
         }
     }
@@ -288,22 +308,45 @@ fn mat(m: &rs::Mat4d) -> DMat4 {
 
 // ── Geometry ─────────────────────────────────────────────────────────────────
 
-/// A mesh, curves or points prim as packed geometry, placed by `world`.
-fn geometry(kind: &rs::PrimKind, t: f64, world: &DMat4) -> Option<MeshData> {
-    match kind {
-        rs::PrimKind::Mesh(m) => mesh(m, t, world),
-        rs::PrimKind::Curves(c) => curves(c, t, world),
-        rs::PrimKind::Points(p) => points(p, t, world),
-        _ => None,
+/// A mesh, curves or points prim as geometry in its own space: topology and
+/// every primvar, as USD has them. Placed in the scene by its packed
+/// primitive's `Placement`, not by moving its points.
+fn geometry(kind: &rs::PrimKind, t: f64) -> Option<Geo> {
+    let geo = match kind {
+        rs::PrimKind::Mesh(m) => mesh_geo(m, t)?,
+        rs::PrimKind::Curves(c) => curves_geo(c, t)?,
+        rs::PrimKind::Points(p) => points_geo(p, t)?,
+        _ => return None,
+    };
+    geo.validate().ok()?;
+    Some(geo)
+}
+
+/// The geometry and its `MeshData` view, made once per prim (or prototype).
+fn shared(geo: Geo) -> (Arc<Geo>, Arc<MeshData>) {
+    let view = Arc::new(geo.to_mesh());
+    (Arc::new(geo), view)
+}
+
+fn mesh_geo(m: &rs::Mesh, t: f64) -> Option<Geo> {
+    let points = m.points.at(t)?;
+    if points.len() < 3 || m.face_vertex_indices.is_empty() { return None; }
+    let mut g = Geo::from_polygons(points, m.face_vertex_counts.clone(), m.face_vertex_indices.clone());
+    if let Topology::Mesh { left_handed, subdiv, .. } = &mut g.topology {
+        *left_handed = m.left_handed;
+        *subdiv = match m.subdivision.scheme.as_deref() {
+            Some("none") => Subdiv::None,
+            Some("loop") => Subdiv::Loop,
+            Some("bilinear") => Subdiv::Bilinear,
+            _ => Subdiv::CatmullClark,
+        };
     }
+    if let Some(n) = &m.normals { add_primvar(&mut g, n, t); }
+    for pv in &m.primvars { add_primvar(&mut g, pv, t); }
+    Some(g)
 }
 
-fn place(points: &[[f32; 3]], world: &DMat4) -> Vec<[f32; 3]> {
-    points.iter().map(|p| world.transform_point3(DVec3::new(p[0] as f64, p[1] as f64, p[2] as f64)).as_vec3().to_array()).collect()
-}
-
-/// BasisCurves: control points, counts, basis and wrap, as USD has them.
-fn curves(c: &rs::Curves, t: f64, world: &DMat4) -> Option<MeshData> {
+fn curves_geo(c: &rs::Curves, t: f64) -> Option<Geo> {
     use crate::types::{CurveBasis, CurveWrap};
     let points = c.points.at(t)?;
     let total: usize = c.curve_vertex_counts.iter().map(|&n| n as usize).sum();
@@ -312,98 +355,60 @@ fn curves(c: &rs::Curves, t: f64, world: &DMat4) -> Option<MeshData> {
         match c.basis.as_str() { "bspline" => CurveBasis::Bspline, "catmullRom" => CurveBasis::CatmullRom, _ => CurveBasis::Bezier }
     };
     let wrap = match c.wrap.as_str() { "periodic" => CurveWrap::Periodic, "pinned" => CurveWrap::Pinned, _ => CurveWrap::Nonperiodic };
-    Some(MeshData {
-        curve_points: place(&points, world),
-        curve_counts: c.curve_vertex_counts.clone(),
-        curve_basis:  basis,
-        curve_wrap:   wrap,
-        ..Default::default()
-    })
+    let mut g = Geo::from_points(points);
+    g.topology = Topology::curves(c.curve_vertex_counts.clone(), basis, wrap);
+    for pv in c.widths.iter().chain(&c.normals).chain(&c.primvars) { add_primvar(&mut g, pv, t); }
+    Some(g)
 }
 
-/// Points, with their widths scaled as the transform scales.
-fn points(p: &rs::Points, t: f64, world: &DMat4) -> Option<MeshData> {
+fn points_geo(p: &rs::Points, t: f64) -> Option<Geo> {
     let points = p.points.at(t)?;
     if points.is_empty() { return None; }
-    let scale = world.determinant().abs().cbrt() as f32;
-    let widths = p.widths.as_ref().and_then(|pv| match pv.values.at(t)? {
-        rs::PrimvarValues::Float(w) => Some(w.into_iter().map(|w| w * scale).collect()),
-        _ => None,
-    }).unwrap_or_default();
-    Some(MeshData { points: place(&points, world), widths, ..Default::default() })
+    let mut g = Geo::from_points(points);
+    for pv in p.widths.iter().chain(&p.primvars) { add_primvar(&mut g, pv, t); }
+    Some(g)
 }
 
-// ── Meshes ───────────────────────────────────────────────────────────────────
-
-/// Names tried for the texture coordinates, before any other 2D primvar.
-const UV_NAMES: [&str; 5] = ["st", "st0", "UVMap", "map1", "uv"];
-
-/// Where a UV value is looked up.
-#[derive(Clone, Copy, PartialEq)]
-enum Rate { Constant, Uniform, Vertex, Corner }
-
-fn mesh(m: &rs::Mesh, t: f64, world: &DMat4) -> Option<MeshData> {
-    let points = m.points.at(t)?;
-    let (counts, indices) = (&m.face_vertex_counts, &m.face_vertex_indices);
-    if points.len() < 3 || indices.is_empty() { return None; }
-    let vertices: Vec<[f32; 3]> = points.iter()
-        .map(|p| world.transform_point3(DVec3::new(p[0] as f64, p[1] as f64, p[2] as f64)).as_vec3().to_array())
-        .collect();
-    // A mirrored transform or a left-handed mesh turns the faces inside out.
-    let flip = m.left_handed != (world.determinant() < 0.0);
-
-    // Texture coordinates: the usual names first, then any 2D primvar.
-    let uv_pv = UV_NAMES.iter().find_map(|n| m.primvars.iter().find(|p| p.name == *n))
-        .or_else(|| m.primvars.iter().find(|p| matches!(p.values.at(t), Some(rs::PrimvarValues::Float2(_)))));
-    let uv = uv_pv.and_then(|pv| {
-        let values: Vec<[f32; 2]> = match pv.values.at(t)? {
-            rs::PrimvarValues::Float2(v) => v,
-            _ => return None,
-        };
-        let count = pv.indices.as_ref().map(|i| i.len()).unwrap_or(values.len());
-        let rate = match pv.interpolation {
-            Some(rs::Interpolation::FaceVarying) => Rate::Corner,
-            Some(rs::Interpolation::Vertex) | Some(rs::Interpolation::Varying) => Rate::Vertex,
-            Some(rs::Interpolation::Uniform) => Rate::Uniform,
-            Some(rs::Interpolation::Constant) => Rate::Constant,
-            None if count == indices.len() && count != vertices.len() => Rate::Corner,
-            None => Rate::Vertex,
-        };
-        Some((values, pv.indices.clone(), rate))
-    });
-    let uv_at = |corner: usize, vertex: usize, face: usize| -> [f32; 2] {
-        let Some((values, index, rate)) = &uv else { return [0.0; 2] };
-        let slot = match rate { Rate::Corner => corner, Rate::Vertex => vertex, Rate::Uniform => face, Rate::Constant => 0 };
-        let i = match index { Some(ix) => ix.get(slot).copied().unwrap_or(0) as usize, None => slot };
-        values.get(i).copied().unwrap_or([0.0; 2])
+/// A primvar as an attribute, in the context of its interpolation. Without
+/// one, the context is the one whose element count it matches (corners
+/// first, as faceVarying UVs are the common unauthored case). Primvars that
+/// match no context, such as curve widths per segment end (`varying` on
+/// curves), are left out: they stay in the file, unedited.
+fn add_primvar(g: &mut Geo, pv: &rs::Primvar, t: f64) {
+    let Some(values) = pv.values.at(t) else { return };
+    let column = match values {
+        rs::PrimvarValues::Float(v) => Column::Float(Arc::new(v)),
+        rs::PrimvarValues::Float2(v) => Column::Vec2(Arc::new(v)),
+        rs::PrimvarValues::Float3(v) => Column::Vec3(Arc::new(v)),
+        rs::PrimvarValues::Float4(v) => Column::Vec4(Arc::new(v)),
+        #[allow(unreachable_patterns)]
+        _ => return,
     };
-
-    let mut tris: Vec<u32> = Vec::with_capacity(indices.len() * 2);
-    let mut uvs: Vec<[f32; 2]> = if uv.is_some() { Vec::with_capacity(indices.len() * 2) } else { vec![] };
-    let mut polys: Vec<Vec<u32>> = Vec::with_capacity(counts.len());
-    let mut at = 0usize;
-    for (face, n) in counts.iter().enumerate() {
-        let n = *n as usize;
-        if at + n > indices.len() { break; }
-        if n >= 3 && indices[at..at + n].iter().all(|i| (*i as usize) < vertices.len()) {
-            // Corners of this face, in the winding the mesh ends up with.
-            let corners: Vec<usize> = if flip { (0..n).rev().map(|k| at + k).collect() } else { (0..n).map(|k| at + k).collect() };
-            polys.push(corners.iter().map(|c| indices[*c]).collect());
-            for k in 1..n - 1 {
-                for c in [corners[0], corners[k], corners[k + 1]] {
-                    tris.push(indices[c]);
-                    if uv.is_some() { uvs.push(uv_at(c, indices[c] as usize, face)); }
-                }
-            }
-        }
-        at += n;
-    }
-    if tris.is_empty() { return None; }
-    let mut mesh = MeshData::from_triangles(vertices, tris);
-    mesh.face_count = polys.len();
-    mesh.polys = polys;
-    mesh.uvs = uvs;
-    Some(mesh)
+    let elements = pv.indices.as_ref().map_or(column.len(), |i| i.len());
+    let by_count = || [Context::Corner, Context::Point, Context::Primitive, Context::Object]
+        .into_iter()
+        .find(|&c| g.count(c) == elements && elements > 0);
+    let ctx = match pv.interpolation {
+        Some(rs::Interpolation::Constant) => Some(Context::Object),
+        Some(rs::Interpolation::Uniform) => Some(Context::Primitive),
+        Some(rs::Interpolation::Vertex) => Some(Context::Point),
+        Some(rs::Interpolation::FaceVarying) => Some(Context::Corner),
+        // Per point for meshes and points; per segment end for curves.
+        Some(rs::Interpolation::Varying) => Some(Context::Point).filter(|&c| g.count(c) == elements),
+        None => by_count(),
+    };
+    let Some(ctx) = ctx.filter(|&c| g.count(c) == elements) else { return };
+    let role = match (pv.name.as_str(), column.kind()) {
+        (geo::NORMALS, _) => Role::Normal,
+        ("displayColor", _) => Role::Color,
+        (_, Kind::Vec2) if geo::UV_NAMES.contains(&pv.name.as_str()) => Role::TexCoord,
+        _ => Role::None,
+    };
+    let attr = match &pv.indices {
+        Some(ix) => Attr::indexed(column, ix.clone(), role),
+        None => Attr::new(column, role),
+    };
+    g.set(ctx, &pv.name, attr);
 }
 
 // ── Materials ────────────────────────────────────────────────────────────────

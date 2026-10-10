@@ -36,6 +36,8 @@ pub struct AnimContext {
 pub enum PanelAction {
     /// Run these Write FBX nodes, for the current file or the whole folder.
     Write { targets: Vec<NodeId>, all_files: bool },
+    /// Run this Write USD node.
+    WriteUsd(NodeId),
 }
 
 /// Services the panel can reach beyond the graph.
@@ -97,7 +99,7 @@ pub fn draw_properties(
         .filter(|n| matches!(n.node_type, NodeType::PickPrims { .. } | NodeType::PrunePrims { .. } | NodeType::UnpackPrims))
         .and_then(|n| n.inputs.first()).and_then(|i| i.connected_output)
         .and_then(|(src, out)| {
-            let pass = |_: crate::types::SubnetId, m: &crate::types::MeshData, _: Option<&crate::types::MeshData>| m.clone();
+            let pass = |_: crate::types::SubnetId, m: &crate::core::geo::Geo, _: Option<&crate::core::geo::Geo>| m.clone();
             graph.eval_packed(src, out, &pass)
         }).unwrap_or_default();
     let prim_paths: Vec<String> = packed_in.iter().map(|p| p.0.clone()).collect();
@@ -141,6 +143,27 @@ pub fn draw_properties(
                 else { f.status(Status::Bad, "Not found"); }
             });
             if !path.is_empty() { usd_summary(ui, path); }
+        }
+        NodeType::WriteUsd { path } => {
+            group(ui, "File", Some("A .usda layer with what the network changed in its USD stages: it sublayers each stage's file and holds only opinions over it. Opened on its own it gives what Imago shows"), |f| {
+                path_row(f, path, "/path/to/edits.usda", io, sel_id, BrowseMode::Save, "Write USD layer", &["usda"]);
+            });
+            group(ui, "Write", None, |f| {
+                f.buttons("Override layer", Some("Moved prims get their own transform, changed geometry its changed attributes, pruned prims are deactivated, prims made in Imago are added. Values at the current frame"), |ui| {
+                    if ui.add_enabled(!path.trim().is_empty(), egui::Button::new("Write")).clicked() {
+                        io.action = Some(PanelAction::WriteUsd(sel_id));
+                    }
+                });
+                match crate::usd_write::last(sel_id) {
+                    None => {}
+                    Some(Err(e)) => f.status(Status::Bad, e),
+                    Some(Ok(r)) => {
+                        f.status(Status::Ok, format!("Written: {} changed, {} deactivated, {} added", r.changed, r.deactivated, r.added));
+                        for s in r.skipped.iter().take(8) { f.status(Status::Info, format!("Not written: {s}")); }
+                        if r.skipped.len() > 8 { f.status(Status::Info, format!("… and {} more not written", r.skipped.len() - 8)); }
+                    }
+                }
+            });
         }
         NodeType::LoadFbx { path, take } => {
             group(ui, "File", Some("A skeleton and one take, baked per frame, with the mesh skinned to it. Read Y up, in metres; written back in the file's own axes and unit"), |f| {

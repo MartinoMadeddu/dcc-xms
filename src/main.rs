@@ -8,6 +8,8 @@ mod ice;
 mod usd_loader;
 mod usd_scene;
 mod usd_stage;
+mod edits;
+mod usd_write;
 mod strands;
 mod usda_text;
 mod prim_inspector;
@@ -262,7 +264,7 @@ fn dcc_ui(
             BrowseTarget::Node(id) => {
                 if let Some(node) = graph.nodes.iter_mut().find(|n| n.id == id) {
                     match &mut node.node_type {
-                        NodeType::LoadUsd { path } | NodeType::LoadFbx { path, .. } | NodeType::LoadFbxMesh { path } => *path = text,
+                        NodeType::LoadUsd { path } | NodeType::WriteUsd { path } | NodeType::LoadFbx { path, .. } | NodeType::LoadFbxMesh { path } => *path = text,
                         NodeType::LoadFbxDir { dir, index, .. } => { *dir = text; *index = 0; }
                         // A folder was picked: keep the file name pattern.
                         NodeType::WriteFbx { path, .. } => {
@@ -663,7 +665,7 @@ impl egui_dock::TabViewer for Panes<'_> {
                 egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
                     let poly_input = self.graph.selected_node.and_then(|id| {
                         let subnets = &*self.subnets;
-                        let eval = |sid: SubnetId, mesh: &MeshData, template: Option<&MeshData>| -> MeshData {
+                        let eval = |sid: SubnetId, mesh: &crate::core::geo::Geo, template: Option<&crate::core::geo::Geo>| -> crate::core::geo::Geo {
                             subnets.get(sid).map(|sg| sg.evaluate(mesh, template)).unwrap_or_else(|| mesh.clone())
                         };
                         let is_edit_poly = self.graph.nodes.iter()
@@ -673,8 +675,10 @@ impl egui_dock::TabViewer for Panes<'_> {
                     let mut tool = self.poly_tool.tool;
                     let mut io = PanelIo { browser: self.browser, batch: self.batch, action: None, poly_input, tool: &mut tool };
                     draw_properties_panel(ui, self.graph, &*self.stack, self.subnets, self.nav, self.anim_ctx, &mut io);
-                    if let Some(PanelAction::Write { targets, all_files }) = io.action {
-                        batch::start(self.batch, self.graph, targets, all_files);
+                    match io.action {
+                        Some(PanelAction::Write { targets, all_files }) => batch::start(self.batch, self.graph, targets, all_files),
+                        Some(PanelAction::WriteUsd(id)) => write_usd(self.graph, &*self.subnets, id),
+                        None => {}
                     }
                     if tool != self.poly_tool.tool { self.poly_tool.tool = tool; }
                 });
@@ -698,7 +702,7 @@ impl egui_dock::TabViewer for Panes<'_> {
                 let subnets = &*self.subnets;
                 let get_mesh = |g: &NodeGraphState| -> Option<MeshData> {
                     let id = g.selected_node?;
-                    let eval = |sid: SubnetId, mesh: &MeshData, template: Option<&MeshData>| -> MeshData {
+                    let eval = |sid: SubnetId, mesh: &crate::core::geo::Geo, template: Option<&crate::core::geo::Geo>| -> crate::core::geo::Geo {
                         subnets.get(sid).map(|sg| sg.evaluate(mesh, template)).unwrap_or_else(|| mesh.clone())
                     };
                     g.eval_node(id, &mut std::collections::HashMap::new(), &eval).map(|r| r.into_mesh())
@@ -710,7 +714,7 @@ impl egui_dock::TabViewer for Panes<'_> {
                 let get_mesh = |g: &NodeGraphState| -> Option<MeshData> {
                     let id = g.selected_node?;
                     let mut cache = std::collections::HashMap::new();
-                    let eval_subnet = |_sid: SubnetId, mesh: &MeshData, _template: Option<&MeshData>| mesh.clone();
+                    let eval_subnet = |_sid: SubnetId, mesh: &crate::core::geo::Geo, _template: Option<&crate::core::geo::Geo>| mesh.clone();
                     g.eval_node(id, &mut cache, &eval_subnet).map(|r| r.into_mesh())
                 };
                 let get_clip = |g: &NodeGraphState| g.selected_node.and_then(|id| g.eval_anim(id));
@@ -1065,7 +1069,7 @@ fn update_scene_hierarchy(
     if !revision.is_changed() { return; }
 
     // Update the closure to accept template parameter
-    let eval_subnet = |sid: SubnetId, mesh: &MeshData, template: Option<&MeshData>| -> MeshData {
+    let eval_subnet = |sid: SubnetId, mesh: &crate::core::geo::Geo, template: Option<&crate::core::geo::Geo>| -> crate::core::geo::Geo {
         subnets
             .get(sid)
             .map(|sg| sg.evaluate(mesh, template))
@@ -1156,7 +1160,7 @@ fn update_generated_meshes(
     if only_time { return; }
     for e in query.iter() { commands.entity(e).despawn(); }
 
-    let eval_subnet = |sid: SubnetId, mesh: &MeshData, template: Option<&MeshData>| -> MeshData {
+    let eval_subnet = |sid: SubnetId, mesh: &crate::core::geo::Geo, template: Option<&crate::core::geo::Geo>| -> crate::core::geo::Geo {
         subnets
             .get(sid)
             .map(|sg| sg.evaluate(mesh, template))
@@ -1746,6 +1750,25 @@ fn draw_copies_as_entities(
             }
         }
     }
+}
+
+/// Run a Write USD node: evaluate what enters it and write its edits.
+fn write_usd(graph: &NodeGraphState, subnets: &SubnetStore, id: types::NodeId) {
+    let Some(node) = graph.nodes.iter().find(|n| n.id == id) else { return };
+    let NodeType::WriteUsd { path } = &node.node_type else { return };
+    let result = (|| {
+        if path.trim().is_empty() { return Err("No file set".to_string()); }
+        let (src, out) = node.inputs.first().and_then(|i| i.connected_output).ok_or("Nothing connected")?;
+        let eval = |sid: SubnetId, mesh: &crate::core::geo::Geo, template: Option<&crate::core::geo::Geo>| -> crate::core::geo::Geo {
+            subnets.get(sid).map(|sg| sg.evaluate(mesh, template)).unwrap_or_else(|| mesh.clone())
+        };
+        match graph.eval_node_out(src, out, &mut std::collections::HashMap::new(), &eval) {
+            Some(types::EvalResult::Named(prims)) => usd_write::write_override(&prims, std::path::Path::new(path.trim())),
+            Some(_) => Err("The input is not packed primitives".to_string()),
+            None => Err("The input did not cook".to_string()),
+        }
+    })();
+    usd_write::remember(id, result);
 }
 
 fn mesh_data_to_bevy(d: &MeshData) -> Mesh {

@@ -11,7 +11,8 @@ use crate::types::{
     ConnectionId, MeshData, NodeId, SubnetId,
     SubnetNodeType,
 };
-use crate::core::{Attribute, Geometry};
+use crate::core::geo::Geo;
+use ops::Attribute;
 use ops::{ExecutionContext, IceNode};  // ✅ Added IceNode trait import!
 use ice_nodes::*;
 
@@ -184,89 +185,37 @@ impl SubnetGraph {
     // NEW EVALUATION - Array-based, graph traversed once
     // ============================================================================
 
-    pub fn evaluate(&self, input_mesh: &MeshData, template_mesh: Option<&MeshData>) -> MeshData {
-        // Find SubInput and SubOutput nodes
-        let _sub_in = match self.nodes.iter().find(|n| matches!(n.node_type, SubnetNodeType::SubInput)) {
-            Some(n) => n,
-            None => return input_mesh.clone(),
+    /// Run the tree on a geometry, in its own space. What the tree does not
+    /// write stays shared with `input`. A tree with nothing wired to its
+    /// output, or that fails, gives `input` back unchanged.
+    pub fn evaluate(&self, input: &Geo, template: Option<&Geo>) -> Geo {
+        let Some(sub_out) = self.nodes.iter().find(|n| matches!(n.node_type, SubnetNodeType::SubOutput)) else {
+            return input.clone();
         };
-        
-        let sub_out = match self.nodes.iter().find(|n| matches!(n.node_type, SubnetNodeType::SubOutput)) {
-            Some(n) => n,
-            None => return input_mesh.clone(),
-        };
-
-        // Check if anything is connected to SubOutput
-        let (src_id, _src_out) = match sub_out.inputs[0].connected_output {
-            Some(conn) => conn,
-            None => return input_mesh.clone(),
-        };
-
-        // Create execution context with full geometry
-        let positions: Vec<Vec3> = input_mesh.vertices.iter()
-            .map(|v| Vec3::from_array(*v))
-            .collect();
-        
-        let indices: Vec<usize> = input_mesh.indices.iter()
-            .map(|&i| i as usize)
-            .collect();
-        
-        let geometry = Geometry::from_triangles(positions, indices);
-        let mut ctx = ExecutionContext::from_geometry(geometry);
-
-        // ✅ NEW: Add template geometry to external context if provided
-        if let Some(template) = template_mesh {
-            let template_positions: Vec<Vec3> = template.vertices.iter()
-                .map(|v| Vec3::from_array(*v))
-                .collect();
-            let template_indices: Vec<usize> = template.indices.iter()
-                .map(|&i| i as usize)
-                .collect();
-            let template_geo = Geometry::from_triangles(template_positions, template_indices);
-            ctx.add_external_geometry("template", template_geo);
+        if !self.nodes.iter().any(|n| matches!(n.node_type, SubnetNodeType::SubInput)) {
+            return input.clone();
         }
+        let Some((src_id, _)) = sub_out.inputs[0].connected_output else { return input.clone() };
 
-        // Get the execution order (topological sort from SubOutput backwards)
-        let exec_order = self.get_execution_order(src_id);
-
-        // Execute each node in order
-        for node_id in exec_order {
+        let mut ctx = ExecutionContext::from_geometry(input.clone());
+        if let Some(t) = template {
+            ctx.add_external_geometry("template", t.clone());
+        }
+        for node_id in self.get_execution_order(src_id) {
             if let Err(e) = self.execute_node(node_id, &mut ctx) {
                 eprintln!("ICE execution error at node {:?}: {}", node_id, e);
-                return input_mesh.clone();
+                return input.clone();
             }
         }
-
-        // Extract result from context
-        let result_positions: Vec<[f32; 3]> = ctx.geometry.points.iter()
-            .map(|v| v.to_array())
-            .collect();
-        
-        // Get topology back out
-        let result_indices: Vec<u32> = match &ctx.geometry.topology {
-            crate::core::Topology::PolyMesh { face_indices, .. } => {
-                face_indices.iter().map(|&i| i as u32).collect()
-            }
-            crate::core::Topology::Points => vec![],
-            _ => input_mesh.indices.clone(),
-        };
-
-        MeshData {
-            vertices: if matches!(ctx.geometry.topology, crate::core::Topology::Points) {
-                vec![]                   // point clouds have no renderable vertices
-            } else {
-                result_positions.clone()
-            },
-            indices: result_indices,
-            points: if matches!(ctx.geometry.topology, crate::core::Topology::Points) {
-                result_positions         // scatter output lives here
-            } else {
-                vec![]
-            },
-            ..Default::default()
-        }
+        ctx.geometry
     }
-    
+
+    /// `evaluate` for code that still holds `MeshData`.
+    pub fn evaluate_mesh(&self, input: &MeshData, template: Option<&MeshData>) -> MeshData {
+        let template = template.map(Geo::from_mesh);
+        self.evaluate(&Geo::from_mesh(input), template.as_ref()).to_mesh()
+    }
+
     /// Get execution order via topological sort (from target backwards)
     fn get_execution_order(&self, target_node: NodeId) -> Vec<NodeId> {
         let mut order = Vec::new();
@@ -454,4 +403,38 @@ impl SubnetStore {
     }
     pub fn get(&self,         id: SubnetId) -> Option<&SubnetGraph>     { self.subnets.get(&id)     }
     pub fn get_mut(&mut self, id: SubnetId) -> Option<&mut SubnetGraph> { self.subnets.get_mut(&id) }
+}
+#[cfg(test)]
+mod tree_tests {
+    use super::*;
+    use std::sync::Arc;
+    use crate::core::geo::{Attr, Column, Context, Role, POINTS};
+
+    #[test]
+    fn a_tree_runs_on_geo_and_shares_what_it_does_not_write() {
+        // In → Multiply by 2 → Out.
+        let mut tree = SubnetGraph::new(SubnetId(0), "double".into());
+        let (input, output) = (tree.nodes[0].id, tree.nodes[1].id);
+        let mul = tree.add_node("Multiply".into(), SubnetNodeType::MultiplyVec3 { scalar: 2.0 }, egui::pos2(0.0, 0.0));
+        tree.add_connection(input, 0, mul, 0);
+        tree.add_connection(mul, 0, output, 0);
+
+        let mut geo = Geo::from_polygons(vec![[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], vec![3], vec![0, 1, 2]);
+        geo.set(Context::Primitive, "heat", Attr::new(Column::Float(Arc::new(vec![0.5])), Role::None));
+        let out = tree.evaluate(&geo, None);
+
+        assert_eq!(out.points()[1], [0.0, 2.0, 0.0]);
+        assert!(!out.attr(Context::Point, POINTS).unwrap().same(geo.attr(Context::Point, POINTS).unwrap()));
+        assert!(out.attr(Context::Primitive, "heat").unwrap().same(geo.attr(Context::Primitive, "heat").unwrap()));
+        assert!(out.topology.same(&geo.topology));
+        assert!(out.validate().is_ok());
+    }
+
+    #[test]
+    fn a_tree_with_nothing_wired_gives_its_input_back() {
+        let tree = SubnetGraph::new(SubnetId(0), "empty".into());
+        let geo = Geo::from_points(vec![[1.0, 2.0, 3.0]]);
+        let out = tree.evaluate(&geo, None);
+        assert!(out.attr(Context::Point, POINTS).unwrap().same(geo.attr(Context::Point, POINTS).unwrap()));
+    }
 }

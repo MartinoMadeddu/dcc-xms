@@ -164,7 +164,7 @@ pub fn focus_camera(
     let Some(rect) = vp_rect.0 else { return };
     if !cursor.map(|c| rect.contains(bevy_egui::egui::pos2(c.x, c.y))).unwrap_or(false) { return; }
 
-    let eval = |sid: crate::types::SubnetId, mesh: &crate::types::MeshData, template: Option<&crate::types::MeshData>| {
+    let eval = |sid: crate::types::SubnetId, mesh: &crate::core::geo::Geo, template: Option<&crate::core::geo::Geo>| {
         subnets.get(sid).map(|sg| sg.evaluate(mesh, template)).unwrap_or_else(|| mesh.clone())
     };
 
