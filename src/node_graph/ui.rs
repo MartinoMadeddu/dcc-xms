@@ -5,10 +5,11 @@ use super::{GraphNode, NodeGraphState};
 
 pub const NODE_WIDTH:  f32 = 180.0;
 pub const NODE_HEIGHT: f32 = 50.0;
-const SOCKET_RADIUS:   f32 = 6.0;
+const SOCKET_RADIUS:   f32 = 4.5;
 const SOCKET_HIT:      f32 = 22.0;
-const NODE_ROUNDING:   f32 = 8.0;
+const NODE_ROUNDING:   f32 = 5.0;
 
+#[allow(dead_code)]
 mod xsi {
     // Light-theme colours. `theme::c` returns the dark counterpart in dark mode.
     #![allow(non_snake_case)]
@@ -382,29 +383,37 @@ fn draw_node(
     let is_sub = matches!(node.node_type, NodeType::Subnet { .. });
 
     // ── Node body ─────────────────────────────────────────────────────────────
-    painter.rect_filled(rect, NODE_ROUNDING * zoom,
-        if is_sel { xsi::NODE_BODY_SEL() } else { xsi::NODE_BODY() });
-    painter.rect_stroke(rect, NODE_ROUNDING * zoom, egui::Stroke::new(
-        if is_sel { 2.0 } else { 1.0 },
-        if is_sel { xsi::BORDER_SEL() } else { xsi::BORDER() }));
+    // As the ICE nodes: a grey ring around the node (white when selected),
+    // one colour over the whole node, a dark edge, the name in bold over the
+    // type.
+    // One colour over the whole node, by the add-menu category it is in.
+    let (body, ink, ink_dim) = node_colours(&node.node_type);
+    let _ = is_sub;
+    let ring = rect.expand(2.0 * zoom.max(0.5));
+    painter.rect_filled(ring, (NODE_ROUNDING + 2.0) * zoom,
+        if is_sel { egui::Color32::WHITE } else { egui::Color32::from_rgb(105, 105, 105) });
+    painter.rect_filled(rect, NODE_ROUNDING * zoom, body);
 
     let title_h    = 32.0 * zoom;
     let title_rect = egui::Rect::from_min_size(np, egui::vec2(NODE_WIDTH * zoom, title_h));
-    painter.rect_filled(title_rect,
-        egui::Rounding { nw: NODE_ROUNDING * zoom, ne: NODE_ROUNDING * zoom, sw: 0.0, se: 0.0 },
-        if is_sub { xsi::NODE_TITLE_SUB() } else { xsi::NODE_TITLE() });
+    painter.rect_stroke(rect, NODE_ROUNDING * zoom, egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(38, 38, 38)));
 
-    painter.text(
-        egui::pos2(np.x + NODE_WIDTH * zoom / 2.0, np.y + 11.0 * zoom),
-        egui::Align2::CENTER_CENTER,
-        &format!("{} {}", node_type_icon(&node.node_type), node.name),
-        egui::FontId::proportional(12.0 * zoom), xsi::TEXT());
-    painter.text(
-        egui::pos2(np.x + NODE_WIDTH * zoom / 2.0, np.y + 24.0 * zoom),
-        egui::Align2::CENTER_CENTER,
-        node_type_label(&node.node_type),
-        egui::FontId::proportional(9.0 * zoom), xsi::TEXT_DIM());
-
+    // Icon, then the name in bold (drawn twice, a hair apart), the type
+    // beneath in PascalCase, all from the left, after the bypass ring.
+    // The node's icon leads the name, as in the add menu.
+    let text_x = np.x + 24.0 * zoom;
+    painter.text(egui::pos2(text_x, np.y + 12.0 * zoom), egui::Align2::LEFT_CENTER, node_type_icon(&node.node_type),
+        egui::FontId::proportional(12.0 * zoom), ink);
+    let name_x = text_x + 17.0 * zoom;
+    for dx in [0.0, 0.6] {
+        painter.text(egui::pos2(name_x + dx * zoom, np.y + 12.0 * zoom), egui::Align2::LEFT_CENTER, &node.name,
+            egui::FontId::proportional(12.5 * zoom), ink);
+    }
+    let type_name: String = node_type_label(&node.node_type).split_whitespace()
+        .map(|w| { let mut c = w.chars(); c.next().map(|f| f.to_uppercase().chain(c).collect::<String>()).unwrap_or_default() })
+        .collect();
+    painter.text(egui::pos2(name_x, np.y + 25.0 * zoom), egui::Align2::LEFT_CENTER, type_name,
+        egui::FontId::proportional(9.5 * zoom), ink_dim);
 
     let dr = ui.allocate_rect(title_rect, egui::Sense::click_and_drag());
 
@@ -415,7 +424,7 @@ fn draw_node(
     let has_view_flag = graph.has_view_flag(id);
     let eye_icon = if has_view_flag { "👁" } else { "○" };
     let eye_size = 16.0 * zoom;
-    let eye_pos = egui::pos2(np.x + NODE_WIDTH * zoom - eye_size - 4.0 * zoom, np.y + 8.0 * zoom);
+    let eye_pos = egui::pos2(np.x + NODE_WIDTH * zoom - eye_size - 4.0 * zoom, np.y + 4.0 * zoom);
     let eye_rect = egui::Rect::from_min_size(eye_pos, egui::vec2(eye_size, eye_size));
     
     let eye_response = ui.allocate_rect(eye_rect, egui::Sense::click());
@@ -424,7 +433,7 @@ fn draw_node(
     let eye_color = if has_view_flag {
         if eye_response.hovered() { xsi::VIEW_FLAG_HOV() } else { xsi::VIEW_FLAG() }
     } else {
-        if eye_response.hovered() { xsi::TEXT() } else { xsi::TEXT_DIM() }
+        if eye_response.hovered() { ink } else { ink_dim }
     };
     
     painter.text(
@@ -459,11 +468,11 @@ fn draw_node(
     let mut on_bypass = false;
     if !matches!(node.node_type, NodeType::Output) {
         let by_rect = egui::Rect::from_min_size(
-            egui::pos2(np.x + 4.0 * zoom, np.y + 8.0 * zoom), egui::vec2(eye_size, eye_size));
+            egui::pos2(np.x + 4.0 * zoom, np.y + 4.0 * zoom), egui::vec2(eye_size, eye_size));
         let by = ui.allocate_rect(by_rect, egui::Sense::click());
         let over = ui.input(|i| i.pointer.hover_pos()).map(|p| by_rect.contains(p)).unwrap_or(false);
         let col = if node.bypassed { xsi::BYPASS() }
-                  else if over { xsi::TEXT() } else { xsi::TEXT_DIM() };
+                  else if over { ink } else { ink_dim };
         // Drawn by hand: a ring, with a bar through it when bypassed.
         let c = by_rect.center();
         let r = 4.5 * zoom;
@@ -492,7 +501,9 @@ fn draw_node(
         let sr  = ui.allocate_rect(hit, egui::Sense::click_and_drag());
 
         let is_wiring = graph.connecting_from == Some((id, i));
-        painter.circle_filled(sp, SOCKET_RADIUS * zoom,
+        let r = SOCKET_RADIUS * zoom * if sr.hovered() || is_wiring { 1.3 } else { 1.0 };
+        painter.circle_filled(sp, r + 1.0, egui::Color32::from_rgb(30, 30, 30));
+        painter.circle_filled(sp, r,
             if is_wiring         { xsi::SOCK_OUT_DRAG() }
             else if sr.hovered() { xsi::SOCK_OUT_HOV()  }
             else                 { xsi::SOCK_OUT()       });
@@ -515,7 +526,9 @@ fn draw_node(
         let hit = egui::Rect::from_center_size(sp, egui::vec2(SOCKET_HIT, SOCKET_HIT));
         let sr  = ui.allocate_rect(hit, egui::Sense::drag());
 
-        painter.circle_filled(sp, SOCKET_RADIUS * zoom,
+        let r = SOCKET_RADIUS * zoom * if sr.hovered() { 1.3 } else { 1.0 };
+        painter.circle_filled(sp, r + 1.0, egui::Color32::from_rgb(30, 30, 30));
+        painter.circle_filled(sp, r,
             if sr.hovered()                        { xsi::SOCK_IN_HOV()  }
             else if inp.connected_output.is_some() { xsi::SOCK_IN_CONN() }
             else                                   { xsi::SOCK_IN()      });
@@ -607,6 +620,43 @@ fn draw_node(
     if dr.drag_stopped() { graph.dragging_node = None; }
 
     dive
+}
+
+/// The palette node bodies take, by add-menu category.
+const CATEGORY_COLOURS: [(&str, [u8; 3]); 7] = [
+    // The pastel palette at 80%, one colour per category.
+    ("Create",     [0xAE, 0xC0, 0x96]),   // light green   (#DAF0BB)
+    ("Modify",     [0x48, 0x5A, 0x2E]),   // olive         (#5A703A)
+    ("UV",         [0xC0, 0xB2, 0x88]),   // sand          (#F0DEAA)
+    ("File",       [0xC0, 0x9E, 0x96]),   // salmon        (#F0C5BB)
+    ("Primitives", [0x55, 0x5F, 0x7C]),   // slate blue    (#6A779B)
+    ("Animation",  [0x96, 0xA2, 0xC0]),   // light blue    (#BCCAF0)
+    ("Mocap",      [0xAB, 0x98, 0xBA]),   // mauve         (#D6BEE8)
+];
+
+/// A node's body colour, and the text colours that read on it: black on
+/// the light colours, white on the dark ones. Nodes in no category (Output)
+/// keep the theme's node grey.
+fn node_colours(t: &NodeType) -> (egui::Color32, egui::Color32, egui::Color32) {
+    use std::sync::OnceLock;
+    type Table = Vec<(std::mem::Discriminant<NodeType>, [u8; 3])>;
+    static TABLE: OnceLock<Table> = OnceLock::new();
+    let table = TABLE.get_or_init(|| {
+        catalog().into_iter().flat_map(|(_, category, nodes)| {
+            let colour = CATEGORY_COLOURS.iter().find(|(c, _)| *c == category).map(|(_, rgb)| *rgb);
+            nodes.into_iter().filter_map(move |(n, _)| colour.map(|c| (std::mem::discriminant(&n), c)))
+        }).collect()
+    });
+    let Some(&(_, [r, g, b])) = table.iter().find(|(d, _)| *d == std::mem::discriminant(t)) else {
+        return (xsi::NODE_BODY(), xsi::TEXT(), xsi::TEXT_DIM());
+    };
+    let light = 0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32 > 125.0;
+    let (ink, dim) = if light {
+        (egui::Color32::from_rgb(15, 15, 15), egui::Color32::from_rgb(70, 70, 70))
+    } else {
+        (egui::Color32::from_rgb(248, 248, 248), egui::Color32::from_rgb(215, 215, 215))
+    };
+    (egui::Color32::from_rgb(r, g, b), ink, dim)
 }
 
 // ============================================================================
