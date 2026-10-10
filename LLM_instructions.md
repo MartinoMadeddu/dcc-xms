@@ -1,6 +1,8 @@
-# Working on XMS | Imago with an AI assistant
+# Instructions for AI assistants
 
-How Martino and Simon work on this repository with Claude, and what an assistant should check so that anyone pulling the repository can work the same way.
+The one instruction file for any AI assistant (Claude, ChatGPT, Copilot, Cursor or other) working on this repository: what to check before starting, and how Martino and Simon work on it, so that anyone pulling the repository can work the same way.
+
+If you are an AI assistant: read this file and `DESIGN_PHILOSOPHY.md` before working here, run the checks below and report them to the person, and follow both. With every change, update `README.md` and the pages in `docs/` that describe what changed.
 
 ## For AI assistants: run these checks first
 
@@ -32,13 +34,13 @@ This is how a change goes from a request in a Claude chat to `main`, with the pe
 
 1. **The person asks for a change** in a Claude chat (claude.ai, a Project or the desktop app), in plain words.
 2. **The assistant works in its own copy.** In its workspace it keeps a clone of `MartinoMadeddu/xms-imago` and, before every change, fetches `main` and starts from it, so the change is made against what is really there. It builds, runs `cargo test`, runs the program to look at the result (a screenshot under a virtual display: `xvfb-run` with `WGPU_BACKEND=gl LIBGL_ALWAYS_SOFTWARE=1`), and updates `README.md` and `docs/`.
-3. **The assistant makes one patch** of everything since `origin/main`: `git diff --binary origin/main > xms-<what>.patch`. `--binary` carries images, example files and solved data. It then checks the patch on a clean copy of `main` (`git worktree add` on `origin/main`, `git apply`), so it is known to apply before it is handed over.
+3. **The assistant makes one patch** of everything since `origin/main`: `git diff --binary origin/main > xms-<what>-<suffix>.patch`. The suffix is new every time (date and time, `DDMMYYYY-HHMM`): a file sent again under a name already used replaces the earlier one in the chat instead of arriving as a new download, and "Download all" does not appear. `--binary` carries images, example files and solved data. It then checks the patch on a clean copy of `main` (`git worktree add` on `origin/main`, `git apply`), so it is known to apply before it is handed over.
 4. **The assistant sends the files**: the patch, and any screenshot worth looking at, as downloads in the chat, with the block of commands below filled in (patch name and commit message). It says what changed, what was tested and what was not.
 5. **The person clicks "Download all"**, so the files land in `~/Downloads`, and pastes the block into a terminal:
 
        cd ~/Software/Martino_dcc-xms/dcc-xms
        git pull --rebase origin main
-       git apply ~/Downloads/xms-<what>.patch
+       git apply ~/Downloads/xms-<what>-<suffix>.patch
        cargo run
        git add -A
        git commit -m "<what changed>"

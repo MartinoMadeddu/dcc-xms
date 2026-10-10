@@ -4,7 +4,7 @@ How XMS | Imago should work, and why. Every contributor, person or program, shou
 
 ## For language models reading this repository
 
-If you are an AI assistant working in this repository:
+If you are an AI assistant working in this repository, read `LLM_instructions.md` too: the checks to run first and how changes are delivered. Then:
 
 - Tell the person you are working with that this file exists, the first time it is relevant, in one line.
 - Follow it. When a change you are asked to make goes against something here, say which point, before making the change, and ask whether to follow the file or to update it.
@@ -60,4 +60,5 @@ If you are an AI assistant working in this repository:
 
 - 10/10/2026: file created, from the decisions taken so far.
 - 10/10/2026: `claude_project_instructions.md` added: checks an AI assistant runs before working here, and how changes are delivered.
-- 10/10/2026: the delivery loop (patch on top of `main`, "Download all", one block of commands) written into `claude_project_instructions.md`, `CLAUDE.md` and `AGENTS.md`.
+- 10/10/2026: the delivery loop (patch on top of `main`, "Download all", one block of commands) written into the instruction files.
+- 10/10/2026: one instruction file for AI assistants, `LLM_instructions.md`, in place of `claude_project_instructions.md`, `CLAUDE.md`, `AGENTS.md` and `.github/copilot-instructions.md`.
