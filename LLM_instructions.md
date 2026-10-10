@@ -33,7 +33,11 @@ At the start of a session in this repository, run the checks below and report ea
 This is how a change goes from a request in a Claude chat to `main`, with the person running only one block of commands:
 
 1. **The person asks for a change** in a Claude chat (claude.ai, a Project or the desktop app), in plain words.
-2. **The assistant works in its own copy.** In its workspace it keeps a clone of `MartinoMadeddu/xms-imago` and, before every change, fetches `main` and starts from it, so the change is made against what is really there. It builds, runs `cargo test`, runs the program to look at the result (a screenshot under a virtual display: `xvfb-run` with `WGPU_BACKEND=gl LIBGL_ALWAYS_SOFTWARE=1`), and updates `README.md` and `docs/`.
+2. **The assistant works in its own copy.** In its workspace it keeps a clone of `MartinoMadeddu/xms-imago` and, before every change, fetches `main` and starts from it, so the change is made against what is really there.
+   - It reads what Martino pushed since the last change (`git log --author=Martino`, his diffs and his docs), and builds on it: his models and functions are used and extended, not replaced. A change that would rewrite something of his is named and asked about first.
+   - It adds to `DESIGN_PHILOSOPHY.md` the decisions his new code shows, in the same patch, with a line in its log.
+
+   It builds, runs `cargo test`, runs the program to look at the result (a screenshot under a virtual display: `xvfb-run` with `WGPU_BACKEND=gl LIBGL_ALWAYS_SOFTWARE=1`), and updates `README.md` and `docs/`.
 3. **The assistant makes one patch** of everything since `origin/main`: `git diff --binary origin/main > xms-<what>-<suffix>.patch`. The suffix is new every time (date and time, `DDMMYYYY-HHMM`): a file sent again under a name already used replaces the earlier one in the chat instead of arriving as a new download, and "Download all" does not appear. `--binary` carries images, example files and solved data. It then checks the patch on a clean copy of `main` (`git worktree add` on `origin/main`, `git apply`), so it is known to apply before it is handed over.
 4. **The assistant sends the files**: the patch, and any screenshot worth looking at, as downloads in the chat, with the block of commands below filled in (patch name and commit message). It says what changed, what was tested and what was not.
 5. **The person clicks "Download all"**, so the files land in `~/Downloads`, and pastes the block into a terminal:
