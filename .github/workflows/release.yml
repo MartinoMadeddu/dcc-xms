@@ -66,7 +66,7 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           mkdir xms-${{ matrix.name }}
-          cp target/${{ matrix.target }}/release/bevy_dcc xms-${{ matrix.name }}/xms
+          cp target/${{ matrix.target }}/release/xms-imago xms-${{ matrix.name }}/xms
           cp README.md xms-${{ matrix.name }}/
           cp -r docs examples xms-${{ matrix.name }}/
           tar czf xms-${{ matrix.name }}.tar.gz xms-${{ matrix.name }}
@@ -76,7 +76,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory xms-${{ matrix.name }}
-          Copy-Item target/${{ matrix.target }}/release/bevy_dcc.exe xms-${{ matrix.name }}/xms.exe
+          Copy-Item target/${{ matrix.target }}/release/xms-imago.exe xms-${{ matrix.name }}/xms.exe
           Copy-Item README.md xms-${{ matrix.name }}/
           Copy-Item -Recurse docs xms-${{ matrix.name }}/
           Copy-Item -Recurse examples xms-${{ matrix.name }}/
