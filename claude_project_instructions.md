@@ -26,18 +26,35 @@ At the start of a session in this repository, run the checks below and report ea
 
 ## How we work
 
-- **Every change on top of the latest `main`.** Before starting, fetch `main`; a change is made against it.
-- **Delivered as a patch, pushed by the person.** Unless the person says otherwise, the assistant hands over a `.patch` file (made with `git diff --binary`, so images and example data come with it) and the commands to apply it:
+### The loop
 
-      cd <the repository>
-      git pull --rebase origin main
-      git apply ~/Downloads/<name>.patch
-      cargo run
-      git add -A
-      git commit -m "<what changed>"
-      git push origin main
+This is how a change goes from a request in a Claude chat to `main`, with the person running only one block of commands:
 
-  The person runs every git and GitHub command. Check that the patch applies to a clean copy of `main` before handing it over.
+1. **The person asks for a change** in a Claude chat (claude.ai, a Project or the desktop app), in plain words.
+2. **The assistant works in its own copy.** In its workspace it keeps a clone of `MartinoMadeddu/xms-imago` and, before every change, fetches `main` and starts from it, so the change is made against what is really there. It builds, runs `cargo test`, runs the program to look at the result (a screenshot under a virtual display: `xvfb-run` with `WGPU_BACKEND=gl LIBGL_ALWAYS_SOFTWARE=1`), and updates `README.md` and `docs/`.
+3. **The assistant makes one patch** of everything since `origin/main`: `git diff --binary origin/main > xms-<what>.patch`. `--binary` carries images, example files and solved data. It then checks the patch on a clean copy of `main` (`git worktree add` on `origin/main`, `git apply`), so it is known to apply before it is handed over.
+4. **The assistant sends the files**: the patch, and any screenshot worth looking at, as downloads in the chat, with the block of commands below filled in (patch name and commit message). It says what changed, what was tested and what was not.
+5. **The person clicks "Download all"**, so the files land in `~/Downloads`, and pastes the block into a terminal:
+
+       cd ~/Software/Martino_dcc-xms/dcc-xms
+       git pull --rebase origin main
+       git apply ~/Downloads/xms-<what>.patch
+       cargo run
+       git add -A
+       git commit -m "<what changed>"
+       git push origin main
+
+   `git pull --rebase` brings in what others pushed; `git apply` adds the change; `cargo run` lets the person look before committing; the last three lines commit and push it. (The path in the first line is Simon's clone; use your own.)
+6. **When `git apply` fails**, someone pushed to `main` in between and the patch no longer fits. The person pastes the terminal output into the chat; the assistant fetches `main` again, rebases its work onto it (keeping the other person's version where both changed the same lines of documentation, and saying so), runs the tests again and sends a new patch. Nothing is lost: a failed `git apply` changes nothing, and the commands after it have nothing to commit.
+7. **The next change starts from the last patch.** Until the person says a patch is pushed, the assistant keeps its work committed locally (never pushed) and makes the next patch on top of it, saying in which order to apply them; or folds them into one.
+
+What this needs:
+
+- On the person's computer: a clone of the repository, `git` signed in to GitHub with push rights to it (as owner or collaborator), and Rust with the libraries in the README, for `cargo run`.
+- For the assistant: a workspace that runs commands and reaches GitHub (check 2 and 4 above). Pushing from the workspace is not needed; the person pushes.
+
+### Conventions
+
 - **Tests with every feature.** New behaviour comes with tests; `cargo test` passes before a change is handed over.
 - **Documentation with every change.** `README.md` and the pages in `docs/` that describe what changed are updated in the same change. The website (`site/`) only when something on it is wrong.
 - **A screenshot when something visible changed**, in `docs/`, taken from the running program.

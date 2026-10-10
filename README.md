@@ -161,7 +161,7 @@ On Ubuntu or Debian, first:
 
 Read [DESIGN_PHILOSOPHY.md](DESIGN_PHILOSOPHY.md) first: how the program should work and why. Add to it when a decision is made, and update the README and the pages in `docs/` with every change.
 
-Working with an AI assistant: [claude_project_instructions.md](claude_project_instructions.md) lists what it should check (workspace, build, GitHub access, settings) and how changes are delivered.
+Working with an AI assistant: [claude_project_instructions.md](claude_project_instructions.md) lists what it should check (workspace, build, GitHub access, settings) and the loop changes go through: the assistant sends a patch made on top of `main`, you download it and run one block of commands that applies, runs, commits and pushes it.
 
 ## Not done yet
 

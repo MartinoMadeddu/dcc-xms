@@ -60,3 +60,4 @@ If you are an AI assistant working in this repository:
 
 - 10/10/2026: file created, from the decisions taken so far.
 - 10/10/2026: `claude_project_instructions.md` added: checks an AI assistant runs before working here, and how changes are delivered.
+- 10/10/2026: the delivery loop (patch on top of `main`, "Download all", one block of commands) written into `claude_project_instructions.md`, `CLAUDE.md` and `AGENTS.md`.
