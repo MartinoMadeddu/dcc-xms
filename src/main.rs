@@ -282,6 +282,9 @@ fn dcc_ui(
                 open_graph(&mut graph, &path, &mut graph_file, &mut history, &mut recent);
                 nav.current_subnet = None;
             }
+            BrowseTarget::AddGraph => {
+                add_graph_file(&mut graph, &mut subnets, &path, &mut graph_file, &mut recent);
+            }
             BrowseTarget::OpenLayout => {
                 graph_file.message = match layout.load_from(&path) {
                     Ok(())  => format!("Layout loaded from {}", path.display()),
@@ -750,7 +753,10 @@ impl egui_dock::TabViewer for Panes<'_> {
                         if ui.button("📂 Open").on_hover_text("Load a saved graph").clicked() {
                             self.browser.open(BrowseTarget::OpenGraph, BrowseMode::File, "Open graph", &["json"], "");
                         }
-                        let mut open = None;
+                        if ui.small_button("+").on_hover_text("Add a saved graph to this one").clicked() {
+                            self.browser.open(BrowseTarget::AddGraph, BrowseMode::File, "Add graph", &["json"], "");
+                        }
+                        let (mut open, mut add) = (None, None);
                         ui.menu_button("Recent", |ui| {
                             if self.recent.files.is_empty() {
                                 ui.label(egui::RichText::new("No graphs opened or saved yet").weak());
@@ -759,11 +765,18 @@ impl egui_dock::TabViewer for Panes<'_> {
                                 let name = f.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
                                 let there = f.is_file();
                                 let label = if there { name } else { format!("{name} (missing)") };
-                                if ui.add_enabled(there, egui::Button::new(label)).on_hover_text(f.display().to_string())
-                                    .on_disabled_hover_text(format!("{}\nNot found", f.display())).clicked() {
-                                    open = Some(f.clone());
-                                    ui.close_menu();
-                                }
+                                // The + at the right adds the graph to this one.
+                                ui.horizontal(|ui| {
+                                    if ui.add_enabled(there, egui::Button::new(label)).on_hover_text(f.display().to_string())
+                                        .on_disabled_hover_text(format!("{}\nNot found", f.display())).clicked() {
+                                        open = Some(f.clone());
+                                        ui.close_menu();
+                                    }
+                                    if ui.add_enabled(there, egui::Button::new("+").small()).on_hover_text("Add it to this graph").clicked() {
+                                        add = Some(f.clone());
+                                        ui.close_menu();
+                                    }
+                                });
                             }
                             if !self.recent.files.is_empty() {
                                 ui.separator();
@@ -773,6 +786,9 @@ impl egui_dock::TabViewer for Panes<'_> {
                         if let Some(path) = open {
                             open_graph(self.graph, &path, self.graph_file, self.history, self.recent);
                             self.nav.current_subnet = None;
+                        }
+                        if let Some(path) = add {
+                            add_graph_file(self.graph, self.subnets, &path, self.graph_file, self.recent);
                         }
                         let save_tip = match &self.graph_file.path {
                             Some(p) => format!("Save to {} (Ctrl+S)", p.display()),
@@ -791,8 +807,9 @@ impl egui_dock::TabViewer for Panes<'_> {
                             self.graph.frame_request = true;
                         }
                         ui.small_button("?").on_hover_text(
-                            "Right-click or Tab: add a node\nShift+drag: pan\nEsc: cancel a wire\nDouble-click a subnet: dive in\nRight-click an output: add a node under it, wired\nF or A: frame every node\nRing at the left of a node: bypass\nEye at the right: show in the viewport");
-                        // Ready-made graphs. Picking one replaces the current graph.
+                            "Right-click or Tab: add a node\nCtrl+C, Ctrl+V: copy and paste nodes\nShift+drag: pan\nEsc: cancel a wire\nDouble-click a subnet: dive in\nRight-click an output: add a node under it, wired\nF or A: frame every node\nRing at the left of a node: bypass\nEye at the right: show in the viewport");
+                        // Ready-made graphs. Picking one replaces the current graph;
+                        // the + at its right adds it to the current graph.
                         // By whose work they show, then by area.
                         ui.menu_button("Templates", |ui| {
                             for (by, groups) in templates::MENU {
@@ -800,14 +817,20 @@ impl egui_dock::TabViewer for Panes<'_> {
                                     for group in groups.iter().copied() {
                                         ui.menu_button(group, |ui| {
                                             for t in templates::TEMPLATES.iter().filter(|t| t.by == by && t.group == group) {
-                                                if ui.button(t.name).on_hover_text(t.hint).clicked() {
-                                                    self.graph_file.message = t.load(self.graph, self.subnets);
-                                                    // A template is not a file: saving asks where.
-                                                    self.graph_file.path = None;
-                                                    history::note(format!("Template: {}", t.name));
-                                                    self.nav.current_subnet = None;
-                                                    ui.close_menu();
-                                                }
+                                                ui.horizontal(|ui| {
+                                                    if ui.button(t.name).on_hover_text(t.hint).clicked() {
+                                                        self.graph_file.message = t.load(self.graph, self.subnets);
+                                                        // A template is not a file: saving asks where.
+                                                        self.graph_file.path = None;
+                                                        history::note(format!("Template: {}", t.name));
+                                                        self.nav.current_subnet = None;
+                                                        ui.close_menu();
+                                                    }
+                                                    if ui.small_button("+").on_hover_text("Add it to this graph").clicked() {
+                                                        self.graph_file.message = add_template(self.graph, self.subnets, t);
+                                                        ui.close_menu();
+                                                    }
+                                                });
                                             }
                                         });
                                     }
@@ -828,6 +851,29 @@ impl egui_dock::TabViewer for Panes<'_> {
                     canvas.set_clip_rect(rect.intersect(ui.clip_rect()));
                     let dive = draw_node_graph(&mut canvas, self.graph);
                     ui.allocate_rect(rect, egui::Sense::hover());
+
+                    // Ctrl+C, Ctrl+V (Cmd on macOS) over the canvas: copy the
+                    // selected nodes, paste them under the pointer.
+                    let pointer = ui.input(|i| i.pointer.hover_pos()).filter(|p| rect.contains(*p));
+                    if pointer.is_some() && !ui.ctx().wants_keyboard_input() && !self.browser.is_open() {
+                        let (copy, paste, text) = ui.input(|i| {
+                            let copy = i.events.iter().any(|e| matches!(e, egui::Event::Copy));
+                            let paste = i.events.iter().any(|e| matches!(e,
+                                egui::Event::Key { key: egui::Key::V, pressed: true, modifiers, .. } if modifiers.command));
+                            let text = i.events.iter().find_map(|e| match e {
+                                egui::Event::Text(t) | egui::Event::Paste(t) if t.trim_start().starts_with('{') => Some(t.clone()), _ => None });
+                            (copy, paste, text)
+                        });
+                        if copy {
+                            if let Some(m) = copy_nodes(ui.ctx(), self.graph, self.subnets) { self.graph_file.message = m; }
+                        }
+                        if paste {
+                            let (pan, zoom) = (self.graph.pan_offset, self.graph.zoom);
+                            let at = pointer.map(|p| egui::pos2((p.x - rect.min.x - pan.x) / zoom, (p.y - rect.min.y - pan.y) / zoom));
+                            self.graph_file.message = paste_nodes(self.graph, self.subnets, text.as_deref(), at)
+                                .unwrap_or_else(|| "Nothing copied to paste".into());
+                        }
+                    }
 
                     for node in self.graph.nodes.iter_mut() {
                         if let NodeType::Subnet { id, name } = &mut node.node_type {
@@ -935,6 +981,56 @@ fn open_graph(graph: &mut NodeGraphState, path: &std::path::Path, file: &mut Gra
         }
         Err(e) => file.message = format!("Could not open {}: {e}", path.display()),
     }
+}
+
+/// Add a saved graph to the one open, beside its nodes, as one undoable
+/// step. The current file stays the same.
+fn add_graph_file(graph: &mut NodeGraphState, subnets: &mut SubnetStore, path: &std::path::Path, file: &mut GraphFile, recent: &mut recent::Recent) {
+    let mut other = NodeGraphState::default();
+    match graph_io::load(&mut other, path) {
+        Ok(()) => {
+            let n = graph_io::add_graph(graph, subnets, &other);
+            history::note(format!("Add {}", file_name(path)));
+            recent.add(path);
+            file.message = format!("Added {n} nodes from {}", path.display());
+        }
+        Err(e) => file.message = format!("Could not add {}: {e}", path.display()),
+    }
+}
+
+/// Add a template to the graph open, beside its nodes.
+fn add_template(graph: &mut NodeGraphState, subnets: &mut SubnetStore, t: &templates::Template) -> String {
+    let mut other = NodeGraphState::default();
+    let message = t.load(&mut other, subnets);
+    let n = graph_io::add_graph(graph, subnets, &other);
+    // The added nodes have copies of the template's trees.
+    for node in &other.nodes {
+        if let NodeType::Subnet { id, .. } = node.node_type { subnets.subnets.remove(&id); }
+    }
+    history::note(format!("Add template: {}", t.name));
+    format!("Added {n} nodes: {}. {message}", t.name).trim_end_matches(". ").to_string()
+}
+
+/// Copy the selected nodes to the clipboard, and to a file kept for later
+/// sessions. Returns what to tell the user.
+fn copy_nodes(ctx: &egui::Context, graph: &NodeGraphState, subnets: &SubnetStore) -> Option<String> {
+    let fragment = graph_io::copy(graph, subnets, &graph.selected_nodes)?;
+    let text = fragment.to_text();
+    graph_io::remember(&text);
+    ctx.copy_text(text);
+    let n = fragment.len();
+    Some(format!("Copied {n} node{}", if n == 1 { "" } else { "s" }))
+}
+
+/// Paste nodes copied in this session or another: from the clipboard when it
+/// holds nodes, otherwise the nodes copied last.
+fn paste_nodes(graph: &mut NodeGraphState, subnets: &mut SubnetStore, clipboard: Option<&str>, at: Option<egui::Pos2>) -> Option<String> {
+    let fragment = clipboard.and_then(graph_io::Fragment::from_text).or_else(graph_io::remembered)?;
+    let n = fragment.len();
+    graph_io::paste(graph, subnets, fragment, at);
+    let what = format!("{n} node{}", if n == 1 { "" } else { "s" });
+    history::note(format!("Paste {what}"));
+    Some(format!("Pasted {what}"))
 }
 
 /// Write the graph to `path`. Returns whether it was written.

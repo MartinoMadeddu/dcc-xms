@@ -336,7 +336,7 @@ pub fn node_type_label(t: &NodeType) -> &'static str {
 // SUBNET NODE TYPES
 // ============================================================================
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub enum SubnetNodeType {
     SubInput,
     SubOutput,

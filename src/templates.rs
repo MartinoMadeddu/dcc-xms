@@ -777,6 +777,32 @@ mod tests {
         }
     }
 
+    /// Added to a scene that has nodes already, the ICE template keeps its
+    /// tree: its copy of the tree gives the same sphere.
+    #[test]
+    fn the_ice_template_added_to_a_scene_still_spherifies() {
+        let t = TEMPLATES.iter().find(|t| t.name == "ICE tree: spherify").unwrap();
+        let mut store = SubnetStore::default();
+        let mut other = NodeGraphState::default();
+        t.load(&mut other, &mut store);
+        let mut g = NodeGraphState::default();
+        g.add_node("Cube".into(), NodeType::CreateCube { size: 1.0 }, p(0.0, 0.0));
+        let added = crate::graph_io::add_graph(&mut g, &mut store, &other);
+        assert_eq!(added, other.nodes.len() - 1);
+        for n in &other.nodes {
+            if let NodeType::Subnet { id, .. } = n.node_type { store.subnets.remove(&id); }
+        }
+        let ice = g.nodes.iter().find(|n| matches!(n.node_type, NodeType::Subnet { .. })).unwrap().id;
+        let eval = |sid: SubnetId, mesh: &crate::core::geo::Geo, template: Option<&crate::core::geo::Geo>| -> crate::core::geo::Geo {
+            store.get(sid).map(|sg| sg.evaluate(mesh, template)).unwrap_or_else(|| mesh.clone())
+        };
+        let mesh = g.eval_node(ice, &mut std::collections::HashMap::new(), &eval).unwrap().into_mesh();
+        for v in &mesh.vertices {
+            let r = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+            assert!((r - 1.2).abs() < 1e-4, "{r}");
+        }
+    }
+
     #[test]
     fn modelling_templates_give_valid_meshes() {
         for (name, verts_at_least) in [("Edit Poly: tower", 30), ("Edit Poly: panels", 300), ("Edit Poly: goblet", 300), ("Edit Poly: bridge", 20), ("Edit Poly: sea mine", 8000), ("Edit Poly: bolt", 60)] {

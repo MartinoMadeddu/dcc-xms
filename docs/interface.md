@@ -45,11 +45,14 @@ The graph is saved as a JSON file. The top bar shows its name, and "(unsaved)" w
 | To | Do this |
 |---|---|
 | Open a graph | Open, in the node graph header |
-| Open one used lately | Recent: the last ten graphs opened or saved. Files no longer there are greyed out. "Clear the list" empties it |
+| Add a saved graph to the one open | The + at the right of Open |
+| Open one used lately | Recent: the last ten graphs opened or saved. Files no longer there are greyed out. "Clear the list" empties it. The + at the right of a file adds it to the graph open |
 | Save | Save or Ctrl+S (Cmd+S on macOS): to the current file, or asks where when there is none yet |
 | Save to a new file | Save as |
 
 Opening a graph is a step in the [history](undo.md): undo goes back to the graph before it.
+
+Adding a graph puts its nodes to the right of the ones there, selected, as one step in the history. The graph open stays the current file. If its Output is not wired, it takes what the added graph's Output was wired to; if nothing is viewed, the added graph's viewed node is. ICE trees are not saved in graph files yet, so an ICE node added from a file comes with an empty tree (from a template, or copied and pasted, it keeps its tree).
 
 Closing the window with unsaved changes asks first: Save, Don't save, or Cancel (Esc). Save writes to the current file, or opens the browser for a graph never saved; the program closes once it is written. With nothing unsaved it closes straight away.
 
@@ -67,6 +70,12 @@ The list of recent files is kept in `recent.json` in the config folder.
 | Remove a wire | Right-click it |
 | See every node | "Frame" in the header, or F or A over the graph |
 | Tidy the graph | "Tidy" in the header lays the nodes out in rows, top to bottom, Output last, each node above the first node that uses it |
+| Copy nodes | Ctrl+C (Cmd+C on macOS) over the graph: the selected nodes, their parameters, the wires between them and the trees of their ICE nodes. Output is not copied |
+| Paste nodes | Ctrl+V (Cmd+V) over the graph: new nodes, under the pointer, selected. Each ICE node gets a tree of its own |
+
+Copied nodes go to the system clipboard as text, and to `clipboard.json` in the config folder. They paste in another window of the program, after it was closed and started again, or on another computer from text sent over. When the clipboard holds something else, Ctrl+V pastes the nodes copied last.
+
+![Two nodes pasted, then the ICE spherify template added with its +: Output was free, so it took the template's last node](xms_copy_paste_add.png)
 
 A new node is never left out of sight: the view moves just enough to show it. Templates are laid out with Tidy and framed when they load.
 

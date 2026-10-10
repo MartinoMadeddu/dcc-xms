@@ -1,6 +1,6 @@
 # Templates and example files
 
-The Templates menu in the node graph header holds ready-made graphs. Picking one replaces the current graph. A line under the header then says what to look at.
+The Templates menu in the node graph header holds ready-made graphs. Picking one replaces the current graph; the + at the right of its name adds it to the current graph instead, beside the nodes already there (see [Interface](interface.md#files)). A line under the header then says what to look at.
 
 The menu is in two parts, by whose work the templates show: **Martino** (composed USD stages, ICE) and **Simon** (everything else).
 

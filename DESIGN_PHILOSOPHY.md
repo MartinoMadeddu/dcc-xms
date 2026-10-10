@@ -24,6 +24,8 @@ If you are an AI assistant working in this repository, read `LLM_instructions.md
 
 - Everything is a node. A graph describes a result; changing a number upstream changes everything below it.
 - One node per idea. A node that moves things moves anything: Transform takes a mesh, packed primitives or a clip. What a node shows in the viewport is a setting on that node, not another node (Body Collide's Skin, Pieces and Hulls display, which replaced the separate Calamari node).
+- Whatever can open a scene can add to the one open instead: a file, a recent file, a template, each with a + at its right. Added nodes land beside what is there.
+- Copied nodes are text, kept after the program closes: they paste in another window, in a later session, or from a message.
 - Every area of the program has templates: working graphs that load laid out and framed, with a line saying what to look at. Templates are grouped by whose work they show.
 - An ICE node runs its tree on each packed primitive coming in, in the primitive's own space, as an ICE tree runs on an object in Softimage.
 - Where a known tool already has a convention, follow it: ICE trees drawn and navigated after Softimage ICE, the viewport drawing what the Scene Explorer opens as in Gaffer, edits between two nodes as stacked layers as in Solaris.
@@ -89,3 +91,4 @@ If you are an AI assistant working in this repository, read `LLM_instructions.md
 - 10/10/2026: one instruction file for AI assistants, `LLM_instructions.md`, in place of `claude_project_instructions.md`, `CLAUDE.md`, `AGENTS.md` and `.github/copilot-instructions.md`.
 - 10/10/2026: "Martino's project" added: other work builds on his and does not overwrite it; his new code is read before every change and its decisions written here.
 - 10/10/2026: from Martino's commits of 09/10/2026 and 10/10/2026 (composed stages, `Geo`, local-space prims, edits as opinions, Write USD, ICE editor, theme): "One geometry model" added, and points added to "The graph is the program", "The same words for the same things", "Files go out as they came in" and "Heavy data stays light".
+- 10/10/2026: copy and paste between sessions, and adding a file or template to the scene open instead of opening it (Simon).

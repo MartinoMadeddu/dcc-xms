@@ -114,6 +114,8 @@ Ctrl+Z and Ctrl+Shift+Z undo and redo everything in the scene: nodes, parameters
 - **Frame it:** F, G, Z or . frames the selection, down to selected vertices, edges and polygons. A or H frames everything
 - **Your navigation:** Maya, Houdini, XSI, Blender, Max, Modo or Unreal viewport controls, from a menu
 - **Remembered:** layout, floating windows, theme and navigation style come back at the next start
+- **Copy and paste nodes:** Ctrl+C and Ctrl+V, with their wires and ICE trees, between windows and from one session to the next
+- **Add instead of open:** the + beside Open, a recent file or a template adds it to the graph open
 - **Files:** Open, Recent (the last ten), Save, Save as, Ctrl+S. The top bar shows the file and whether it is saved; closing with unsaved changes asks first
 - **Fast:** the graph is cooked when its content changes, not on every frame
 - **Three themes, all editable:** Light, Dark, and ADHD (dark blues, with orange for whatever is selected or active). A colour editor changes any of them
@@ -172,7 +174,8 @@ Working with an AI assistant: [LLM_instructions.md](LLM_instructions.md) lists w
 - Mocap: IK in Retarget, foot planting
 - Timeline zoom and pan
 - Curve cleanup
-- ICE subnet contents in saved graphs
+- ICE subnet contents in saved graphs (copied nodes carry them)
+- Copy and paste inside an ICE tree: Ctrl+C and Ctrl+V work on the scene network only
 - The program icon inside the file itself (Windows Explorer, macOS dock). The window and task bar icon is set on X11 and Windows
 - Viewport interaction has been tested with simulated input, not yet thoroughly by hand
 - Import into Unreal has not been tried here. Written files are compared with their source FBX bone for bone (names, parents, kinds, axes, unit, local values), on a MetaHuman take
