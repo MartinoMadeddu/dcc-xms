@@ -20,7 +20,7 @@ Nothing is baked. A mesh is a cube node followed by the operations that shaped i
 
 ![Twelve of the built-in templates](docs/xms_templates.png)
 
-Twenty-four templates ship with the program, one for each area of it. Each loads a working graph and tells you what to try.
+Thirty templates ship with the program, one for each area of it, in two parts: Martino's (composed USD stages: composition, curves and points, point instancers, native instances, purposes; ICE) and Simon's (modelling, UV, USD models, animation and mocap). Each loads a working graph and tells you what to try.
 
 ## Polygon modelling in a single node
 
@@ -157,13 +157,19 @@ On Ubuntu or Debian, first:
 
 [docs/](docs/README.md): interface, undo, templates, Edit Poly, UV, USD, geometry, viewport navigation, animation and mocap, Body Collide, builds and releases.
 
+## Contributing
+
+Read [DESIGN_PHILOSOPHY.md](DESIGN_PHILOSOPHY.md) first: how the program should work and why. Add to it when a decision is made, and update the README and the pages in `docs/` with every change.
+
+Working with an AI assistant: [claude_project_instructions.md](claude_project_instructions.md) lists what it should check (workspace, build, GitHub access, settings) and how changes are delivered.
+
 ## Not done yet
 
 - Undo inside ICE subnets, and history saved with the graph
 - Edit Poly: interactive cut and quickslice, extrude along spline, target weld, attach, smoothing groups, material IDs, paint deformation, constraints
 - USD: normal and roughness maps in the viewport, cameras, animation and skinning, per-face material subsets, writing time samples and edits inside instances
 - UV: editing single UV vertices and edges, a checker in the viewport, UVs kept through Edit Poly and Copy To Points, UVs in FBX files. Unwrapping is LSCM only: ABF++, SLIM and BFF are not implemented
-- Mocap: IK, foot planting, characterization
+- Mocap: IK in Retarget, foot planting
 - Timeline zoom and pan
 - Curve cleanup
 - ICE subnet contents in saved graphs
@@ -178,7 +184,7 @@ On Ubuntu or Debian, first:
 
 ## Credit
 
-XMS was created by [Martino Madeddu](https://github.com/MartinoMadeddu): the node graph, the viewport, the ICE subnets, the USD loader and the look of the interface.
+XMS was created by [Martino Madeddu](https://github.com/MartinoMadeddu): the node graph, the viewport, the ICE subnets, the USD loader and composed stages, GPU instancing and the look of the interface.
 
 Additional development by [Simon Legrand](https://github.com/srlegrand): polygon modelling, UV, USD at production size, motion capture, Body Collide, the dockable interface and the website.
 

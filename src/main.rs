@@ -25,6 +25,7 @@ mod layout;
 mod uv_editor;
 mod uv_canvas;
 mod examples;
+mod examples_stage;
 mod templates;
 mod ragdoll;
 mod packed;
@@ -792,18 +793,23 @@ impl egui_dock::TabViewer for Panes<'_> {
                         ui.small_button("?").on_hover_text(
                             "Right-click or Tab: add a node\nShift+drag: pan\nEsc: cancel a wire\nDouble-click a subnet: dive in\nRight-click an output: add a node under it, wired\nF or A: frame every node\nRing at the left of a node: bypass\nEye at the right: show in the viewport");
                         // Ready-made graphs. Picking one replaces the current graph.
+                        // By whose work they show, then by area.
                         ui.menu_button("Templates", |ui| {
-                            for group in templates::GROUPS {
-                                ui.menu_button(group, |ui| {
-                                    for t in templates::TEMPLATES.iter().filter(|t| t.group == group) {
-                                        if ui.button(t.name).on_hover_text(t.hint).clicked() {
-                                            self.graph_file.message = t.load(self.graph, self.subnets);
-                                            // A template is not a file: saving asks where.
-                                            self.graph_file.path = None;
-                                            history::note(format!("Template: {}", t.name));
-                                            self.nav.current_subnet = None;
-                                            ui.close_menu();
-                                        }
+                            for (by, groups) in templates::MENU {
+                                ui.menu_button(by, |ui| {
+                                    for group in groups.iter().copied() {
+                                        ui.menu_button(group, |ui| {
+                                            for t in templates::TEMPLATES.iter().filter(|t| t.by == by && t.group == group) {
+                                                if ui.button(t.name).on_hover_text(t.hint).clicked() {
+                                                    self.graph_file.message = t.load(self.graph, self.subnets);
+                                                    // A template is not a file: saving asks where.
+                                                    self.graph_file.path = None;
+                                                    history::note(format!("Template: {}", t.name));
+                                                    self.nav.current_subnet = None;
+                                                    ui.close_menu();
+                                                }
+                                            }
+                                        });
                                     }
                                 });
                             }

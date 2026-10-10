@@ -1,0 +1,31 @@
+#usda 1.0
+(
+    defaultPrim = "Street"
+    upAxis = "Y"
+    metersPerUnit = 1
+)
+
+def Xform "Street"
+{
+    def Mesh "Road"
+    {
+        point3f[] points = [(-6, -0.05, -2), (6, -0.05, -2), (6, 0, -2), (-6, 0, -2), (-6, -0.05, 2), (6, -0.05, 2), (6, 0, 2), (-6, 0, 2)]
+        int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+        int[] faceVertexIndices = [0, 3, 2, 1, 4, 5, 6, 7, 0, 1, 5, 4, 1, 2, 6, 5, 2, 3, 7, 6, 3, 0, 4, 7]
+        uniform token subdivisionScheme = "none"
+    }
+    def Mesh "PavementNorth"
+    {
+        point3f[] points = [(-6, -0.05, 2), (6, -0.05, 2), (6, 0.12, 2), (-6, 0.12, 2), (-6, -0.05, 3.5), (6, -0.05, 3.5), (6, 0.12, 3.5), (-6, 0.12, 3.5)]
+        int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+        int[] faceVertexIndices = [0, 3, 2, 1, 4, 5, 6, 7, 0, 1, 5, 4, 1, 2, 6, 5, 2, 3, 7, 6, 3, 0, 4, 7]
+        uniform token subdivisionScheme = "none"
+    }
+    def Mesh "PavementSouth"
+    {
+        point3f[] points = [(-6, -0.05, -3.5), (6, -0.05, -3.5), (6, 0.12, -3.5), (-6, 0.12, -3.5), (-6, -0.05, -2), (6, -0.05, -2), (6, 0.12, -2), (-6, 0.12, -2)]
+        int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+        int[] faceVertexIndices = [0, 3, 2, 1, 4, 5, 6, 7, 0, 1, 5, 4, 1, 2, 6, 5, 2, 3, 7, 6, 3, 0, 4, 7]
+        uniform token subdivisionScheme = "none"
+    }
+}

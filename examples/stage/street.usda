@@ -1,0 +1,78 @@
+#usda 1.0
+(
+    defaultPrim = "Street"
+    upAxis = "Y"
+    metersPerUnit = 1
+    subLayers = [
+        @./street_base.usda@
+    ]
+)
+
+over "Street" (
+    variants = {
+        string dressing = "cafe"
+    }
+    prepend variantSets = "dressing"
+)
+{
+    over "PavementSouth"
+    {
+        double3 xformOp:translate = (0, 0, -0.8)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    def Xform "Table1" (
+        prepend references = @../table.usda@
+    )
+    {
+        double3 xformOp:translate = (-3, 0.12, 2.75)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    def Xform "Table2" (
+        prepend references = @../table.usda@
+    )
+    {
+        double3 xformOp:translate = (0, 0.12, 2.75)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    def Xform "Table3" (
+        prepend references = @../table.usda@
+    )
+    {
+        double3 xformOp:translate = (3, 0.12, 2.75)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    variantSet "dressing" = {
+        "cafe" {
+            def Xform "Shapes1" (
+                prepend references = @../shapes.usda@
+            )
+            {
+                double3 xformOp:translate = (-3, 0.89, 2.75)
+                float3 xformOp:scale = (0.25, 0.25, 0.25)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+            def Xform "Shapes2" (
+                prepend references = @../shapes.usda@
+            )
+            {
+                double3 xformOp:translate = (0, 0.89, 2.75)
+                float3 xformOp:scale = (0.25, 0.25, 0.25)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+            def Xform "Shapes3" (
+                prepend references = @../shapes.usda@
+            )
+            {
+                double3 xformOp:translate = (3, 0.89, 2.75)
+                float3 xformOp:scale = (0.25, 0.25, 0.25)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+            }
+        }
+        "empty" {
+        }
+    }
+}

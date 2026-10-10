@@ -11,6 +11,8 @@ use crate::node_graph::NodeGraphState;
 use crate::types::{NodeId, NodeType, RetimeMode, SubnetNodeType, DEFAULT_WRITE_PATH};
 
 pub struct Template {
+    /// Whose work the template shows: the first level of the Templates menu.
+    pub by:    &'static str,
     pub group: &'static str,
     pub name:  &'static str,
     pub hint:  &'static str,
@@ -18,56 +20,75 @@ pub struct Template {
     pub build: fn(&mut NodeGraphState, &mut SubnetStore) -> String,
 }
 
-pub const GROUPS: [&str; 5] = ["Basics", "Modelling", "UV", "USD", "Animation & Mocap"];
+pub const MARTINO: &str = "Martino";
+pub const SIMON:   &str = "Simon";
+
+/// The Templates menu: whose work, then the groups of each.
+pub const MENU: [(&str, &[&str]); 2] = [
+    (MARTINO, &["USD stages", "ICE"]),
+    (SIMON,   &["Basics", "Modelling", "UV", "USD", "Animation & Mocap"]),
+];
 
 pub const TEMPLATES: &[Template] = &[
-    Template { group: "Basics", name: "Primitives", build: primitives,
+    Template { by: MARTINO, group: "USD stages", name: "Composition: a street", build: street,
+        hint: "A stage composed from four files: a sublayer, references, a variant set and an override in the root layer" },
+    Template { by: MARTINO, group: "USD stages", name: "Curves and points", build: strands,
+        hint: "BasisCurves of every basis (linear, Bezier, Catmull-Rom, a periodic B-spline), 600 strands of grass and a spiral of points of growing width" },
+    Template { by: MARTINO, group: "USD stages", name: "Point instancer: a forest", build: forest,
+        hint: "4,900 pines and stones from one PointInstancer, drawn by GPU instancing. The Transform after it moves the placements, not the shared meshes" },
+    Template { by: MARTINO, group: "USD stages", name: "Native instances: a hall of tables", build: hall,
+        hint: "64 instanceable references to one table: five meshes, shared by every table" },
+    Template { by: MARTINO, group: "USD stages", name: "Purposes: street lamps", build: lamps,
+        hint: "Lamps with render, proxy and guide geometry. Switch them with the render, proxy and guide toggles of the Scene Explorer" },
+    Template { by: MARTINO, group: "ICE", name: "ICE tree: spherify", build: spherify,
+        hint: "A subdivided cube pushed onto a sphere by an ICE tree. Select the ICE node and press the down arrow to go inside, the up arrow to come back" },
+    Template { by: SIMON, group: "Basics", name: "Primitives", build: primitives,
         hint: "Cube, sphere and grid, each moved with a Transform and joined with Merge" },
-    Template { group: "Basics", name: "Scatter and copy", build: scatter,
+    Template { by: SIMON, group: "Basics", name: "Scatter and copy", build: scatter,
         hint: "Points scattered on a grid, a small cube copied onto each" },
-    Template { group: "Basics", name: "ICE subnet", build: subnet,
+    Template { by: SIMON, group: "Basics", name: "ICE subnet", build: subnet,
         hint: "The same scatter and copy, built inside a subnet. Double-click the subnet node to open it" },
-    Template { group: "Basics", name: "USD import", build: usd,
+    Template { by: SIMON, group: "Basics", name: "USD import", build: usd,
         hint: "Two example USD files loaded, moved and merged" },
-    Template { group: "Modelling", name: "Edit Poly: tower", build: tower,
+    Template { by: SIMON, group: "Modelling", name: "Edit Poly: tower", build: tower,
         hint: "Inset, extrude and bevel stacked on the top face of a cube" },
-    Template { group: "Modelling", name: "Edit Poly: panels", build: panels,
+    Template { by: SIMON, group: "Modelling", name: "Edit Poly: panels", build: panels,
         hint: "Every cell of a grid inset and extruded on its own" },
-    Template { group: "Modelling", name: "Edit Poly: goblet", build: goblet,
+    Template { by: SIMON, group: "Modelling", name: "Edit Poly: goblet", build: goblet,
         hint: "Edge loops, transforms and subdivision, with the early operations collapsed" },
-    Template { group: "Modelling", name: "Edit Poly: bridge", build: bridge,
+    Template { by: SIMON, group: "Modelling", name: "Edit Poly: bridge", build: bridge,
         hint: "Two cubes joined with Bridge, the selection made by a box rule" },
-    Template { group: "Modelling", name: "Edit Poly: sea mine", build: sea_mine,
+    Template { by: SIMON, group: "Modelling", name: "Edit Poly: sea mine", build: sea_mine,
         hint: "Eleven operations with three rounds of subdivision: about ten thousand polygons from one cube" },
-    Template { group: "Modelling", name: "Edit Poly: bolt", build: bolt,
+    Template { by: SIMON, group: "Modelling", name: "Edit Poly: bolt", build: bolt,
         hint: "Chamfer, slice, hinge, outline and vertex extrude: the second set of Edit Poly operations" },
-    Template { group: "UV", name: "Unwrap the sea mine", build: uv_mine,
+    Template { by: SIMON, group: "UV", name: "Unwrap the sea mine", build: uv_mine,
         hint: "Conformal (LSCM) unwrap of ten thousand polygons. Open the UV Editor pane to see the charts" },
-    Template { group: "UV", name: "Edit UV islands", build: uv_edit,
+    Template { by: SIMON, group: "UV", name: "Edit UV islands", build: uv_edit,
         hint: "A box unwrapped, then islands moved, turned and scaled in a UV Edit node" },
-    Template { group: "UV", name: "UDIM tiles", build: uv_udim,
+    Template { by: SIMON, group: "UV", name: "UDIM tiles", build: uv_udim,
         hint: "A body and two hands made of separate pieces, unwrapped over three UDIM tiles: each hand keeps its fingers on its own tile" },
-    Template { group: "USD", name: "USD: heavy model", build: usd_heavy,
+    Template { by: SIMON, group: "USD", name: "USD: heavy model", build: usd_heavy,
         hint: "A 460,000 triangle model as 43 packed primitives. Select the Load USD node for its materials and textures; open the UV Editor for its UVs" },
-    Template { group: "USD", name: "USD: pick and edit", build: usd_pick,
+    Template { by: SIMON, group: "USD", name: "USD: pick and edit", build: usd_pick,
         hint: "One wheel picked out of the model and moved. Only the picked primitive goes through the Transform and Edit Poly nodes" },
-    Template { group: "USD", name: "USD: prune", build: usd_prune,
+    Template { by: SIMON, group: "USD", name: "USD: prune", build: usd_prune,
         hint: "The model cut down to its wheels and callipers with a path pattern" },
-    Template { group: "Animation & Mocap", name: "Clip basics", build: clip_basics,
+    Template { by: SIMON, group: "Animation & Mocap", name: "Clip basics", build: clip_basics,
         hint: "Test clip renamed, trimmed, retimed and given a start timecode. Select each node to see the timeline follow" },
-    Template { group: "Animation & Mocap", name: "FBX import", build: fbx_import,
+    Template { by: SIMON, group: "Animation & Mocap", name: "FBX import", build: fbx_import,
         hint: "A real two-character mocap take loaded from FBX" },
-    Template { group: "Animation & Mocap", name: "T-pose and export", build: tpose,
+    Template { by: SIMON, group: "Animation & Mocap", name: "T-pose and export", build: tpose,
         hint: "Auto T-pose, a manual fix, proxy skin and Write FBX" },
-    Template { group: "Animation & Mocap", name: "Mocap tools", build: mocap_tools,
+    Template { by: SIMON, group: "Animation & Mocap", name: "Mocap tools", build: mocap_tools,
         hint: "The example take split, pruned, smoothed, held in place, mirrored and looped" },
-    Template { group: "Animation & Mocap", name: "Retarget", build: retarget,
+    Template { by: SIMON, group: "Animation & Mocap", name: "Retarget", build: retarget,
         hint: "A character of the example take driving the test skeleton, which rests in another pose" },
-    Template { group: "Animation & Mocap", name: "Body Collide: into the car", build: body_collide,
+    Template { by: SIMON, group: "Animation & Mocap", name: "Body Collide: into the car", build: body_collide,
         hint: "A captured actor walks through a car and sits in it for six minutes, kept out of the seat, the floor and himself. Opens solved" },
-    Template { group: "Animation & Mocap", name: "Mocap split (example takes)", build: mocap_example,
+    Template { by: SIMON, group: "Animation & Mocap", name: "Mocap split (example takes)", build: mocap_example,
         hint: "The mocap split graph, pointed at the example folder with a two-character take" },
-    Template { group: "Animation & Mocap", name: "Mocap split", build: mocap_blank,
+    Template { by: SIMON, group: "Animation & Mocap", name: "Mocap split", build: mocap_blank,
         hint: "Folder of takes, split per character, animation and skinned T-pose written per character" },
 ];
 
@@ -563,6 +584,68 @@ fn body_collide(g: &mut NodeGraphState, _: &mut SubnetStore) -> String {
     format!("Body Collide: the actor walks through the car at frame 1341 and is seated by 1473. Scrub to frame 3000: hips on the seat, feet in the footwell. Bypass the node to see the capture. Display: Hulls shows the shapes that collide. Characterize shows which joint is which part.{}", missing_examples())
 }
 
+// ── Martino: composed USD stages and ICE ─────────────────────────────────────
+
+/// One Load USD node on a stage example, viewed and selected.
+fn stage(g: &mut NodeGraphState, name: &str, file: &str) -> NodeId {
+    crate::graph_io::clear(g);
+    let load = g.add_node(name.into(), NodeType::LoadUsd { path: examples::path(file) }, p(180.0, 20.0));
+    finish(g, load, load, p(180.0, 130.0));
+    load
+}
+
+const BOXES: &str = "The Scene Explorer lists the stage: each closed prim is drawn as its bounding box until it is opened, or tick Show all geometry.";
+
+fn street(g: &mut NodeGraphState, _: &mut SubnetStore) -> String {
+    stage(g, "Street", crate::examples_stage::STREET);
+    format!("A street from four files: the road and pavements from a sublayer, three tables referenced from table.usda, the shapes on them in the variant \"cafe\", and an override in the root layer that moves the south pavement. {BOXES}{}", missing_examples())
+}
+
+fn strands(g: &mut NodeGraphState, _: &mut SubnetStore) -> String {
+    stage(g, "Strands", crate::examples_stage::STRANDS);
+    format!("Curves as USD has them: linear, Bezier, Catmull-Rom and a closed B-spline, 600 strands of grass, and points whose width grows along a spiral. {BOXES}{}", missing_examples())
+}
+
+fn forest(g: &mut NodeGraphState, _: &mut SubnetStore) -> String {
+    crate::graph_io::clear(g);
+    let load = g.add_node("Forest".into(), NodeType::LoadUsd { path: examples::path(crate::examples_stage::FOREST) }, p(180.0, 20.0));
+    let turn = g.add_node("Turn".into(), transform([0.0; 3], [0.0, 0.35, 0.0], [1.0; 3]), p(180.0, 130.0));
+    g.add_connection(load, 0, turn, 0);
+    finish(g, turn, load, p(180.0, 240.0));
+    format!("4,900 trees and stones from one PointInstancer: three meshes, each drawn once per copy by GPU instancing. The Transform turns the whole forest by moving the placements; the shared meshes are not copied. {BOXES}{}", missing_examples())
+}
+
+fn hall(g: &mut NodeGraphState, _: &mut SubnetStore) -> String {
+    stage(g, "Hall", crate::examples_stage::TABLES);
+    format!("64 tables, each an instanceable reference to table.usda: the five meshes of the table are read once and placed 64 times. {BOXES}{}", missing_examples())
+}
+
+fn lamps(g: &mut NodeGraphState, _: &mut SubnetStore) -> String {
+    stage(g, "Lamps", crate::examples_stage::LAMPS);
+    format!("Each lamp has render geometry, a proxy of blocks and a guide showing its cone of light. With proxy on, the proxy is drawn in place of the render geometry; switch render, proxy and guide in the Scene Explorer. {BOXES}{}", missing_examples())
+}
+
+fn spherify(g: &mut NodeGraphState, store: &mut SubnetStore) -> String {
+    crate::graph_io::clear(g);
+    let id = store.create_subnet("Spherify".into());
+    if let Some(sub) = store.get_mut(id) {
+        let (input, out) = (sub.nodes[0].id, sub.nodes[1].id);
+        let norm = sub.add_node("Normalize".into(), SubnetNodeType::Normalize, p(220.0, 200.0));
+        let grow = sub.add_node("Scale".into(), SubnetNodeType::MultiplyVec3 { scalar: 1.2 }, p(360.0, 200.0));
+        sub.add_connection(input, 0, norm, 0);
+        sub.add_connection(norm, 0, grow, 0);
+        sub.add_connection(grow, 0, out, 0);
+    }
+    let all = || PolySelection { source: SelSource::All, ..Default::default() };
+    let cube = g.add_node("Cube".into(), NodeType::CreateCube { size: 1.0 }, p(180.0, 20.0));
+    let dense = g.add_node("Subdivide".into(), edit_poly(vec![PolyOp::new(all(), PolyOpKind::Subdivide { iterations: 3 })], all()), p(180.0, 130.0));
+    let tree = g.add_node("Spherify".into(), NodeType::Subnet { id, name: "Spherify".into() }, p(180.0, 240.0));
+    g.add_connection(cube, 0, dense, 0);
+    g.add_connection(dense, 0, tree, 0);
+    finish(g, tree, tree, p(180.0, 350.0));
+    "ICE tree: every point of the subdivided cube is set to unit length (Normalize), then scaled by 1.2 (Multiply). Select the Spherify node and press the down arrow to go inside; the up arrow comes back. Change the Multiply value in its properties.".into()
+}
+
 fn mocap_example(g: &mut NodeGraphState, _: &mut SubnetStore) -> String {
     crate::graph_io::mocap_split_template(g);
     let dir = examples::path(examples::TAKES_DIR);
@@ -626,7 +709,7 @@ mod tests {
         assert!(examples::dir().is_some(), "examples folder not found");
 
         for t in TEMPLATES {
-            assert!(GROUPS.contains(&t.group), "{}", t.name);
+            assert!(MENU.iter().any(|(by, groups)| *by == t.by && groups.contains(&t.group)), "{}", t.name);
             let mut g = NodeGraphState::default();
             let mut store = SubnetStore::default();
             // Twice: a template has to replace whatever was there.
@@ -675,6 +758,22 @@ mod tests {
             } else {
                 assert_eq!(islands, 6);
             }
+        }
+    }
+
+    #[test]
+    fn the_ice_template_puts_every_point_on_a_sphere() {
+        let t = TEMPLATES.iter().find(|t| t.name == "ICE tree: spherify").unwrap();
+        let (mut g, mut store) = (NodeGraphState::default(), SubnetStore::default());
+        (t.build)(&mut g, &mut store);
+        let eval = |sid: SubnetId, mesh: &crate::core::geo::Geo, template: Option<&crate::core::geo::Geo>| -> crate::core::geo::Geo {
+            store.get(sid).map(|sg| sg.evaluate(mesh, template)).unwrap_or_else(|| mesh.clone())
+        };
+        let mesh = g.eval_node(g.selected_node.unwrap(), &mut std::collections::HashMap::new(), &eval).unwrap().into_mesh();
+        assert!(mesh.vertices.len() > 300 && !mesh.indices.is_empty());
+        for v in &mesh.vertices {
+            let r = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+            assert!((r - 1.2).abs() < 1e-4, "{r}");
         }
     }
 

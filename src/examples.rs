@@ -116,8 +116,11 @@ pub fn table_usda() -> String {
 pub fn write_all(dir: &Path) -> std::io::Result<Vec<PathBuf>> {
     std::fs::create_dir_all(dir)?;
     let mut out = vec![];
-    for (name, text) in [(SHAPES_USD, shapes_usda()), (TABLE_USD, table_usda())] {
+    let mut files = vec![(SHAPES_USD, shapes_usda()), (TABLE_USD, table_usda())];
+    files.extend(crate::examples_stage::all());
+    for (name, text) in files {
         let p = dir.join(name);
+        if let Some(parent) = p.parent() { std::fs::create_dir_all(parent)?; }
         std::fs::write(&p, text)?;
         out.push(p);
     }
@@ -183,7 +186,7 @@ mod tests {
         let dir = std::env::temp_dir().join("xms_examples_test");
         let _ = std::fs::remove_dir_all(&dir);
         let files = write_all(&dir).unwrap();
-        assert_eq!(files.len(), 2);
+        assert_eq!(files.len(), 2 + crate::examples_stage::all().len());
         assert_eq!(crate::usd_loader::load_usd_meshes(&dir.join(TABLE_USD)).unwrap().len(), 5);
         assert_eq!(crate::usd_loader::load_usd_meshes(&dir.join(SHAPES_USD)).unwrap().len(), 3);
     }

@@ -40,3 +40,12 @@ opt-level = 1
 
 [profile.dev.package."*"]
 opt-level = 3
+
+# The crates of this workspace are not covered by "*" above: the solver and
+# the USD reader are as heavy as any dependency.
+[profile.dev.package.xms_ragdoll]
+opt-level = 3
+[profile.dev.package.xms-usd]
+opt-level = 3
+[profile.dev.package.xms-scene]
+opt-level = 3
