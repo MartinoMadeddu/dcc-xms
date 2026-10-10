@@ -66,7 +66,7 @@ fn main() {
                 visible: false,
                 ..default()
             }),
-            // Closing asks first when there are unsaved changes: `quit_system`.
+            // Closing, opening a file or loading a template asks first when there are unsaved changes: `save_first_system`.
             close_when_requested: false,
             ..default()
         }))
@@ -101,7 +101,7 @@ fn main() {
         .init_resource::<viewport::nav::NavSettings>()
         .init_resource::<history::History>()
         .init_resource::<recent::Recent>()
-        .init_resource::<QuitState>()
+        .init_resource::<SaveFirst>()
         .add_systems(Startup, (open_splash, setup_scene, setup_egui_theme, setup_gizmos, modelling::setup_gizmos))
         .add_systems(Update, (
             dcc_ui,
@@ -109,7 +109,7 @@ fn main() {
             set_window_icon,
             history_system.after(dcc_ui).after(modelling::pick_system),
             track_revision.after(history_system),
-            quit_system.after(history_system),
+            save_first_system.after(history_system),
             update_operator_stack.after(track_revision),
             update_scene_hierarchy.after(track_revision),
             update_generated_meshes.after(track_revision).after(update_scene_hierarchy),
@@ -253,7 +253,7 @@ fn dcc_ui(
     mut graph_file: ResMut<GraphFile>,
     mut poly_tool:  ResMut<modelling::PolyTool>,
     mut nav_settings: ResMut<viewport::nav::NavSettings>,
-    (mut layout, revision, mut uv_state, mut history, mut recent): (ResMut<Layout>, Res<node_graph::GraphRevision>, ResMut<uv_editor::UvEditorState>, ResMut<history::History>, ResMut<recent::Recent>),
+    (mut layout, revision, mut uv_state, mut history, mut recent, mut save_first): (ResMut<Layout>, Res<node_graph::GraphRevision>, ResMut<uv_editor::UvEditorState>, ResMut<history::History>, ResMut<recent::Recent>, ResMut<SaveFirst>),
     batch:          Res<BatchState>,
     time:           Res<Time>,
 ) {
@@ -278,13 +278,7 @@ fn dcc_ui(
                     }
                 }
             }
-            BrowseTarget::OpenGraph => {
-                open_graph(&mut graph, &path, &mut graph_file, &mut history, &mut recent);
-                nav.current_subnet = None;
-            }
-            BrowseTarget::AddGraph => {
-                add_graph_file(&mut graph, &mut subnets, &path, &mut graph_file, &mut recent);
-            }
+            BrowseTarget::OpenGraph => save_first.load(Source::File(path.clone())),
             BrowseTarget::OpenLayout => {
                 graph_file.message = match layout.load_from(&path) {
                     Ok(())  => format!("Layout loaded from {}", path.display()),
@@ -410,7 +404,7 @@ fn dcc_ui(
             dt: time.delta_seconds_f64(), keys_free,
             space_plays: nav_settings.style != viewport::nav::NavStyle::Houdini,
             revision: revision.0, locked, toggle_float: &mut toggle_float, tab_pressed: &mut tab_pressed,
-            uv_state: &mut uv_state, history: &mut history, recent: &mut recent,
+            uv_state: &mut uv_state, history: &mut history, recent: &mut recent, save_first: &mut save_first,
         };
         let mut style = egui_dock::Style::from_egui(ctx.style().as_ref());
         style.tab_bar.fill_tab_bar = true;
@@ -633,6 +627,7 @@ struct Panes<'a> {
     uv_state:       &'a mut uv_editor::UvEditorState,
     history:        &'a mut history::History,
     recent:         &'a mut recent::Recent,
+    save_first:     &'a mut SaveFirst,
 }
 
 impl egui_dock::TabViewer for Panes<'_> {
@@ -753,10 +748,7 @@ impl egui_dock::TabViewer for Panes<'_> {
                         if ui.button("📂 Open").on_hover_text("Load a saved graph").clicked() {
                             self.browser.open(BrowseTarget::OpenGraph, BrowseMode::File, "Open graph", &["json"], "");
                         }
-                        if ui.small_button("+").on_hover_text("Add a saved graph to this one").clicked() {
-                            self.browser.open(BrowseTarget::AddGraph, BrowseMode::File, "Add graph", &["json"], "");
-                        }
-                        let (mut open, mut add) = (None, None);
+                        let mut open = None;
                         ui.menu_button("Recent", |ui| {
                             if self.recent.files.is_empty() {
                                 ui.label(egui::RichText::new("No graphs opened or saved yet").weak());
@@ -765,31 +757,18 @@ impl egui_dock::TabViewer for Panes<'_> {
                                 let name = f.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
                                 let there = f.is_file();
                                 let label = if there { name } else { format!("{name} (missing)") };
-                                // The + at the right adds the graph to this one.
-                                ui.horizontal(|ui| {
-                                    if ui.add_enabled(there, egui::Button::new(label)).on_hover_text(f.display().to_string())
-                                        .on_disabled_hover_text(format!("{}\nNot found", f.display())).clicked() {
-                                        open = Some(f.clone());
-                                        ui.close_menu();
-                                    }
-                                    if ui.add_enabled(there, egui::Button::new("+").small()).on_hover_text("Add it to this graph").clicked() {
-                                        add = Some(f.clone());
-                                        ui.close_menu();
-                                    }
-                                });
+                                if ui.add_enabled(there, egui::Button::new(label)).on_hover_text(f.display().to_string())
+                                    .on_disabled_hover_text(format!("{}\nNot found", f.display())).clicked() {
+                                    open = Some(f.clone());
+                                    ui.close_menu();
+                                }
                             }
                             if !self.recent.files.is_empty() {
                                 ui.separator();
                                 if ui.button("Clear the list").clicked() { self.recent.clear(); ui.close_menu(); }
                             }
                         }).response.on_hover_text("Graphs opened or saved lately");
-                        if let Some(path) = open {
-                            open_graph(self.graph, &path, self.graph_file, self.history, self.recent);
-                            self.nav.current_subnet = None;
-                        }
-                        if let Some(path) = add {
-                            add_graph_file(self.graph, self.subnets, &path, self.graph_file, self.recent);
-                        }
+                        if let Some(path) = open { self.save_first.load(Source::File(path)); }
                         let save_tip = match &self.graph_file.path {
                             Some(p) => format!("Save to {} (Ctrl+S)", p.display()),
                             None => "Save this graph (Ctrl+S)".into(),
@@ -808,29 +787,19 @@ impl egui_dock::TabViewer for Panes<'_> {
                         }
                         ui.small_button("?").on_hover_text(
                             "Right-click or Tab: add a node\nCtrl+C, Ctrl+V: copy and paste nodes\nShift+drag: pan\nEsc: cancel a wire\nDouble-click a subnet: dive in\nRight-click an output: add a node under it, wired\nF or A: frame every node\nRing at the left of a node: bypass\nEye at the right: show in the viewport");
-                        // Ready-made graphs. Picking one replaces the current graph;
-                        // the + at its right adds it to the current graph.
+                        // Ready-made graphs. Picking one asks whether to add it to the
+                        // graph or open it as new (see `SaveFirst::load`).
                         // By whose work they show, then by area.
                         ui.menu_button("Templates", |ui| {
                             for (by, groups) in templates::MENU {
                                 ui.menu_button(by, |ui| {
                                     for group in groups.iter().copied() {
                                         ui.menu_button(group, |ui| {
-                                            for t in templates::TEMPLATES.iter().filter(|t| t.by == by && t.group == group) {
-                                                ui.horizontal(|ui| {
-                                                    if ui.button(t.name).on_hover_text(t.hint).clicked() {
-                                                        self.graph_file.message = t.load(self.graph, self.subnets);
-                                                        // A template is not a file: saving asks where.
-                                                        self.graph_file.path = None;
-                                                        history::note(format!("Template: {}", t.name));
-                                                        self.nav.current_subnet = None;
-                                                        ui.close_menu();
-                                                    }
-                                                    if ui.small_button("+").on_hover_text("Add it to this graph").clicked() {
-                                                        self.graph_file.message = add_template(self.graph, self.subnets, t);
-                                                        ui.close_menu();
-                                                    }
-                                                });
+                                            for (index, t) in templates::TEMPLATES.iter().enumerate().filter(|(_, t)| t.by == by && t.group == group) {
+                                                if ui.button(t.name).on_hover_text(t.hint).clicked() {
+                                                    self.save_first.load(Source::Template(index));
+                                                    ui.close_menu();
+                                                }
                                             }
                                         });
                                     }
@@ -985,16 +954,16 @@ fn open_graph(graph: &mut NodeGraphState, path: &std::path::Path, file: &mut Gra
 
 /// Add a saved graph to the one open, beside its nodes, as one undoable
 /// step. The current file stays the same.
-fn add_graph_file(graph: &mut NodeGraphState, subnets: &mut SubnetStore, path: &std::path::Path, file: &mut GraphFile, recent: &mut recent::Recent) {
+fn add_graph_file(graph: &mut NodeGraphState, subnets: &mut SubnetStore, path: &std::path::Path, recent: &mut recent::Recent) -> String {
     let mut other = NodeGraphState::default();
     match graph_io::load(&mut other, path) {
         Ok(()) => {
             let n = graph_io::add_graph(graph, subnets, &other);
             history::note(format!("Add {}", file_name(path)));
             recent.add(path);
-            file.message = format!("Added {n} nodes from {}", path.display());
+            format!("Added {n} nodes from {}", path.display())
         }
-        Err(e) => file.message = format!("Could not add {}: {e}", path.display()),
+        Err(e) => format!("Could not add {}: {e}", path.display()),
     }
 }
 
@@ -1063,88 +1032,228 @@ fn save_or_ask(graph: &NodeGraphState, file: &mut GraphFile, history: &mut histo
     }
 }
 
-/// Where closing the program stands.
-#[derive(Resource, Default, PartialEq, Eq, Clone, Copy, Debug)]
-enum QuitState {
-    #[default]
-    Running,
-    /// The window was closed with unsaved changes: Save, Don't save or Cancel.
-    Asking,
-    /// Save was chosen for a graph with no file: the browser asks where.
-    SavingAs,
+/// A graph to bring in: a saved file or a template.
+#[derive(Clone, Debug, PartialEq)]
+enum Source {
+    File(std::path::PathBuf),
+    /// Index in `templates::TEMPLATES`.
+    Template(usize),
 }
 
-/// Closing the window: straight away when everything is saved, otherwise
-/// ask whether to save first.
-fn quit_system(
+impl Source {
+    fn name(&self) -> String {
+        match self {
+            Source::File(p) => file_name(p),
+            Source::Template(i) => format!("the template {}", templates::TEMPLATES[*i].name),
+        }
+    }
+
+    /// Opening it as new: what waits on unsaved changes.
+    fn open(self) -> After {
+        match self { Source::File(p) => After::Open(p), Source::Template(i) => After::Template(i) }
+    }
+}
+
+/// What replaces the graph, or closes it, once unsaved changes are dealt with.
+#[derive(Clone, Debug, PartialEq)]
+enum After {
+    Quit,
+    Open(std::path::PathBuf),
+    /// Index in `templates::TEMPLATES`.
+    Template(usize),
+}
+
+impl After {
+    fn question(&self, file: &GraphFile) -> String {
+        let changes = match &file.path {
+            Some(p) => format!("the changes to {}", file_name(p)),
+            None => "this graph".into(),
+        };
+        match self {
+            After::Quit => format!("Save {changes} before closing?"),
+            After::Open(p) => format!("Save {changes} before opening {}?", file_name(p)),
+            After::Template(i) => format!("Save {changes} before loading the template {}?", templates::TEMPLATES[*i].name),
+        }
+    }
+
+    fn warning(&self) -> &'static str {
+        match self {
+            After::Quit => "Closing without saving loses them.",
+            _ => "Opening it as new replaces the whole graph: without saving, the changes are lost.",
+        }
+    }
+}
+
+/// Opening a file or picking a template asks whether to add it to the graph
+/// or open it as new. Anything that replaces or closes the graph then asks
+/// first when it has unsaved changes: Save, Don't save or Cancel. Opening a
+/// file, picking a template and closing the window all go through here.
+#[derive(Resource, Default)]
+struct SaveFirst {
+    /// A file or template picked: add it, or open it as new?
+    choosing:  Option<Source>,
+    after:     Option<After>,
+    /// Save was chosen for a graph with no file: the browser asks where.
+    saving_as: bool,
+}
+
+impl SaveFirst {
+    /// Bring in a file or a template. Asks whether to add it or open it as
+    /// new, unless the graph holds nothing but Output.
+    fn load(&mut self, source: Source) {
+        *self = SaveFirst { choosing: Some(source), ..Default::default() };
+    }
+
+    /// Hold `after` and ask, when there is something to lose. Returns
+    /// whether it is held (false: carry it out now).
+    fn ask(&mut self, history: &history::History, after: &After) -> bool {
+        if !history.is_dirty() { return false; }
+        self.choosing = None;
+        self.after = Some(after.clone());
+        self.saving_as = false;
+        true
+    }
+}
+
+/// Open a file or load a template in place of the graph.
+fn carry_out(after: After, graph: &mut NodeGraphState, subnets: &mut SubnetStore, nav: &mut GraphNavigation,
+             file: &mut GraphFile, history: &mut history::History, recent: &mut recent::Recent) {
+    match after {
+        After::Quit => {}
+        After::Open(path) => open_graph(graph, &path, file, history, recent),
+        After::Template(i) => {
+            let t = &templates::TEMPLATES[i];
+            file.message = t.load(graph, subnets);
+            // A template is not a file: saving asks where.
+            file.path = None;
+            history::note(format!("Template: {}", t.name));
+        }
+    }
+    nav.current_subnet = None;
+}
+
+/// Dim the window behind a question, and take the clicks meant for it.
+fn dim_behind(ctx: &egui::Context) {
+    let screen = ctx.screen_rect();
+    egui::Area::new(egui::Id::new("quit_dim")).order(egui::Order::Foreground).fixed_pos(screen.min)
+        .show(ctx, |ui| {
+            let (rect, _) = ui.allocate_exact_size(screen.size(), egui::Sense::click_and_drag());
+            ui.painter().rect_filled(rect, 0.0, egui::Color32::from_black_alpha(170));
+        });
+}
+
+/// Add `what` to the graph (0), open it as new (1) or cancel (2).
+fn ask_add_or_open(ctx: &egui::Context, what: &str) -> Option<u8> {
+    dim_behind(ctx);
+    let mut choice = None;
+    egui::Window::new("Add or open")
+        .order(egui::Order::Tooltip)
+        .collapsible(false).resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+        .show(ctx, |ui| {
+            ui.label(format!("Add {what} to this graph, or open it as a new graph?"));
+            ui.label(egui::RichText::new("Adding puts its nodes beside the ones here. Opening as new replaces the graph.").small().weak());
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                if ui.button("Add").clicked() { choice = Some(0); }
+                if ui.button("Open as new").clicked() { choice = Some(1); }
+                if ui.button("Cancel").clicked() { choice = Some(2); }
+            });
+        });
+    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) { choice = Some(2); }
+    choice
+}
+
+/// The question about unsaved changes, and what follows the answer.
+fn save_first_system(
     mut contexts:   EguiContexts,
     mut requests:   EventReader<bevy::window::WindowCloseRequested>,
     primary:        Query<Entity, With<bevy::window::PrimaryWindow>>,
     mut exit:       EventWriter<AppExit>,
-    mut quit:       ResMut<QuitState>,
+    mut save_first: ResMut<SaveFirst>,
     mut history:    ResMut<history::History>,
     mut recent:     ResMut<recent::Recent>,
     mut graph_file: ResMut<GraphFile>,
     mut browser:    ResMut<FileBrowser>,
-    graph:          Res<NodeGraphState>,
+    mut graph:      ResMut<NodeGraphState>,
+    mut subnets:    ResMut<SubnetStore>,
+    mut nav:        ResMut<GraphNavigation>,
 ) {
     let main = primary.get_single().ok();
     for r in requests.read() {
         if Some(r.window) != main { continue; }
-        if history.is_dirty() { *quit = QuitState::Asking; } else { exit.send(AppExit::Success); return; }
+        if !save_first.ask(&history, &After::Quit) { exit.send(AppExit::Success); return; }
     }
-    match *quit {
-        QuitState::Running => {}
-        QuitState::SavingAs => {
-            if !history.is_dirty() { exit.send(AppExit::Success); }
-            // The browser was closed without saving, or the save failed.
-            else if !browser.is_open() && !browser.has_result() { *quit = QuitState::Running; }
-        }
-        QuitState::Asking => {
-            let ctx = contexts.ctx_mut();
-            let screen = ctx.screen_rect();
-            // Dim everything behind the question, and take the clicks meant for it.
-            egui::Area::new(egui::Id::new("quit_dim")).order(egui::Order::Foreground).fixed_pos(screen.min)
-                .show(ctx, |ui| {
-                    let (rect, _) = ui.allocate_exact_size(screen.size(), egui::Sense::click_and_drag());
-                    ui.painter().rect_filled(rect, 0.0, egui::Color32::from_black_alpha(170));
-                });
-            let what = match &graph_file.path {
-                Some(p) => format!("Save the changes to {} before closing?", file_name(p)),
-                None => "Save this graph before closing?".into(),
-            };
-            let mut choice = None;
-            egui::Window::new("Unsaved changes")
-                .order(egui::Order::Tooltip)
-                .collapsible(false).resizable(false)
-                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-                .show(ctx, |ui| {
-                    ui.label(what);
-                    ui.label(egui::RichText::new("Closing without saving loses them.").small().weak());
-                    ui.add_space(6.0);
-                    ui.horizontal(|ui| {
-                        if ui.button("💾 Save").clicked() { choice = Some(0); }
-                        if ui.button("Don't save").clicked() { choice = Some(1); }
-                        if ui.button("Cancel").clicked() { choice = Some(2); }
-                    });
-                });
-            if ctx.input(|i| i.key_pressed(egui::Key::Escape)) { choice = Some(2); }
-            match choice {
-                Some(0) => {
-                    if save_or_ask(&graph, &mut graph_file, &mut history, &mut recent, &mut browser) {
-                        exit.send(AppExit::Success);
-                    } else if browser.is_open() {
-                        *quit = QuitState::SavingAs;
-                    } else {
-                        // The save failed: its message is under the graph's buttons.
-                        *quit = QuitState::Running;
-                    }
-                }
-                Some(1) => { exit.send(AppExit::Success); }
-                Some(2) => { *quit = QuitState::Running; }
-                _ => {}
+    if let Some(source) = save_first.choosing.clone() {
+        let empty = graph.nodes.iter().all(|n| matches!(n.node_type, NodeType::Output));
+        let choice = if empty { Some(1) } else { ask_add_or_open(contexts.ctx_mut(), &source.name()) };
+        match choice {
+            Some(0) => {
+                *save_first = SaveFirst::default();
+                graph_file.message = match source {
+                    Source::File(p) => add_graph_file(&mut graph, &mut subnets, &p, &mut recent),
+                    Source::Template(i) => add_template(&mut graph, &mut subnets, &templates::TEMPLATES[i]),
+                };
             }
+            Some(1) => {
+                save_first.choosing = None;
+                let after = source.open();
+                if !save_first.ask(&history, &after) {
+                    carry_out(after, &mut graph, &mut subnets, &mut nav, &mut graph_file, &mut history, &mut recent);
+                }
+            }
+            Some(_) => *save_first = SaveFirst::default(),
+            None => {}
         }
+        return;
+    }
+    let Some(after) = save_first.after.clone() else { return };
+    // Whether to go ahead with `after` this frame.
+    let mut go = false;
+    if save_first.saving_as {
+        if !history.is_dirty() { go = true; }
+        // The browser was closed without saving, or the save failed.
+        else if !browser.is_open() && !browser.has_result() { *save_first = SaveFirst::default(); }
+    } else {
+        let ctx = contexts.ctx_mut();
+        dim_behind(ctx);
+        let (what, warning) = (after.question(&graph_file), after.warning());
+        let mut choice = None;
+        egui::Window::new("Unsaved changes")
+            .order(egui::Order::Tooltip)
+            .collapsible(false).resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .show(ctx, |ui| {
+                ui.label(what);
+                ui.label(egui::RichText::new(warning).small().weak());
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    if ui.button("💾 Save").clicked() { choice = Some(0); }
+                    if ui.button("Don't save").clicked() { choice = Some(1); }
+                    if ui.button("Cancel").clicked() { choice = Some(2); }
+                });
+            });
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) { choice = Some(2); }
+        match choice {
+            Some(0) => {
+                if save_or_ask(&graph, &mut graph_file, &mut history, &mut recent, &mut browser) {
+                    go = true;
+                } else if browser.is_open() {
+                    save_first.saving_as = true;
+                } else {
+                    // The save failed: its message is under the graph's buttons.
+                    *save_first = SaveFirst::default();
+                }
+            }
+            Some(1) => go = true,
+            Some(2) => *save_first = SaveFirst::default(),
+            _ => {}
+        }
+    }
+    if go {
+        *save_first = SaveFirst::default();
+        if after == After::Quit { exit.send(AppExit::Success); }
+        else { carry_out(after, &mut graph, &mut subnets, &mut nav, &mut graph_file, &mut history, &mut recent); }
     }
 }
 
@@ -2024,4 +2133,42 @@ fn create_grid_mesh(size: usize, spacing: f32) -> Mesh {
     m.insert_attribute(Mesh::ATTRIBUTE_POSITION, verts);
     m.insert_indices(bevy::render::mesh::Indices::U32(idx));
     m
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Opening a file or loading a template over unsaved changes waits for
+    /// the question; over a saved graph it goes ahead.
+    #[test]
+    fn replacing_an_unsaved_graph_asks_first() {
+        let mut g = NodeGraphState::default();
+        let mut h = history::History::default();
+        h.update(&mut g, false);
+        let mut ask = SaveFirst::default();
+        let template = After::Template(0);
+        assert!(!ask.ask(&h, &template), "nothing to lose: no question");
+        assert!(ask.after.is_none());
+
+        g.add_node("Cube".into(), NodeType::CreateCube { size: 1.0 }, egui::pos2(0.0, 0.0));
+        h.update(&mut g, false);
+        assert!(ask.ask(&h, &template));
+        assert_eq!(ask.after, Some(template.clone()));
+        let file = GraphFile { message: String::new(), path: Some("/tmp/scene.json".into()) };
+        assert_eq!(template.question(&file), format!("Save the changes to scene.json before loading the template {}?", templates::TEMPLATES[0].name));
+        assert_eq!(After::Open("/tmp/other.json".into()).question(&GraphFile::default()), "Save this graph before opening other.json?");
+        assert_eq!(After::Quit.question(&GraphFile::default()), "Save this graph before closing?");
+
+        assert_eq!(Source::Template(0).open(), After::Template(0));
+        assert_eq!(Source::File("/tmp/a.json".into()).name(), "a.json");
+        let mut picked = SaveFirst::default();
+        picked.load(Source::Template(0));
+        assert_eq!(picked.choosing, Some(Source::Template(0)), "picking a template asks add or open first");
+
+        // Don't save: the template replaces the graph.
+        let (mut subnets, mut nav, mut file, mut recent) = (SubnetStore::default(), GraphNavigation::default(), GraphFile::default(), recent::Recent::at(None));
+        carry_out(template, &mut g, &mut subnets, &mut nav, &mut file, &mut h, &mut recent);
+        assert!(!g.nodes.iter().any(|n| n.name == "Cube" && matches!(n.node_type, NodeType::CreateCube { size } if size == 1.0) && n.position == egui::pos2(0.0, 0.0)));
+        assert!(file.path.is_none());
+    }
 }

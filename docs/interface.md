@@ -45,8 +45,7 @@ The graph is saved as a JSON file. The top bar shows its name, and "(unsaved)" w
 | To | Do this |
 |---|---|
 | Open a graph | Open, in the node graph header |
-| Add a saved graph to the one open | The + at the right of Open |
-| Open one used lately | Recent: the last ten graphs opened or saved. Files no longer there are greyed out. "Clear the list" empties it. The + at the right of a file adds it to the graph open |
+| Open one used lately | Recent: the last ten graphs opened or saved. Files no longer there are greyed out. "Clear the list" empties it |
 | Save | Save or Ctrl+S (Cmd+S on macOS): to the current file, or asks where when there is none yet |
 | Save to a new file | Save as |
 
@@ -54,7 +53,13 @@ Opening a graph is a step in the [history](undo.md): undo goes back to the graph
 
 Adding a graph puts its nodes to the right of the ones there, selected, as one step in the history. The graph open stays the current file. If its Output is not wired, it takes what the added graph's Output was wired to; if nothing is viewed, the added graph's viewed node is. ICE trees are not saved in graph files yet, so an ICE node added from a file comes with an empty tree (from a template, or copied and pasted, it keeps its tree).
 
-Closing the window with unsaved changes asks first: Save, Don't save, or Cancel (Esc). Save writes to the current file, or opens the browser for a graph never saved; the program closes once it is written. With nothing unsaved it closes straight away.
+Opening a graph (Open or Recent) or picking a template asks first whether to **Add** it to the graph, beside the nodes already there, or **Open as new** in place of the graph. On a graph with nothing but Output it opens straight away.
+
+![Picking a template over a graph with nodes](xms_add_or_open.png)
+
+Anything that replaces the whole graph asks first when it has unsaved changes: closing the window, and opening a graph or a template as new. The choice is Save, Don't save, or Cancel (Esc). Save writes to the current file, or opens the browser for a graph never saved; the file or template opens, or the program closes, once it is written. Cancel keeps the graph as it is. With nothing unsaved it goes ahead straight away. Adding replaces nothing, so it never asks about saving.
+
+![Loading a template over unsaved changes](xms_unsaved_template.png)
 
 ![Closing with unsaved changes](xms_unsaved.png)
 
@@ -75,7 +80,7 @@ The list of recent files is kept in `recent.json` in the config folder.
 
 Copied nodes go to the system clipboard as text, and to `clipboard.json` in the config folder. They paste in another window of the program, after it was closed and started again, or on another computer from text sent over. When the clipboard holds something else, Ctrl+V pastes the nodes copied last.
 
-![Two nodes pasted, then the ICE spherify template added with its +: Output was free, so it took the template's last node](xms_copy_paste_add.png)
+![The ICE spherify template, then the same template added to it: the added nodes sit beside the first ones, and Output stays with the first](xms_copy_paste_add.png)
 
 A new node is never left out of sight: the view moves just enough to show it. Templates are laid out with Tidy and framed when they load.
 

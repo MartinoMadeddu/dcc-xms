@@ -26,8 +26,6 @@ pub enum BrowseTarget {
     /// The path parameter of a node.
     Node(NodeId),
     OpenGraph,
-    /// A saved graph added to the one open.
-    AddGraph,
     SaveGraph,
     OpenLayout,
     SaveLayout,

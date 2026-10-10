@@ -115,8 +115,8 @@ Ctrl+Z and Ctrl+Shift+Z undo and redo everything in the scene: nodes, parameters
 - **Your navigation:** Maya, Houdini, XSI, Blender, Max, Modo or Unreal viewport controls, from a menu
 - **Remembered:** layout, floating windows, theme and navigation style come back at the next start
 - **Copy and paste nodes:** Ctrl+C and Ctrl+V, with their wires and ICE trees, between windows and from one session to the next
-- **Add instead of open:** the + beside Open, a recent file or a template adds it to the graph open
-- **Files:** Open, Recent (the last ten), Save, Save as, Ctrl+S. The top bar shows the file and whether it is saved; closing with unsaved changes asks first
+- **Add or open:** opening a file or a template asks whether to add it to the graph or open it as new, and asks to save first before anything is replaced
+- **Files:** Open, Recent (the last ten), Save, Save as, Ctrl+S. The top bar shows the file and whether it is saved; closing, opening a file or loading a template over unsaved changes asks first
 - **Fast:** the graph is cooked when its content changes, not on every frame
 - **Three themes, all editable:** Light, Dark, and ADHD (dark blues, with orange for whatever is selected or active). A colour editor changes any of them
 - **Layouts as files:** save a layout, load it back, pass it to someone else

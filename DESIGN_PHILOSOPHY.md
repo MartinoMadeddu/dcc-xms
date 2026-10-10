@@ -24,7 +24,7 @@ If you are an AI assistant working in this repository, read `LLM_instructions.md
 
 - Everything is a node. A graph describes a result; changing a number upstream changes everything below it.
 - One node per idea. A node that moves things moves anything: Transform takes a mesh, packed primitives or a clip. What a node shows in the viewport is a setting on that node, not another node (Body Collide's Skin, Pieces and Hulls display, which replaced the separate Calamari node).
-- Whatever can open a scene can add to the one open instead: a file, a recent file, a template, each with a + at its right. Added nodes land beside what is there.
+- Opening a file or a template asks every time whether to add it to the scene or open it as new. Added nodes land beside what is there. (One question replaced the + buttons first tried, the same day.)
 - Copied nodes are text, kept after the program closes: they paste in another window, in a later session, or from a message.
 - Every area of the program has templates: working graphs that load laid out and framed, with a line saying what to look at. Templates are grouped by whose work they show.
 - A feature comes with its template and the demo files it needs, packaged in `examples/`. A model too big for the repository (the Moana Island scene, say) is not packaged: its template asks whether to download it from where it is published, and says where from.
@@ -56,6 +56,7 @@ If you are an AI assistant working in this repository, read `LLM_instructions.md
 
 - Nodes, parameters, wires, names, operations: undoable, in a History that names each step from what changed.
 - The camera, the layout and the selection are not part of it. Undo never moves the view.
+- Whatever replaces the whole graph (closing, opening a file, loading a template) asks to save unsaved changes first. Adding never asks about saving: it loses nothing.
 
 ## Files go out as they came in
 
@@ -97,3 +98,5 @@ If you are an AI assistant working in this repository, read `LLM_instructions.md
 - 10/10/2026: copy and paste between sessions, and adding a file or template to the scene open instead of opening it (Simon).
 - 10/10/2026: in the delivery loop, push before `cargo run`, so a program left open does not hold a change back from Martino.
 - 10/10/2026: from a talk between Martino and Simon: each feature brings its template and demo files, with a download offered for models too big to package; Imago keeps its own paradigm, XSI is a reference; a button style setting proposed.
+- 10/10/2026: loading a template or opening a file asks to save unsaved changes first, as closing does (Simon).
+- 10/10/2026: the + buttons removed: opening a file or template asks whether to add or open as new; opening as new still asks to save first (Simon).
