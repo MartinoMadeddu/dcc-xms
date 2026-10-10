@@ -45,12 +45,12 @@ This is how a change goes from a request in a Claude chat to `main`, with the pe
        cd ~/Software/Martino_dcc-xms/dcc-xms
        git pull --rebase origin main
        git apply ~/Downloads/xms-<what>-<suffix>.patch
-       cargo run
        git add -A
        git commit -m "<what changed>"
        git push origin main
+       cargo run
 
-   `git pull --rebase` brings in what others pushed; `git apply` adds the change; `cargo run` lets the person look before committing; the last three lines commit and push it. (The path in the first line is Simon's clone; use your own.)
+   `git pull --rebase` brings in what others pushed; `git apply` adds the change; the next three lines commit and push it; `cargo run` comes last, so the change is on `main` straight away and the program can stay open as long as the person likes without holding up anyone else. The assistant has built and tested the change before sending it; if something is wrong once it runs, the fix is the next patch. (The path in the first line is Simon's clone; use your own.)
 6. **When `git apply` fails**, someone pushed to `main` in between and the patch no longer fits. The person pastes the terminal output into the chat; the assistant fetches `main` again, rebases its work onto it (keeping the other person's version where both changed the same lines of documentation, and saying so), runs the tests again and sends a new patch. Nothing is lost: a failed `git apply` changes nothing, and the commands after it have nothing to commit.
 7. **The next change starts from the last patch.** Until the person says a patch is pushed, the assistant keeps its work committed locally (never pushed) and makes the next patch on top of it, saying in which order to apply them; or folds them into one.
 

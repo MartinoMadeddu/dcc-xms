@@ -27,6 +27,7 @@ If you are an AI assistant working in this repository, read `LLM_instructions.md
 - Whatever can open a scene can add to the one open instead: a file, a recent file, a template, each with a + at its right. Added nodes land beside what is there.
 - Copied nodes are text, kept after the program closes: they paste in another window, in a later session, or from a message.
 - Every area of the program has templates: working graphs that load laid out and framed, with a line saying what to look at. Templates are grouped by whose work they show.
+- A feature comes with its template and the demo files it needs, packaged in `examples/`. A model too big for the repository (the Moana Island scene, say) is not packaged: its template asks whether to download it from where it is published, and says where from.
 - An ICE node runs its tree on each packed primitive coming in, in the primitive's own space, as an ICE tree runs on an object in Softimage.
 - Where a known tool already has a convention, follow it: ICE trees drawn and navigated after Softimage ICE, the viewport drawing what the Scene Explorer opens as in Gaffer, edits between two nodes as stacked layers as in Solaris.
 
@@ -48,6 +49,8 @@ If you are an AI assistant working in this repository, read `LLM_instructions.md
 - Translate, Rotate, Scale for every transform. Path for every file. In and Out for what passes through.
 - The properties of every node share one layout: titled groups, labels right-aligned in one column, values filling the width. Explanations go in tooltips; the panel shows parameters and the state of the node: what came in, what goes out, what went wrong.
 - The light theme is the default. The viewport's background follows the colour scheme.
+- Imago keeps its own way of working. Softimage XSI and other programs are references for conventions, not a look or a layout to copy.
+- How it looks is a theme, chosen by the user. A button style setting has been proposed but not built: from soft, rounded XSI buttons to the square IRIX Motif look. Colour schemes can be worked out with a palette tool such as [Adobe Color](https://color.adobe.com/create/color-wheel).
 
 ## Undo is for the scene
 
@@ -92,3 +95,5 @@ If you are an AI assistant working in this repository, read `LLM_instructions.md
 - 10/10/2026: "Martino's project" added: other work builds on his and does not overwrite it; his new code is read before every change and its decisions written here.
 - 10/10/2026: from Martino's commits of 09/10/2026 and 10/10/2026 (composed stages, `Geo`, local-space prims, edits as opinions, Write USD, ICE editor, theme): "One geometry model" added, and points added to "The graph is the program", "The same words for the same things", "Files go out as they came in" and "Heavy data stays light".
 - 10/10/2026: copy and paste between sessions, and adding a file or template to the scene open instead of opening it (Simon).
+- 10/10/2026: in the delivery loop, push before `cargo run`, so a program left open does not hold a change back from Martino.
+- 10/10/2026: from a talk between Martino and Simon: each feature brings its template and demo files, with a download offered for models too big to package; Imago keeps its own paradigm, XSI is a reference; a button style setting proposed.
