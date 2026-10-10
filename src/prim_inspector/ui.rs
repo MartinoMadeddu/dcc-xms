@@ -260,7 +260,7 @@ fn tab_btn(ui: &mut egui::Ui, state: &mut PrimInspectorState, tab: PrimInspector
     let is_active = state.active_tab == tab;
     let btn = egui::Button::new(
         egui::RichText::new(label)
-            .color(if is_active { egui::Color32::WHITE } else { xsi::TEXT_DIM() })
+            .color(if is_active { xsi::TEXT() } else { xsi::TEXT_DIM() })
             .size(11.0),
     )
     .fill(if is_active { xsi::TAB_ACTIVE() } else { egui::Color32::TRANSPARENT })

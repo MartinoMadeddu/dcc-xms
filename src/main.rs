@@ -113,6 +113,7 @@ fn main() {
             update_scene_hierarchy.after(track_revision),
             update_generated_meshes.after(track_revision).after(update_scene_hierarchy),
             keep_awake,
+            follow_theme_background,
             apply_viewport_rect.after(dcc_ui),
             camera_controller,
             focus_camera,
@@ -1078,6 +1079,15 @@ fn update_scene_hierarchy(
 
     let entries = graph.evaluate_for_scene(&eval_subnet);
     hierarchy.rebuild(entries);
+}
+
+/// The viewport's background follows the colour scheme.
+fn follow_theme_background(mut clear: ResMut<ClearColor>, mut seen: Local<Option<u64>>) {
+    let now = theme::revision();
+    if *seen == Some(now) { return; }
+    *seen = Some(now);
+    let [r, g, b] = theme::viewport_bg();
+    clear.0 = Color::srgb_u8(r, g, b);
 }
 
 /// Frames while something moves without input: playback, the splash and

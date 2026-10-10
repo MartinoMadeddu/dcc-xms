@@ -1,12 +1,15 @@
 //! Colour schemes: Light, Dark and ADHD, each editable.
 //!
-//! Every panel keeps its own colour table, written for the light (grey)
-//! theme. Each of those colours goes through `c`, which maps it into the
-//! current scheme, so one switch restyles the whole interface. A scheme is
-//! six colours: the two ends of the surface ramp, text, dim text, an accent
-//! and an outline. The untouched Light scheme maps every colour to itself.
-//! The egui widget style is derived from the scheme in `apply`. The scheme
-//! is remembered between sessions.
+//! Every panel keeps its own colour table, written once (in the tones of the
+//! original grey theme: surfaces from grey 40 to 150, text above). Each of
+//! those colours goes through `c`, which maps it into the current scheme, so
+//! one switch restyles the whole interface. A scheme is six colours: the two
+//! ends of the surface ramp, text, dim text, an accent and an outline. The
+//! egui widget style is derived from the scheme in `apply`. The scheme is
+//! remembered between sessions.
+//!
+//! Light follows Softimage XSI: light warm greys, black text, buttons a step
+//! lighter than the panel, a mid-grey viewport.
 
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -24,7 +27,7 @@ impl Preset {
     }
     pub fn hint(self) -> &'static str {
         match self {
-            Preset::Light => "The original grey theme",
+            Preset::Light => "Light greys and black text, after Softimage XSI",
             Preset::Dark  => "Neutral dark greys with strong text contrast",
             Preset::Adhd  => "Dark blue surfaces with orange for everything selected or active",
         }
@@ -49,17 +52,20 @@ pub struct Scheme {
 impl Scheme {
     pub const fn preset(preset: Preset) -> Scheme {
         match preset {
-            Preset::Light => Scheme { preset, low: [40, 40, 40], high: [150, 150, 150], text: [230, 230, 230],
-                                      dim: [190, 190, 190], accent: [100, 130, 160], outline: [70, 70, 70] },
+            Preset::Light => Scheme { preset, low: [112, 112, 110], high: [206, 206, 202], text: [10, 10, 10],
+                                      dim: [45, 45, 43], accent: [74, 112, 168], outline: [72, 72, 70] },
             Preset::Dark  => Scheme { preset, low: [12, 12, 12], high: [64, 64, 64], text: [234, 234, 234],
                                       dim: [182, 182, 182], accent: [60, 110, 170], outline: [96, 96, 96] },
             Preset::Adhd  => Scheme { preset, low: [6, 12, 28], high: [36, 56, 96], text: [246, 238, 224],
                                       dim: [170, 184, 210], accent: [255, 140, 40], outline: [80, 108, 160] },
         }
     }
-    /// The Light preset as shipped: colours pass through untouched.
-    fn is_identity(&self) -> bool { *self == Scheme::preset(Preset::Light) }
     pub fn is_edited(&self) -> bool { *self != Scheme::preset(self.preset) }
+    /// Text darker than the surfaces: the Light scheme, however edited.
+    fn dark_text(&self) -> bool {
+        let lum = |c: [u8; 3]| c[0] as u32 + c[1] as u32 + c[2] as u32;
+        lum(self.text) < lum(self.low).min(lum(self.high))
+    }
 }
 
 static SCHEME: RwLock<Scheme> = RwLock::new(Scheme::preset(Preset::Light));
@@ -72,6 +78,17 @@ pub fn revision() -> u64 { REVISION.load(Ordering::Relaxed) }
 
 /// True for every scheme that is not based on Light.
 pub fn is_dark() -> bool { scheme().preset != Preset::Light }
+
+/// The viewport's background: XSI's mid grey in Light (black wires and
+/// boxes read on it), Bevy's dark grey otherwise.
+pub fn viewport_bg() -> [u8; 3] {
+    if scheme().dark_text() { [132, 132, 130] } else { [43, 44, 47] }
+}
+
+/// The Light scheme of earlier versions (dark greys, white text), as saved
+/// by them: read back as today's Light.
+const OLD_LIGHT: Scheme = Scheme { preset: Preset::Light, low: [40, 40, 40], high: [150, 150, 150], text: [230, 230, 230],
+                                   dim: [190, 190, 190], accent: [100, 130, 160], outline: [70, 70, 70] };
 
 fn store(s: Scheme) {
     *SCHEME.write().unwrap_or_else(|e| e.into_inner()) = s;
@@ -95,6 +112,7 @@ pub fn init(ctx: &egui::Context) {
     let saved = read("theme.json").and_then(|t| serde_json::from_str::<Scheme>(&t).ok())
         // Written by versions that had light and dark only.
         .or_else(|| read("theme.txt").filter(|t| t.trim() == "dark").map(|_| Scheme::preset(Preset::Dark)))
+        .map(|s| if s == OLD_LIGHT { Scheme::preset(Preset::Light) } else { s })
         .unwrap_or(Scheme::preset(Preset::Light));
     store(saved);
     apply(ctx);
@@ -121,7 +139,6 @@ fn accent_at(s: &Scheme, level: u8) -> [u8; 3] {
 fn surface(s: &Scheme, level: f32) -> [u8; 3] { mix(s.low, s.high, (level - 40.0) / 110.0) }
 
 fn map(s: &Scheme, r: u8, g: u8, b: u8) -> [u8; 3] {
-    if s.is_identity() { return [r, g, b]; }
     let (max, min) = (r.max(g).max(b), r.min(g).min(b));
     let avg = (r as f32 + g as f32 + b as f32) / 3.0;
     let neutral = max - min <= 12;
@@ -152,20 +169,16 @@ fn map(s: &Scheme, r: u8, g: u8, b: u8) -> [u8; 3] {
 /// A colour of the light theme, in the current scheme.
 pub fn c(r: u8, g: u8, b: u8) -> Color32 { rgb(map(&scheme(), r, g, b)) }
 
-/// A surface that sits on top of a canvas (a node body or title). Outside
-/// the Light scheme it is lifted above the plain mapping so nodes stand out
-/// from the canvas behind them.
+/// A surface that sits on top of a canvas (a node body or title): lifted
+/// above the plain mapping so nodes stand out from the canvas behind them.
 pub fn raised(r: u8, g: u8, b: u8) -> Color32 {
     let s = scheme();
-    if s.is_identity() { return Color32::from_rgb(r, g, b); }
     rgb(lift(map(&s, r, g, b), 24))
 }
 
-/// An outline. Darker than its surroundings in the Light scheme, the
-/// scheme's outline colour elsewhere, where a darker line would disappear.
-pub fn outline(r: u8, g: u8, b: u8) -> Color32 {
-    let s = scheme();
-    if s.is_identity() { Color32::from_rgb(r, g, b) } else { rgb(s.outline) }
+/// An outline: the scheme's outline colour.
+pub fn outline(_r: u8, _g: u8, _b: u8) -> Color32 {
+    rgb(scheme().outline)
 }
 
 /// The accent colour at full strength: active flags, highlights.
@@ -176,38 +189,53 @@ pub fn apply(ctx: &egui::Context) {
     let mut style = (*ctx.style()).clone();
     let s = scheme();
 
-    if s.is_identity() {
-        // The original grey theme, unchanged.
-        let defaults  = egui::Visuals::dark();
-        let bg_fill       = Color32::from_rgb(118, 118, 118);
-        let bg_fill_dark  = Color32::from_rgb(100, 100, 100);
-        let bg_fill_mid   = Color32::from_rgb(110, 110, 110);
-        let stroke_subtle = Stroke::new(1.0_f32, Color32::from_rgb(80, 80, 80));
-        // Text is a step brighter than the original, for small labels on grey.
-        let text_col      = Color32::from_rgb(245, 245, 245);
-        let text_dim      = Color32::from_rgb(212, 212, 212);
+    if s.dark_text() {
+        // Light, after XSI: a light warm-grey panel, buttons a step lighter
+        // with a fine edge, light fields, black text everywhere.
+        let panel  = surface(&s, 118.0);
+        let button = lift(s.high, 8);
+        let field  = lift(s.high, 22);
+        let edge   = mix(panel, s.outline, 0.55);
+        let (text, dim) = (rgb(s.text), rgb(mix(s.dim, s.text, 0.35)));
+        style.visuals = egui::Visuals::light();
+        let v = &mut style.visuals;
+        v.panel_fill       = rgb(panel);
+        v.window_fill      = rgb(surface(&s, 126.0));
+        v.extreme_bg_color = rgb(field);          // text fields, drag values
+        v.faint_bg_color   = rgb(surface(&s, 110.0));
+        v.code_bg_color    = rgb(field);
+        v.window_stroke    = Stroke::new(1.0_f32, rgb(s.outline));
+        v.window_shadow    = egui::epaint::Shadow { color: Color32::from_black_alpha(40), ..v.window_shadow };
+        v.popup_shadow     = egui::epaint::Shadow { color: Color32::from_black_alpha(40), ..v.popup_shadow };
 
-        // Start from egui's defaults so nothing set by another scheme lingers.
-        style.visuals = defaults;
-        style.visuals.panel_fill           = bg_fill;
-        style.visuals.window_fill          = bg_fill;
-        style.visuals.extreme_bg_color     = bg_fill_dark;
-        style.visuals.faint_bg_color       = bg_fill_mid;
-        style.visuals.code_bg_color        = bg_fill_dark;
-        style.visuals.window_stroke        = stroke_subtle;
-        style.visuals.widgets.noninteractive.bg_fill   = bg_fill;
-        style.visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0_f32, text_dim);
-        style.visuals.widgets.inactive.bg_fill         = bg_fill_mid;
-        style.visuals.widgets.inactive.fg_stroke       = Stroke::new(1.0_f32, text_col);
-        style.visuals.widgets.hovered.bg_fill          = Color32::from_rgb(140, 140, 140);
-        style.visuals.widgets.hovered.fg_stroke        = Stroke::new(1.0_f32, text_col);
-        style.visuals.widgets.active.bg_fill           = Color32::from_rgb(150, 150, 150);
-        style.visuals.widgets.active.fg_stroke         = Stroke::new(1.0_f32, Color32::WHITE);
-        style.visuals.widgets.open.bg_fill             = bg_fill_dark;
-        style.visuals.widgets.open.fg_stroke           = Stroke::new(1.0_f32, text_col);
-        style.visuals.selection.bg_fill    = Color32::from_rgb(100, 130, 160);
-        style.visuals.selection.stroke     = Stroke::new(1.0_f32, Color32::from_rgb(160, 195, 225));
-        style.visuals.hyperlink_color      = Color32::from_rgb(160, 195, 230);
+        v.widgets.noninteractive.bg_fill      = rgb(panel);
+        v.widgets.noninteractive.weak_bg_fill = rgb(panel);
+        v.widgets.noninteractive.bg_stroke    = Stroke::new(1.0_f32, rgb(edge));   // separators
+        v.widgets.noninteractive.fg_stroke    = Stroke::new(1.0_f32, dim);
+
+        v.widgets.inactive.bg_fill      = rgb(button);
+        v.widgets.inactive.weak_bg_fill = rgb(button);
+        v.widgets.inactive.bg_stroke    = Stroke::new(1.0_f32, rgb(edge));
+        v.widgets.inactive.fg_stroke    = Stroke::new(1.0_f32, text);
+
+        v.widgets.hovered.bg_fill      = rgb(lift(button, 14));
+        v.widgets.hovered.weak_bg_fill = rgb(lift(button, 14));
+        v.widgets.hovered.bg_stroke    = Stroke::new(1.0_f32, rgb(s.accent));
+        v.widgets.hovered.fg_stroke    = Stroke::new(1.5_f32, text);
+
+        v.widgets.active.bg_fill      = rgb(mix(button, s.outline, 0.15));
+        v.widgets.active.weak_bg_fill = rgb(mix(button, s.outline, 0.15));
+        v.widgets.active.bg_stroke    = Stroke::new(1.0_f32, rgb(s.accent));
+        v.widgets.active.fg_stroke    = Stroke::new(2.0_f32, text);
+
+        v.widgets.open.bg_fill      = rgb(surface(&s, 128.0));
+        v.widgets.open.weak_bg_fill = rgb(button);
+        v.widgets.open.bg_stroke    = Stroke::new(1.0_f32, rgb(s.outline));
+        v.widgets.open.fg_stroke    = Stroke::new(1.0_f32, text);
+
+        v.selection.bg_fill = rgb(mix(panel, s.accent, 0.45));
+        v.selection.stroke  = Stroke::new(1.0_f32, text);
+        v.hyperlink_color   = rgb(mix(s.accent, s.text, 0.3));
     } else {
         let panel   = surface(&s, 118.0);
         let field   = surface(&s, 72.0);
@@ -329,14 +357,24 @@ mod tests {
     const DARKS: [Preset; 2] = [Preset::Dark, Preset::Adhd];
 
     #[test]
-    fn light_scheme_leaves_every_colour_alone() {
+    fn light_is_light_with_black_text() {
         let s = Scheme::preset(Preset::Light);
-        for (r, g, b) in [(118u8, 118u8, 118u8), (90, 105, 120), (230, 230, 230), (100, 180, 255), (45, 45, 45), (255, 150, 70)] {
-            assert_eq!(map(&s, r, g, b), [r, g, b]);
+        assert!(s.dark_text());
+        let panel = map(&s, 118, 118, 118);
+        // XSI's panel grey, give or take.
+        assert!((165..=185).contains(&panel[0]), "{panel:?}");
+        // Text of every weight reads on the panel and on the lighter groups.
+        for text in [248u8, 230, 210] {
+            assert!(contrast(map(&s, text, text, text), panel) >= 7.0, "text {text}");
         }
-        // An edited Light scheme is no longer the identity.
-        let mut e = s; e.low = [20, 20, 20];
-        assert!(e.is_edited() && map(&e, 45, 45, 45) != [45, 45, 45]);
+        assert!(contrast(map(&s, 190, 190, 190), panel) >= 4.5, "dim text");
+        assert!(contrast(map(&s, 170, 170, 170), panel) >= 3.0, "dim labels");
+        // Nodes stand out from the graph canvas, lighter.
+        let canvas = map(&s, 100, 100, 100);
+        let body = lift(map(&s, 130, 130, 130), 24);
+        assert!(lum(body) > lum(canvas) && contrast(body, canvas) > 1.3);
+        // A Light scheme saved by an earlier version comes back as today's.
+        assert_ne!(OLD_LIGHT, s);
     }
 
     #[test]
